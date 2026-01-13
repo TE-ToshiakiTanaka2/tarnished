@@ -1,0 +1,16 @@
+services:
+  {{PROJECT_NAME}}:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: {{PROJECT_NAME}}
+    volumes:
+      # Mount the project directory into the container
+      - .:/workspace:cached
+      # Mount host's .gitconfig.local for user name/email
+      - ~/.gitconfig.local:/home/vscode/.gitconfig.local:cached
+      # GitHub CLI settings
+      - ~/.config/gh:/home/vscode/.config/gh:cached
+    working_dir: /workspace
+    # Keep the container running
+    command: sleep infinity
