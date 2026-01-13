@@ -152,24 +152,57 @@ setup_ssh_host_config
 # ln -snf "$DOTFILES_DIR/config/shell/.bash_profile" "$HOME/.bash_profile"
 
 # -----------------------------------------------------------------------------
-# Claude Code Setup
+# SuperClaude Framework Setup
 # -----------------------------------------------------------------------------
-if command -v claude &> /dev/null; then
-    echo "Claude Code CLI is available"
+setup_superclaude() {
+    echo "Setting up SuperClaude Framework..."
+
+    # Check Claude Code prerequisite
+    if ! command -v claude &> /dev/null; then
+        echo "  - Error: Claude Code CLI is not installed"
+        echo "  - SuperClaude requires Claude Code to function"
+        echo "  - Please install Claude Code first: https://claude.ai/code"
+        echo "  - Skipping SuperClaude setup"
+        return 1
+    fi
+
+    echo "  - Claude Code CLI detected"
 
     # Create Claude config directory
     mkdir -p "$HOME/.claude"
 
-    # Note: MCP servers can be added here if needed
-    # claude mcp add context7 -- npx -y @upstash/context7-mcp
-    # claude mcp add sequential-thinking -s user -- npx -y @modelcontextprotocol/server-sequential-thinking
-fi
+    # Install SuperClaude
+    echo "  - Installing SuperClaude..."
+    uv tool install superclaude
+    uvx superclaude install
 
-# Add SuperClaude Framework
-echo "Add SuperClaude Framework..."
-uv tool install superclaude
-uvx superclaude install
-uvx superclaude mcp --servers context7 --servers sequential-thinking --servers serena
+    # Ask about Playwright (optional)
+    local mcp_servers="context7 sequential-thinking serena"
+
+    read -rp "  - UI開発を行いますか？Playwright MCPをインストールします (y/N): " playwright_answer
+    case "$playwright_answer" in
+        [yY]|[yY][eE][sS])
+            mcp_servers="$mcp_servers playwright"
+            echo "  - Playwright MCP will be installed"
+            ;;
+        *)
+            echo "  - Skipping Playwright MCP"
+            ;;
+    esac
+
+    # Configure MCP servers
+    echo "  - Configuring MCP servers..."
+    local mcp_cmd="uvx superclaude mcp"
+    for server in $mcp_servers; do
+        mcp_cmd="$mcp_cmd --servers $server"
+    done
+    # shellcheck disable=SC2086
+    $mcp_cmd
+
+    echo "  - SuperClaude setup complete"
+}
+
+setup_superclaude
 
 # -----------------------------------------------------------------------------
 # Test Environment Setup
