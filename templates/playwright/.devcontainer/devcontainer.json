@@ -1,0 +1,13 @@
+{
+    "features": {
+        "ghcr.io/devcontainers-contrib/features/playwright:1": {}
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-playwright.playwright"
+            ],
+            "settings": {}
+        }
+    }
+}
