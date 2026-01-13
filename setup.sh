@@ -17,44 +17,17 @@ set -e
 # Script configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
-CORE_TEMPLATE="${TEMPLATES_DIR}/core"
-CLAUDE_TEMPLATE="${TEMPLATES_DIR}/claude"
-NODE_TEMPLATE="${TEMPLATES_DIR}/node"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Source common library
+source "${SCRIPT_DIR}/scripts/lib/common.sh"
+
+# Plugin tracking
+declare -a LOADED_PLUGINS=()
+declare -a PLUGIN_NAMES=()
 
 # =============================================================================
-# Helper Functions
+# Help Function
 # =============================================================================
-
-print_header() {
-    echo -e "${BLUE}"
-    echo "╔═══════════════════════════════════════════════════════════════════╗"
-    echo "║         Devcontainer Boilerplate Setup Script                     ║"
-    echo "╚═══════════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-}
-
-print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
-}
-
-print_warning() {
-    echo -e "${YELLOW}⚠ $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}✗ $1${NC}"
-}
-
-print_info() {
-    echo -e "${BLUE}ℹ $1${NC}"
-}
 
 show_help() {
     cat << 'EOF'
@@ -140,10 +113,9 @@ check_dependencies() {
 
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         print_error "Missing required dependencies: ${missing_deps[*]}"
-        echo ""
-        echo "Please install the missing dependencies:"
-        echo "  Ubuntu/Debian: sudo apt-get install ${missing_deps[*]}"
-        echo "  macOS:         brew install ${missing_deps[*]}"
+        print_info "Please install the missing dependencies:"
+        print_info "  Ubuntu/Debian: sudo apt-get install ${missing_deps[*]}"
+        print_info "  macOS:         brew install ${missing_deps[*]}"
         return 1
     fi
 
@@ -151,190 +123,83 @@ check_dependencies() {
 }
 
 # =============================================================================
-# Template Functions
+# Plugin Functions
 # =============================================================================
 
-copy_core_template() {
-    local target_dir="$1"
+# Load a single plugin and verify it has required functions
+load_plugin() {
+    local plugin_path="$1"
 
-    print_info "Copying core template files..."
-
-    # Copy all files from core template
-    cp -r "${CORE_TEMPLATE}/.devcontainer" "${target_dir}/"
-    cp -r "${CORE_TEMPLATE}/docker" "${target_dir}/"
-    cp -r "${CORE_TEMPLATE}/.claude" "${target_dir}/"
-    cp "${CORE_TEMPLATE}/docker-compose.yml" "${target_dir}/"
-
-    # Make post.sh executable
-    chmod +x "${target_dir}/.devcontainer/scripts/post.sh"
-
-    print_success "Core template files copied"
-}
-
-copy_claude_template() {
-    local target_dir="$1"
-
-    print_info "Copying Claude Code template files..."
-
-    # Check if Claude template exists
-    if [[ ! -d "$CLAUDE_TEMPLATE" ]]; then
-        print_warning "Claude template not found, skipping Claude Code setup"
-        return 0
+    # Source the plugin
+    if ! source "$plugin_path"; then
+        print_error "Failed to load plugin: $plugin_path"
+        return 1
     fi
 
-    # Copy Claude Code configuration (merge with existing .claude if present)
-    if [[ -d "${CLAUDE_TEMPLATE}/.claude" ]]; then
-        # Ensure target .claude directory exists
-        mkdir -p "${target_dir}/.claude"
+    # Verify required functions exist
+    if ! declare -f plugin_name > /dev/null; then
+        print_error "Plugin missing required function 'plugin_name': $plugin_path"
+        return 1
+    fi
 
-        # Copy commands directory
-        if [[ -d "${CLAUDE_TEMPLATE}/.claude/commands" ]]; then
-            cp -r "${CLAUDE_TEMPLATE}/.claude/commands" "${target_dir}/.claude/"
+    if ! declare -f plugin_description > /dev/null; then
+        print_error "Plugin missing required function 'plugin_description': $plugin_path"
+        return 1
+    fi
+
+    return 0
+}
+
+# Load all discovered plugins
+load_all_plugins() {
+    local plugins=()
+    # Use mapfile to safely handle paths with spaces
+    mapfile -t plugins < <(for p in "${TEMPLATES_DIR}"/*/plugin.sh; do [[ -f "$p" ]] && echo "$p"; done)
+
+    if [[ ${#plugins[@]} -eq 0 ]]; then
+        print_error "No plugins found in ${TEMPLATES_DIR}"
+        return 1
+    fi
+
+    for plugin_path in "${plugins[@]}"; do
+        if load_plugin "$plugin_path"; then
+            LOADED_PLUGINS+=("$plugin_path")
+            PLUGIN_NAMES+=("$(plugin_name)")
         fi
+    done
 
-        # Copy scripts directory
-        if [[ -d "${CLAUDE_TEMPLATE}/.claude/scripts" ]]; then
-            cp -r "${CLAUDE_TEMPLATE}/.claude/scripts" "${target_dir}/.claude/"
-            # Make scripts executable
-            chmod +x "${target_dir}/.claude/scripts/"*.sh 2>/dev/null || true
-        fi
-
-        # Merge settings.json if both exist
-        if [[ -f "${CLAUDE_TEMPLATE}/.claude/settings.json" ]] && [[ -f "${target_dir}/.claude/settings.json" ]]; then
-            local temp_file="${target_dir}/.claude/settings.json.tmp"
-            jq -s '
-                .[0] as $core | .[1] as $claude |
-                {
-                    permissions: {
-                        allow: (($core.permissions.allow // []) + ($claude.permissions.allow // []) | unique),
-                        deny: (($core.permissions.deny // []) + ($claude.permissions.deny // []) | unique)
-                    },
-                    hooks: (($core.hooks // {}) + ($claude.hooks // {}))
-                }
-            ' "${target_dir}/.claude/settings.json" "${CLAUDE_TEMPLATE}/.claude/settings.json" > "$temp_file"
-            mv "$temp_file" "${target_dir}/.claude/settings.json"
-        elif [[ -f "${CLAUDE_TEMPLATE}/.claude/settings.json" ]]; then
-            cp "${CLAUDE_TEMPLATE}/.claude/settings.json" "${target_dir}/.claude/"
-        fi
+    if [[ ${#LOADED_PLUGINS[@]} -eq 0 ]]; then
+        print_error "No valid plugins loaded"
+        return 1
     fi
 
-    # Copy CLAUDE.md
-    if [[ -f "${CLAUDE_TEMPLATE}/CLAUDE.md" ]]; then
-        cp "${CLAUDE_TEMPLATE}/CLAUDE.md" "${target_dir}/"
-    fi
-
-    print_success "Claude Code template files copied"
+    return 0
 }
 
-merge_language_features() {
-    local target_dir="$1"
-    local lang_template="$2"
+# Execute a specific hook for all loaded plugins
+execute_plugins_hook() {
+    local hook_name="$1"
+    local target_dir="$2"
 
-    print_info "Merging language-specific features..."
+    for plugin_path in "${LOADED_PLUGINS[@]}"; do
+        # Unset previous hook functions to prevent carryover
+        unset -f plugin_pre_copy plugin_copy plugin_post_copy plugin_validate 2>/dev/null || true
 
-    local core_config="${target_dir}/.devcontainer/devcontainer.json"
-    local lang_config="${lang_template}/.devcontainer/devcontainer.json"
-    local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
+        # Source plugin to get its functions
+        source "$plugin_path"
+        local name
+        name=$(plugin_name)
 
-    # Merge JSON files using jq
-    # Strategy: deep merge, combining features and customizations
-    jq -s '
-        .[0] as $core | .[1] as $lang |
-        $core * {
-            features: ($core.features + $lang.features),
-            customizations: {
-                vscode: {
-                    extensions: (($core.customizations.vscode.extensions // []) + ($lang.customizations.vscode.extensions // []) | unique),
-                    settings: (($core.customizations.vscode.settings // {}) + ($lang.customizations.vscode.settings // {}))
-                }
-            }
-        }
-    ' "$core_config" "$lang_config" > "$temp_file"
-
-    mv "$temp_file" "$core_config"
-
-    print_success "Language features merged"
-}
-
-merge_language_claude_settings() {
-    local target_dir="$1"
-    local lang_template="$2"
-
-    # Check if language template has Claude settings
-    local lang_claude_settings="${lang_template}/.claude/settings.json"
-    if [[ ! -f "$lang_claude_settings" ]]; then
-        return 0
-    fi
-
-    print_info "Merging language-specific Claude Code settings..."
-
-    local target_settings="${target_dir}/.claude/settings.json"
-    local temp_file="${target_dir}/.claude/settings.json.tmp"
-
-    # Merge settings.json - combine hooks
-    jq -s '
-        .[0] as $base | .[1] as $lang |
-        $base * {
-            hooks: {
-                PreToolUse: (($base.hooks.PreToolUse // []) + ($lang.hooks.PreToolUse // [])),
-                PostToolUse: (($base.hooks.PostToolUse // []) + ($lang.hooks.PostToolUse // []))
-            }
-        }
-    ' "$target_settings" "$lang_claude_settings" > "$temp_file"
-
-    mv "$temp_file" "$target_settings"
-
-    print_success "Language Claude Code settings merged"
-}
-
-replace_placeholders() {
-    local target_dir="$1"
-    local project_name="$2"
-
-    print_info "Replacing placeholders with project name: ${project_name}"
-
-    # Files to process
-    local files=(
-        "${target_dir}/.devcontainer/devcontainer.json"
-        "${target_dir}/docker-compose.yml"
-        "${target_dir}/CLAUDE.md"
-    )
-
-    for file in "${files[@]}"; do
-        if [[ -f "$file" ]]; then
-            # Use sed to replace placeholder
-            if [[ "$(uname)" == "Darwin" ]]; then
-                # macOS
-                sed -i '' "s/{{PROJECT_NAME}}/${project_name}/g" "$file"
-            else
-                # Linux
-                sed -i "s/{{PROJECT_NAME}}/${project_name}/g" "$file"
+        # Execute the hook if it exists
+        if declare -f "$hook_name" > /dev/null; then
+            if ! "$hook_name" "$target_dir"; then
+                print_error "Plugin '${name}' failed during ${hook_name}"
+                return 1
             fi
         fi
     done
 
-    print_success "Placeholders replaced"
-}
-
-update_gitignore() {
-    local target_dir="$1"
-    local gitignore_file="${target_dir}/.gitignore"
-
-    print_info "Updating .gitignore..."
-
-    # Create .gitignore if it doesn't exist
-    if [[ ! -f "$gitignore_file" ]]; then
-        touch "$gitignore_file"
-    fi
-
-    # Add Claude Code settings.local.json if not already present
-    if ! grep -q "^\.claude/settings\.local\.json$" "$gitignore_file" 2>/dev/null; then
-        echo "" >> "$gitignore_file"
-        echo "# Claude Code local settings (personal preferences)" >> "$gitignore_file"
-        echo ".claude/settings.local.json" >> "$gitignore_file"
-    fi
-
-    print_success ".gitignore updated"
+    return 0
 }
 
 # =============================================================================
@@ -381,15 +246,23 @@ show_preview() {
     echo "  │       └── deny-check.sh"
     echo "  └── CLAUDE.md"
     echo ""
+
+    # Show loaded plugins
+    print_info "Plugins to be applied:"
+    for plugin_path in "${LOADED_PLUGINS[@]}"; do
+        source "$plugin_path"
+        echo "  - $(plugin_name): $(plugin_description)"
+    done
+    echo ""
 }
 
 show_completion() {
     local project_name="$1"
 
     echo ""
-    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║                    Setup Complete!                                ║${NC}"
-    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${COLOR_GREEN}╔═══════════════════════════════════════════════════════════════════╗${COLOR_NC}"
+    echo -e "${COLOR_GREEN}║                    Setup Complete!                                ║${COLOR_NC}"
+    echo -e "${COLOR_GREEN}╚═══════════════════════════════════════════════════════════════════╝${COLOR_NC}"
     echo ""
     print_success "Devcontainer environment created successfully!"
     echo ""
@@ -446,17 +319,12 @@ main() {
         exit 1
     fi
 
-    # Check if templates exist
-    if [[ ! -d "$CORE_TEMPLATE" ]]; then
-        print_error "Core template not found at: $CORE_TEMPLATE"
-        print_info "Please run this script from the devcontainer-boilerplate repository"
+    # Discover and load plugins
+    print_info "Discovering plugins..."
+    if ! load_all_plugins; then
         exit 1
     fi
-
-    if [[ ! -d "$NODE_TEMPLATE" ]]; then
-        print_error "Node.js template not found at: $NODE_TEMPLATE"
-        exit 1
-    fi
+    print_success "Loaded ${#LOADED_PLUGINS[@]} plugin(s): ${PLUGIN_NAMES[*]}"
 
     # Get project name if not provided
     if [[ -z "$project_name" ]]; then
@@ -502,13 +370,23 @@ main() {
         fi
     fi
 
-    # Execute setup
-    copy_core_template "$target_dir"
-    copy_claude_template "$target_dir"
-    merge_language_features "$target_dir" "$NODE_TEMPLATE"
-    merge_language_claude_settings "$target_dir" "$NODE_TEMPLATE"
+    # Execute plugin hooks in order
+    print_info "Executing plugin pre-copy hooks..."
+    execute_plugins_hook "plugin_pre_copy" "$target_dir"
+
+    print_info "Executing plugin copy hooks..."
+    execute_plugins_hook "plugin_copy" "$target_dir"
+
+    print_info "Executing plugin post-copy hooks..."
+    execute_plugins_hook "plugin_post_copy" "$target_dir"
+
+    # Finalization
     replace_placeholders "$target_dir" "$project_name"
     update_gitignore "$target_dir"
+
+    # Execute validation hooks
+    print_info "Executing plugin validation hooks..."
+    execute_plugins_hook "plugin_validate" "$target_dir"
 
     show_completion "$project_name"
 }
