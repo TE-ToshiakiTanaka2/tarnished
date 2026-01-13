@@ -18,6 +18,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 CORE_TEMPLATE="${TEMPLATES_DIR}/core"
+CLAUDE_TEMPLATE="${TEMPLATES_DIR}/claude"
 NODE_TEMPLATE="${TEMPLATES_DIR}/node"
 
 # Colors for output
@@ -85,10 +86,17 @@ Generated Files:
     docker-compose.yml              # Docker Compose configuration
     .claude/
         settings.json               # Claude Code settings
+        commands/                   # Custom slash commands
+            issue.md                # Issue creation command
+            implement.md            # Implementation command
+            pr.md                   # Pull request command
+        scripts/
+            deny-check.sh           # Command deny check script
+    CLAUDE.md                       # Claude Code project context
 
 Features Included:
     - Git and GitHub CLI
-    - Claude Code CLI
+    - Claude Code CLI with custom commands
     - Node.js 22.x (LTS)
     - VS Code extensions for development
 
@@ -163,6 +171,61 @@ copy_core_template() {
     print_success "Core template files copied"
 }
 
+copy_claude_template() {
+    local target_dir="$1"
+
+    print_info "Copying Claude Code template files..."
+
+    # Check if Claude template exists
+    if [[ ! -d "$CLAUDE_TEMPLATE" ]]; then
+        print_warning "Claude template not found, skipping Claude Code setup"
+        return 0
+    fi
+
+    # Copy Claude Code configuration (merge with existing .claude if present)
+    if [[ -d "${CLAUDE_TEMPLATE}/.claude" ]]; then
+        # Ensure target .claude directory exists
+        mkdir -p "${target_dir}/.claude"
+
+        # Copy commands directory
+        if [[ -d "${CLAUDE_TEMPLATE}/.claude/commands" ]]; then
+            cp -r "${CLAUDE_TEMPLATE}/.claude/commands" "${target_dir}/.claude/"
+        fi
+
+        # Copy scripts directory
+        if [[ -d "${CLAUDE_TEMPLATE}/.claude/scripts" ]]; then
+            cp -r "${CLAUDE_TEMPLATE}/.claude/scripts" "${target_dir}/.claude/"
+            # Make scripts executable
+            chmod +x "${target_dir}/.claude/scripts/"*.sh 2>/dev/null || true
+        fi
+
+        # Merge settings.json if both exist
+        if [[ -f "${CLAUDE_TEMPLATE}/.claude/settings.json" ]] && [[ -f "${target_dir}/.claude/settings.json" ]]; then
+            local temp_file="${target_dir}/.claude/settings.json.tmp"
+            jq -s '
+                .[0] as $core | .[1] as $claude |
+                {
+                    permissions: {
+                        allow: (($core.permissions.allow // []) + ($claude.permissions.allow // []) | unique),
+                        deny: (($core.permissions.deny // []) + ($claude.permissions.deny // []) | unique)
+                    },
+                    hooks: (($core.hooks // {}) + ($claude.hooks // {}))
+                }
+            ' "${target_dir}/.claude/settings.json" "${CLAUDE_TEMPLATE}/.claude/settings.json" > "$temp_file"
+            mv "$temp_file" "${target_dir}/.claude/settings.json"
+        elif [[ -f "${CLAUDE_TEMPLATE}/.claude/settings.json" ]]; then
+            cp "${CLAUDE_TEMPLATE}/.claude/settings.json" "${target_dir}/.claude/"
+        fi
+    fi
+
+    # Copy CLAUDE.md
+    if [[ -f "${CLAUDE_TEMPLATE}/CLAUDE.md" ]]; then
+        cp "${CLAUDE_TEMPLATE}/CLAUDE.md" "${target_dir}/"
+    fi
+
+    print_success "Claude Code template files copied"
+}
+
 merge_language_features() {
     local target_dir="$1"
     local lang_template="$2"
@@ -193,6 +256,37 @@ merge_language_features() {
     print_success "Language features merged"
 }
 
+merge_language_claude_settings() {
+    local target_dir="$1"
+    local lang_template="$2"
+
+    # Check if language template has Claude settings
+    local lang_claude_settings="${lang_template}/.claude/settings.json"
+    if [[ ! -f "$lang_claude_settings" ]]; then
+        return 0
+    fi
+
+    print_info "Merging language-specific Claude Code settings..."
+
+    local target_settings="${target_dir}/.claude/settings.json"
+    local temp_file="${target_dir}/.claude/settings.json.tmp"
+
+    # Merge settings.json - combine hooks
+    jq -s '
+        .[0] as $base | .[1] as $lang |
+        $base * {
+            hooks: {
+                PreToolUse: (($base.hooks.PreToolUse // []) + ($lang.hooks.PreToolUse // [])),
+                PostToolUse: (($base.hooks.PostToolUse // []) + ($lang.hooks.PostToolUse // []))
+            }
+        }
+    ' "$target_settings" "$lang_claude_settings" > "$temp_file"
+
+    mv "$temp_file" "$target_settings"
+
+    print_success "Language Claude Code settings merged"
+}
+
 replace_placeholders() {
     local target_dir="$1"
     local project_name="$2"
@@ -203,6 +297,7 @@ replace_placeholders() {
     local files=(
         "${target_dir}/.devcontainer/devcontainer.json"
         "${target_dir}/docker-compose.yml"
+        "${target_dir}/CLAUDE.md"
     )
 
     for file in "${files[@]}"; do
@@ -219,6 +314,27 @@ replace_placeholders() {
     done
 
     print_success "Placeholders replaced"
+}
+
+update_gitignore() {
+    local target_dir="$1"
+    local gitignore_file="${target_dir}/.gitignore"
+
+    print_info "Updating .gitignore..."
+
+    # Create .gitignore if it doesn't exist
+    if [[ ! -f "$gitignore_file" ]]; then
+        touch "$gitignore_file"
+    fi
+
+    # Add Claude Code settings.local.json if not already present
+    if ! grep -q "^\.claude/settings\.local\.json$" "$gitignore_file" 2>/dev/null; then
+        echo "" >> "$gitignore_file"
+        echo "# Claude Code local settings (personal preferences)" >> "$gitignore_file"
+        echo ".claude/settings.local.json" >> "$gitignore_file"
+    fi
+
+    print_success ".gitignore updated"
 }
 
 # =============================================================================
@@ -255,8 +371,15 @@ show_preview() {
     echo "  ├── docker/"
     echo "  │   └── Dockerfile.dev"
     echo "  ├── docker-compose.yml"
-    echo "  └── .claude/"
-    echo "      └── settings.json"
+    echo "  ├── .claude/"
+    echo "  │   ├── settings.json"
+    echo "  │   ├── commands/"
+    echo "  │   │   ├── issue.md"
+    echo "  │   │   ├── implement.md"
+    echo "  │   │   └── pr.md"
+    echo "  │   └── scripts/"
+    echo "  │       └── deny-check.sh"
+    echo "  └── CLAUDE.md"
     echo ""
 }
 
@@ -274,6 +397,11 @@ show_completion() {
     echo "  1. Open the project in VS Code"
     echo "  2. Click 'Reopen in Container' when prompted"
     echo "     Or use Command Palette: 'Dev Containers: Reopen in Container'"
+    echo ""
+    echo "Claude Code commands available:"
+    echo "  /issue      - Create a GitHub Issue"
+    echo "  /implement  - Implement a GitHub Issue"
+    echo "  /pr         - Create a Pull Request"
     echo ""
     echo "Project location: $(pwd)"
     echo ""
@@ -376,8 +504,11 @@ main() {
 
     # Execute setup
     copy_core_template "$target_dir"
+    copy_claude_template "$target_dir"
     merge_language_features "$target_dir" "$NODE_TEMPLATE"
+    merge_language_claude_settings "$target_dir" "$NODE_TEMPLATE"
     replace_placeholders "$target_dir" "$project_name"
+    update_gitignore "$target_dir"
 
     show_completion "$project_name"
 }
