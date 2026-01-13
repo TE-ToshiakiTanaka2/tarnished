@@ -192,11 +192,12 @@ setup_superclaude() {
 
     # Configure MCP servers
     echo "  - Configuring MCP servers..."
-    local mcp_args=""
+    local mcp_cmd="uvx superclaude mcp"
     for server in $mcp_servers; do
-        mcp_args="$mcp_args --servers $server"
+        mcp_cmd="$mcp_cmd --servers $server"
     done
-    eval "uvx superclaude mcp $mcp_args"
+    # shellcheck disable=SC2086
+    $mcp_cmd
 
     echo "  - SuperClaude setup complete"
 }
