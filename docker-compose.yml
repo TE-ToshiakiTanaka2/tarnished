@@ -7,19 +7,16 @@ services:
     volumes:
       # Mount the project directory into the container
       - .:/workspace:cached
-      # Persist bash history
-      # - ~/.bash_history:/home/node/.bash_history:cached
-      # Mount host's .gitconfig.local for user name/email
-      # - ~/.gitconfig:/home/node/.gitconfig:cached
-      # - ~/.gitconfig.local:/home/node/.gitconfig.local:cached
-      # - ~/.ssh:/home/node/.ssh:cached
 
-      # Mount host's workspace
-      # - ~/work/input:/home/node/input:ro
+      # Persist bash history
+      - ~/.bash_history:/home/vscode/.bash_history:cached
+
+      # Mount host's .gitconfig.local for user name/email
+      - ~/.gitconfig:/home/vscode/.gitconfig:cached
+      - ~/.gitconfig.local:/home/vscode/.gitconfig.local:cached
 
       # Github Cli Settings
-      - ~/.config/gh:/home/node/.config/gh:cached
-      # ssh config and host_config
+      - ~/.config/gh:/home/vscode/.config/gh:cached
       
     working_dir: /workspace
     # Keep the container running
