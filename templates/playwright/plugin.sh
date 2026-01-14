@@ -63,4 +63,28 @@ plugin_post_copy() {
 
         print_success "Playwright devcontainer features merged"
     fi
+
+    # Append Playwright setup commands to post.sh
+    local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
+
+    if [[ -f "$target_post_sh" ]]; then
+        print_info "Adding Playwright setup to post.sh..."
+
+        cat >> "$target_post_sh" << 'EOF'
+
+# -----------------------------------------------------------------------------
+# Playwright Browser Setup
+# -----------------------------------------------------------------------------
+if command -v npx &> /dev/null; then
+    echo "Installing Playwright browsers..."
+
+    # Install Chromium browser with dependencies
+    npx playwright install --with-deps chromium || true
+
+    echo "Playwright browsers installed."
+fi
+EOF
+
+        print_success "Playwright setup added to post.sh"
+    fi
 }
