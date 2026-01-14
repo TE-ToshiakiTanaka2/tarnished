@@ -7,7 +7,7 @@
 # has Playwright properly configured and available.
 #
 # IMPORTANT: These tests are meant to be run locally only, not in CI.
-# They require Docker to be available and may take several minutes.
+# They require Docker and devcontainer CLI to be available.
 # =============================================================================
 
 # Load test helpers
@@ -31,15 +31,17 @@ setup() {
 }
 
 teardown() {
-    # Stop and remove any containers created during the test
+    # Clean up devcontainer if project_dir was set
+    if [[ -n "${E2E_PROJECT_DIR:-}" && -d "${E2E_PROJECT_DIR}" ]]; then
+        cleanup_devcontainer "${E2E_PROJECT_DIR}" 2>/dev/null || true
+        # Also clean up docker-compose
+        (cd "${E2E_PROJECT_DIR}" && docker-compose down -v 2>/dev/null) || true
+    fi
+
+    # Stop and remove any containers created during the test (legacy cleanup)
     if [[ -n "${E2E_CONTAINER:-}" ]]; then
         docker stop "${E2E_CONTAINER}" 2>/dev/null || true
         docker rm -f "${E2E_CONTAINER}" 2>/dev/null || true
-    fi
-
-    # Clean up docker-compose if project_dir was set
-    if [[ -n "${E2E_PROJECT_DIR:-}" && -d "${E2E_PROJECT_DIR}" ]]; then
-        (cd "${E2E_PROJECT_DIR}" && docker-compose down -v 2>/dev/null) || true
     fi
 
     teardown_temp_dir
@@ -93,34 +95,36 @@ create_playwright_project() {
 }
 
 # =============================================================================
-# Container Tests
+# Devcontainer Tests
 # =============================================================================
 
 @test "e2e/playwright: container starts successfully" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_playwright_project "pw-startup-test")
 
-    # Build the image
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-pw-startup" "${project_dir}" >/dev/null 2>&1
-
-    # Start the container
-    E2E_CONTAINER=$(docker run -d --name "e2e-pw-startup-container" "e2e-pw-startup" tail -f /dev/null)
-
-    # Wait for container to be ready
-    run wait_for_container "${E2E_CONTAINER}" 30
+    # Start devcontainer
+    run start_devcontainer "${project_dir}"
     assert_success
 }
 
 @test "e2e/playwright: npx playwright is available" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_playwright_project "pw-npx-test")
 
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-pw-npx" "${project_dir}" >/dev/null 2>&1
-    E2E_CONTAINER=$(docker run -d --name "e2e-pw-npx-container" "e2e-pw-npx" tail -f /dev/null)
-    wait_for_container "${E2E_CONTAINER}" 30
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
 
     # Check that npx is available (playwright is typically run via npx)
-    run verify_command_exists "${E2E_CONTAINER}" "npx"
+    run verify_devcontainer_command "${project_dir}" "npx"
     assert_success
 }
 

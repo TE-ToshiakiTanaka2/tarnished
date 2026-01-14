@@ -4,10 +4,10 @@
 # =============================================================================
 #
 # These tests verify that a project created with the node template
-# can be built and run successfully in Docker.
+# can be built and run successfully using devcontainer CLI.
 #
 # IMPORTANT: These tests are meant to be run locally only, not in CI.
-# They require Docker to be available and may take several minutes.
+# They require Docker and devcontainer CLI to be available.
 # =============================================================================
 
 # Load test helpers
@@ -31,15 +31,17 @@ setup() {
 }
 
 teardown() {
-    # Stop and remove any containers created during the test
+    # Clean up devcontainer if project_dir was set
+    if [[ -n "${E2E_PROJECT_DIR:-}" && -d "${E2E_PROJECT_DIR}" ]]; then
+        cleanup_devcontainer "${E2E_PROJECT_DIR}" 2>/dev/null || true
+        # Also clean up docker-compose
+        (cd "${E2E_PROJECT_DIR}" && docker-compose down -v 2>/dev/null) || true
+    fi
+
+    # Stop and remove any containers created during the test (legacy cleanup)
     if [[ -n "${E2E_CONTAINER:-}" ]]; then
         docker stop "${E2E_CONTAINER}" 2>/dev/null || true
         docker rm -f "${E2E_CONTAINER}" 2>/dev/null || true
-    fi
-
-    # Clean up docker-compose if project_dir was set
-    if [[ -n "${E2E_PROJECT_DIR:-}" && -d "${E2E_PROJECT_DIR}" ]]; then
-        (cd "${E2E_PROJECT_DIR}" && docker-compose down -v 2>/dev/null) || true
     fi
 
     teardown_temp_dir
@@ -79,97 +81,114 @@ create_node_project() {
 }
 
 # =============================================================================
-# Container Startup Tests
+# Devcontainer Startup Tests
 # =============================================================================
 
 @test "e2e/node: container starts successfully" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_node_project "node-startup-test")
 
-    # Build the image
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-node-startup" "${project_dir}" >/dev/null 2>&1
-
-    # Start the container
-    E2E_CONTAINER=$(docker run -d --name "e2e-node-startup-container" "e2e-node-startup" tail -f /dev/null)
-
-    # Wait for container to be ready
-    run wait_for_container "${E2E_CONTAINER}" 30
+    # Start devcontainer
+    run start_devcontainer "${project_dir}"
     assert_success
 }
 
 # =============================================================================
-# Command Availability Tests
+# Command Availability Tests (using devcontainer CLI)
 # =============================================================================
 
 @test "e2e/node: git is available in container" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_node_project "node-git-test")
 
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-node-git" "${project_dir}" >/dev/null 2>&1
-    E2E_CONTAINER=$(docker run -d --name "e2e-node-git-container" "e2e-node-git" tail -f /dev/null)
-    wait_for_container "${E2E_CONTAINER}" 30
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
 
-    run verify_command_exists "${E2E_CONTAINER}" "git"
+    run verify_devcontainer_command "${project_dir}" "git"
     assert_success
 }
 
 @test "e2e/node: curl is available in container" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_node_project "node-curl-test")
 
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-node-curl" "${project_dir}" >/dev/null 2>&1
-    E2E_CONTAINER=$(docker run -d --name "e2e-node-curl-container" "e2e-node-curl" tail -f /dev/null)
-    wait_for_container "${E2E_CONTAINER}" 30
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
 
-    run verify_command_exists "${E2E_CONTAINER}" "curl"
+    run verify_devcontainer_command "${project_dir}" "curl"
     assert_success
 }
 
 @test "e2e/node: jq is available in container" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_node_project "node-jq-test")
 
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-node-jq" "${project_dir}" >/dev/null 2>&1
-    E2E_CONTAINER=$(docker run -d --name "e2e-node-jq-container" "e2e-node-jq" tail -f /dev/null)
-    wait_for_container "${E2E_CONTAINER}" 30
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
 
-    run verify_command_exists "${E2E_CONTAINER}" "jq"
+    run verify_devcontainer_command "${project_dir}" "jq"
     assert_success
 }
 
 @test "e2e/node: node is available in container" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_node_project "node-node-test")
 
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-node-node" "${project_dir}" >/dev/null 2>&1
-    E2E_CONTAINER=$(docker run -d --name "e2e-node-node-container" "e2e-node-node" tail -f /dev/null)
-    wait_for_container "${E2E_CONTAINER}" 30
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
 
-    run verify_command_exists "${E2E_CONTAINER}" "node"
+    run verify_devcontainer_command "${project_dir}" "node"
     assert_success
 }
 
 @test "e2e/node: npm is available in container" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_node_project "node-npm-test")
 
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-node-npm" "${project_dir}" >/dev/null 2>&1
-    E2E_CONTAINER=$(docker run -d --name "e2e-node-npm-container" "e2e-node-npm" tail -f /dev/null)
-    wait_for_container "${E2E_CONTAINER}" 30
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
 
-    run verify_command_exists "${E2E_CONTAINER}" "npm"
+    run verify_devcontainer_command "${project_dir}" "npm"
     assert_success
 }
 
 @test "e2e/node: bun is available in container" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_node_project "node-bun-test")
 
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-node-bun" "${project_dir}" >/dev/null 2>&1
-    E2E_CONTAINER=$(docker run -d --name "e2e-node-bun-container" "e2e-node-bun" tail -f /dev/null)
-    wait_for_container "${E2E_CONTAINER}" 30
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
 
-    run verify_command_exists "${E2E_CONTAINER}" "bun"
+    run verify_devcontainer_command "${project_dir}" "bun"
     assert_success
 }
 
@@ -189,14 +208,17 @@ create_node_project() {
 # =============================================================================
 
 @test "e2e/node: node version is available" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
     local project_dir
     project_dir=$(create_node_project "node-version-test")
 
-    docker build -f "${project_dir}/docker/Dockerfile.dev" -t "e2e-node-version" "${project_dir}" >/dev/null 2>&1
-    E2E_CONTAINER=$(docker run -d --name "e2e-node-version-container" "e2e-node-version" tail -f /dev/null)
-    wait_for_container "${E2E_CONTAINER}" 30
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
 
-    run get_command_version "${E2E_CONTAINER}" "node"
+    run get_devcontainer_command_version "${project_dir}" "node"
     assert_success
     # Should output version string containing "v" (e.g., v22.x.x)
     assert_output --regexp "v[0-9]+"
