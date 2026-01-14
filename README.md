@@ -111,6 +111,38 @@ templates/
 2. Click "Reopen in Container" when prompted
 3. Or use Command Palette: `Dev Containers: Reopen in Container`
 
+## Testing
+
+This project includes a comprehensive test suite using [Bats](https://github.com/bats-core/bats-core).
+
+### Running Tests
+
+```bash
+# Run all tests
+bats tests/
+
+# Run specific test categories
+bats tests/unit/        # Unit tests
+bats tests/integration/ # Integration tests
+bats tests/e2e/         # E2E tests (requires Docker)
+```
+
+### E2E Tests
+
+E2E tests verify that generated projects can be built and run successfully in Docker.
+
+**Prerequisites**: E2E tests require Docker to be available. In Devcontainer environments, Docker-in-Docker (DinD) is enabled automatically.
+
+```bash
+# Run E2E tests (inside Devcontainer)
+bats tests/e2e/
+
+# Run specific E2E test file
+bats tests/e2e/test_node_template.bats
+```
+
+**Note**: If Docker is not available, E2E tests will be skipped automatically.
+
 ## Roadmap
 
 - [ ] Python template

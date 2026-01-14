@@ -13,7 +13,10 @@
     "ghcr.io/devcontainer-community/devcontainer-features/astral.sh-uv:1": {
       "version": "latest"
     },
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "dockerDashComposeVersion": "v2"
+    }
   },
   "customizations": {
     "vscode": {
@@ -21,7 +24,8 @@
         "tamasfe.even-better-toml", // TOML file support
         "anthropic.claude-code",
         "mhutchie.git-graph",
-        "eamodio.gitlens"
+        "eamodio.gitlens",
+        "ms-azuretools.vscode-docker" // Docker container management
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "bash"
