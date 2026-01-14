@@ -109,12 +109,12 @@ plugin_post_copy() {
 
     # Update .gitignore to include .env
     local gitignore="${target_dir}/.gitignore"
-    if [[ -f "$gitignore" ]]; then
-        if ! grep -q "^\.env$" "$gitignore" 2>/dev/null; then
-            print_info "Adding .env to .gitignore..."
-            echo "" >> "$gitignore"
-            echo "# Environment variables (contains secrets)" >> "$gitignore"
-            echo ".env" >> "$gitignore"
-        fi
+    if ! grep -q "^\.env$" "$gitignore" 2>/dev/null; then
+        print_info "Adding .env to .gitignore..."
+        {
+            echo ""
+            echo "# Environment variables (contains secrets)"
+            echo ".env"
+        } >> "$gitignore"
     fi
 }
