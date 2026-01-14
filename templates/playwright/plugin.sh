@@ -35,6 +35,20 @@ plugin_description() {
 plugin_post_copy() {
     local target_dir="$1"
 
+    # Copy playwright.config.mjs if it exists
+    local plugin_config="${PLUGIN_DIR}/playwright.config.mjs"
+    if [[ -f "$plugin_config" ]]; then
+        print_info "Copying Playwright configuration file..."
+        cp "$plugin_config" "${target_dir}/"
+        print_success "Playwright configuration file copied"
+    fi
+
+    # Create tests/e2e directory for Playwright tests
+    if [[ ! -d "${target_dir}/tests/e2e" ]]; then
+        mkdir -p "${target_dir}/tests/e2e"
+        print_info "Created tests/e2e directory for Playwright tests"
+    fi
+
     # Merge devcontainer.json features and extensions
     local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
     local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
