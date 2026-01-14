@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write(*.py)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ruff check --fix $CLAUDE_FILE_PATH && ruff format $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.py)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ruff check --fix $CLAUDE_FILE_PATH && ruff format $CLAUDE_FILE_PATH"
+          }
+        ]
+      }
+    ]
+  }
+}
