@@ -1,0 +1,75 @@
+# =============================================================================
+# GitHub Actions Workflow: Shell Script Tests
+# =============================================================================
+#
+# This workflow runs unit and integration tests for shell scripts.
+# E2E tests are excluded as they require Docker and are meant for local execution.
+#
+# Triggers: Push to main/develop, Pull Requests
+# =============================================================================
+
+name: Shell Script Tests
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  test:
+    name: Run Shell Script Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Verify Bats installation
+        run: bats --version
+
+      - name: Initialize git submodules
+        run: git submodule update --init --recursive
+
+      - name: Run Unit Tests
+        run: |
+          echo "Running unit tests..."
+          bats tests/unit/*.bats
+
+      - name: Run Integration Tests
+        run: |
+          echo "Running integration tests..."
+          bats tests/integration/*.bats
+
+  lint:
+    name: Lint Shell Scripts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on scripts
+        run: |
+          echo "Checking shell scripts..."
+          find . -name "*.sh" -not -path "./tests/libs/*" -not -path "./.git/*" | \
+            xargs shellcheck --severity=warning || true
+
+      - name: Run ShellCheck on test helpers
+        run: |
+          echo "Checking test helpers..."
+          find tests/helpers -name "*.bash" | xargs shellcheck --severity=warning || true

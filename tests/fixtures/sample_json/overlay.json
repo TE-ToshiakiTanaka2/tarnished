@@ -1,0 +1,8 @@
+{
+    "name": "overlay",
+    "settings": {
+        "debug": true,
+        "maxRetries": 3
+    },
+    "features": ["extra"]
+}

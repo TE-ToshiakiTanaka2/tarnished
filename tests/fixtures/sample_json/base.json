@@ -1,0 +1,8 @@
+{
+    "name": "base",
+    "settings": {
+        "debug": false,
+        "timeout": 30
+    },
+    "features": ["core"]
+}
