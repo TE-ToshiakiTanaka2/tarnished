@@ -27,6 +27,8 @@ Or with a project name directly:
 - **Git & GitHub CLI** - Pre-configured for version control
 - **Claude Code** - AI-powered coding assistant
 - **VS Code Extensions** - ESLint, Prettier, GitLens, Git Graph
+- **Docker-in-Docker** (optional) - Container development inside devcontainer
+- **Playwright** (optional) - E2E testing support
 
 ## Usage
 
@@ -51,6 +53,9 @@ The script will prompt you for a project name.
 | `-h, --help` | Show help message |
 | `-d, --dry-run` | Preview files without creating them |
 | `-y, --yes` | Skip confirmation prompts |
+| `--lang <languages>` | Select language template(s), comma-separated |
+| `--docker` | Include Docker-in-Docker (DinD) support |
+| `--playwright` | Include Playwright for E2E testing |
 
 ### Examples
 
@@ -60,6 +65,15 @@ The script will prompt you for a project name.
 
 # Create without confirmation
 ./setup.sh --yes my-project
+
+# Node.js with Docker-in-Docker support
+./setup.sh --lang node --docker my-project
+
+# Node.js with Playwright for E2E testing
+./setup.sh --lang node --playwright my-project
+
+# Node.js with both Docker and Playwright
+./setup.sh --lang node --docker --playwright my-app
 ```
 
 ## Generated Files
@@ -110,6 +124,40 @@ templates/
 1. Open the project directory in VS Code
 2. Click "Reopen in Container" when prompted
 3. Or use Command Palette: `Dev Containers: Reopen in Container`
+
+## Optional Features
+
+### Docker-in-Docker (DinD)
+
+Enable Docker-in-Docker support with the `--docker` flag:
+
+```bash
+./setup.sh --lang node --docker my-project
+```
+
+This adds:
+- Docker-in-Docker devcontainer feature
+- Docker Compose v2
+- VS Code Docker extension
+
+Use cases:
+- Running Testcontainers for integration tests
+- Building and testing Docker images
+- Running docker-compose for local dependencies
+- Container application development and debugging
+
+### Playwright
+
+Enable Playwright E2E testing with the `--playwright` flag:
+
+```bash
+./setup.sh --lang node --playwright my-project
+```
+
+This adds:
+- Playwright devcontainer feature with browser dependencies
+- VS Code Playwright extension
+- Pre-configured playwright.config.mjs
 
 ## Testing
 
