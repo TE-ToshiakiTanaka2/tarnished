@@ -181,6 +181,82 @@ merge_claude_settings_hooks() {
 }
 
 # =============================================================================
+# Docker Compose Utility Functions
+# =============================================================================
+
+# Merge docker-compose.yml files (add services and volumes from overlay)
+# Usage: merge_docker_compose_services <base_file> <overlay_file> <output_file>
+merge_docker_compose_services() {
+    local base_file="$1"
+    local overlay_file="$2"
+    local output_file="$3"
+
+    if [[ ! -f "$base_file" ]]; then
+        print_error "Base file not found: $base_file"
+        return 1
+    fi
+
+    if [[ ! -f "$overlay_file" ]]; then
+        print_error "Overlay file not found: $overlay_file"
+        return 1
+    fi
+
+    # Check if yq is available for direct YAML processing
+    if command -v yq &> /dev/null; then
+        # Use yq for YAML merge
+        if ! yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' "$base_file" "$overlay_file" > "$output_file"; then
+            print_error "Failed to merge docker-compose files with yq"
+            return 1
+        fi
+    else
+        # Fallback: Convert YAML to JSON, merge with jq, convert back
+        # This requires yq for the final conversion, so we use a simpler approach
+        # Append the overlay content with proper YAML structure
+
+        # Read base file
+        local base_content
+        base_content=$(cat "$base_file")
+
+        # Read overlay file and extract services and volumes sections
+        local overlay_services
+        local overlay_volumes
+
+        # Extract services from overlay (skip the 'services:' header line)
+        overlay_services=$(sed -n '/^services:/,/^volumes:/{ /^services:/d; /^volumes:/d; p; }' "$overlay_file")
+
+        # Extract volumes from overlay (skip the 'volumes:' header line)
+        overlay_volumes=$(sed -n '/^volumes:/,/^[a-z]/{ /^volumes:/d; /^[a-z]/d; p; }' "$overlay_file")
+        # Handle case where volumes is at the end of file
+        if [[ -z "$overlay_volumes" ]]; then
+            overlay_volumes=$(sed -n '/^volumes:/,$ { /^volumes:/d; p; }' "$overlay_file")
+        fi
+
+        # Check if base already has volumes section
+        if grep -q "^volumes:" "$base_file"; then
+            # Insert services before volumes section, add volumes at the end
+            {
+                sed '/^volumes:/,$d' "$base_file"
+                echo "$overlay_services"
+                echo ""
+                echo "volumes:"
+                sed -n '/^volumes:/,$ { /^volumes:/d; p; }' "$base_file"
+                echo "$overlay_volumes"
+            } > "$output_file"
+        else
+            # Append services and volumes sections
+            {
+                cat "$base_file"
+                echo ""
+                echo "$overlay_services"
+                echo ""
+                echo "volumes:"
+                echo "$overlay_volumes"
+            } > "$output_file"
+        fi
+    fi
+}
+
+# =============================================================================
 # File Utility Functions
 # =============================================================================
 

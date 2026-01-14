@@ -39,6 +39,7 @@ declare -A LANGUAGE_DISPLAY_NAMES=(
 PLAYWRIGHT_ENABLED=false
 
 DOCKER_ENABLED=false
+POSTGRESQL_ENABLED=false
 
 # Core plugins that are always loaded
 declare -a CORE_PLUGINS=("core" "claude")
@@ -62,6 +63,7 @@ Options:
                         (e.g., --lang node or --lang node,python)
     --playwright        Include Playwright for E2E testing
     --docker            Include Docker-in-Docker (DinD) support
+    --postgresql        Include PostgreSQL database support
 
 Arguments:
     PROJECT_NAME        Name for your project (optional, will prompt if not provided)
@@ -81,6 +83,7 @@ Examples:
     ./setup.sh --lang node --playwright     # Node.js with Playwright
     ./setup.sh --lang node --docker         # Node.js with Docker-in-Docker
     ./setup.sh --lang node --docker --playwright  # Node.js with both
+    ./setup.sh --lang node --postgresql          # Node.js with PostgreSQL
     ./setup.sh my-project --lang node -y    # Non-interactive mode
 
 Generated Files:
@@ -108,6 +111,7 @@ Features Included:
     - VS Code extensions for development
     - Playwright (optional) for E2E testing
     - Docker-in-Docker (optional) for container development
+    - PostgreSQL (optional) for database development
 
 EOF
 }
@@ -176,7 +180,7 @@ discover_available_languages() {
         fi
 
         # Skip optional feature plugins (handled separately)
-        if [[ "$plugin_name" == "playwright" ]] || [[ "$plugin_name" == "docker" ]]; then
+        if [[ "$plugin_name" == "playwright" ]] || [[ "$plugin_name" == "docker" ]] || [[ "$plugin_name" == "postgresql" ]]; then
             continue
         fi
 
@@ -433,7 +437,17 @@ load_selected_plugins() {
         fi
     fi
 
-    # 5. Playwright plugin (if enabled)
+    # 5. PostgreSQL plugin (if enabled)
+    if [[ "$POSTGRESQL_ENABLED" == true ]]; then
+        local postgresql_path="${TEMPLATES_DIR}/postgresql/plugin.sh"
+        if [[ -f "$postgresql_path" ]]; then
+            load_order+=("$postgresql_path")
+        else
+            print_warning "PostgreSQL plugin not found, skipping"
+        fi
+    fi
+
+    # 6. Playwright plugin (if enabled)
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         local playwright_path="${TEMPLATES_DIR}/playwright/plugin.sh"
         if [[ -f "$playwright_path" ]]; then
@@ -537,6 +551,9 @@ show_preview() {
     if [[ "$DOCKER_ENABLED" == true ]]; then
         print_info "Docker-in-Docker: enabled"
     fi
+    if [[ "$POSTGRESQL_ENABLED" == true ]]; then
+        print_info "PostgreSQL: enabled"
+    fi
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         print_info "Playwright: enabled"
     fi
@@ -565,6 +582,9 @@ show_completion() {
     echo "  Languages:   ${SELECTED_LANGUAGES[*]}"
     if [[ "$DOCKER_ENABLED" == true ]]; then
         echo "  Docker:      enabled"
+    fi
+    if [[ "$POSTGRESQL_ENABLED" == true ]]; then
+        echo "  PostgreSQL:  enabled"
     fi
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         echo "  Playwright:  enabled"
@@ -619,6 +639,10 @@ main() {
                 ;;
             --docker)
                 DOCKER_ENABLED=true
+                shift
+                ;;
+            --postgresql)
+                POSTGRESQL_ENABLED=true
                 shift
                 ;;
             -*)

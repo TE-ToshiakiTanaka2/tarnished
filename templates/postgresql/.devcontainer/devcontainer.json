@@ -1,0 +1,10 @@
+{
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ckolkman.vscode-postgres"
+            ],
+            "settings": {}
+        }
+    }
+}
