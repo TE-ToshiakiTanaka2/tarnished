@@ -305,6 +305,8 @@ start_devcontainer() {
         return 1
     fi
 
+    # Export for use in tests
+    # shellcheck disable=SC2034
     E2E_DEVCONTAINER_ID="${container_id}"
     echo "${container_id}"
 }
