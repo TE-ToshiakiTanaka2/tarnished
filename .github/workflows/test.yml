@@ -31,10 +31,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Bats
+      - name: Install Bats and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats
+          sudo apt-get install -y bats jq
 
       - name: Verify Bats installation
         run: bats --version

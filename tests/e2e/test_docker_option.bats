@@ -34,8 +34,8 @@ teardown() {
     # Clean up devcontainer if project_dir was set
     if [[ -n "${E2E_PROJECT_DIR:-}" && -d "${E2E_PROJECT_DIR}" ]]; then
         cleanup_devcontainer "${E2E_PROJECT_DIR}" 2>/dev/null || true
-        # Also clean up docker-compose
-        (cd "${E2E_PROJECT_DIR}" && docker-compose down -v 2>/dev/null) || true
+        # Also clean up docker compose
+        (cd "${E2E_PROJECT_DIR}" && docker compose down -v 2>/dev/null) || true
     fi
 
     # Stop and remove any containers created during the test (legacy cleanup)
@@ -136,7 +136,7 @@ create_docker_project() {
     assert_success
 }
 
-@test "e2e/docker: docker-compose command is available in container" {
+@test "e2e/docker: docker compose command is available in container" {
     # Skip if devcontainer CLI is not available
     if ! check_devcontainer_cli; then
         skip "devcontainer CLI is not available"
@@ -147,8 +147,8 @@ create_docker_project() {
 
     start_devcontainer "${project_dir}" >/dev/null 2>&1
 
-    # Check that docker-compose is available inside the container
-    run verify_devcontainer_command "${project_dir}" "docker-compose"
+    # Check that docker compose (v2) is available inside the container
+    run exec_in_devcontainer "${project_dir}" docker compose version
     assert_success
 }
 

@@ -34,8 +34,8 @@ teardown() {
     # Clean up devcontainer if project_dir was set
     if [[ -n "${E2E_PROJECT_DIR:-}" && -d "${E2E_PROJECT_DIR}" ]]; then
         cleanup_devcontainer "${E2E_PROJECT_DIR}" 2>/dev/null || true
-        # Also clean up docker-compose
-        (cd "${E2E_PROJECT_DIR}" && docker-compose down -v 2>/dev/null) || true
+        # Also clean up docker compose
+        (cd "${E2E_PROJECT_DIR}" && docker compose down -v 2>/dev/null) || true
     fi
 
     # Stop and remove any containers created during the test (legacy cleanup)
