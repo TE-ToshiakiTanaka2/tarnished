@@ -24,7 +24,8 @@
         "tamasfe.even-better-toml", // TOML file support
         "anthropic.claude-code",
         "mhutchie.git-graph",
-        "eamodio.gitlens"
+        "eamodio.gitlens",
+        "ms-azuretools.vscode-docker" // Docker container management
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "bash"
