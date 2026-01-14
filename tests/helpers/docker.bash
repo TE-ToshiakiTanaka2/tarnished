@@ -195,9 +195,9 @@ exec_with_compose() {
 #   $2 - command name
 verify_command_exists() {
     local container="$1"
-    local cmd="$2"
+    local command_name="$2"
 
-    exec_in_container "${container}" which "${cmd}" >/dev/null 2>&1
+    exec_in_container "${container}" which "${command_name}" >/dev/null 2>&1
 }
 
 # Verify command version in container
@@ -207,10 +207,10 @@ verify_command_exists() {
 #   $3 - version flag (optional, defaults to "--version")
 get_command_version() {
     local container="$1"
-    local cmd="$2"
+    local command_name="$2"
     local version_flag="${3:---version}"
 
-    exec_in_container "${container}" "${cmd}" "${version_flag}" 2>&1 | head -1
+    exec_in_container "${container}" "${command_name}" "${version_flag}" 2>&1 | head -1
 }
 
 # Wait for container to be ready
@@ -250,7 +250,8 @@ cleanup_e2e_containers() {
 
 # Cleanup test images
 # Arguments:
-#   $1 - image tag pattern (optional)
+#   $1 - image tag pattern (optional, defaults to E2E_CONTAINER_PREFIX)
+# shellcheck disable=SC2120
 cleanup_test_images() {
     local pattern="${1:-${E2E_CONTAINER_PREFIX}}"
 

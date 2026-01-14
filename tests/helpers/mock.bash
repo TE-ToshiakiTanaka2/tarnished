@@ -90,6 +90,7 @@ mock_prompt_language_selection() {
     mock_record_call "prompt_language_selection" "$@"
     # Set SELECTED_LANGUAGES based on mock config
     local return_val="${MOCK_RETURN_VALUES["prompt_language_selection"]:-python}"
+    # shellcheck disable=SC2034  # Variable used externally by tests
     SELECTED_LANGUAGES=("${return_val}")
 }
 
@@ -97,6 +98,7 @@ mock_prompt_language_selection() {
 mock_prompt_playwright() {
     mock_record_call "prompt_playwright" "$@"
     local return_val="${MOCK_RETURN_VALUES["prompt_playwright"]:-false}"
+    # shellcheck disable=SC2034  # Variable used externally by tests
     PLAYWRIGHT_ENABLED="${return_val}"
 }
 
