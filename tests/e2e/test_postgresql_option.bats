@@ -34,7 +34,7 @@ teardown() {
     # Clean up devcontainer if project_dir was set
     if [[ -n "${E2E_PROJECT_DIR:-}" && -d "${E2E_PROJECT_DIR}" ]]; then
         cleanup_devcontainer "${E2E_PROJECT_DIR}" 2>/dev/null || true
-        # Also clean up docker-compose
+        # Also clean up docker compose
         (cd "${E2E_PROJECT_DIR}" && docker compose down -v 2>/dev/null) || true
     fi
 
@@ -155,7 +155,7 @@ create_postgresql_project() {
     local project_dir
     project_dir=$(create_postgresql_project "postgresql-compose-valid-test")
 
-    # docker-compose config should succeed
+    # docker compose config should succeed
     run bash -c "cd '${project_dir}' && docker compose config > /dev/null"
     assert_success
 }

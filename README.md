@@ -116,8 +116,9 @@ templates/
 
 - Bash
 - jq (JSON processor)
-- Docker & Docker Compose (for running the container)
+- Docker & Docker Compose v2 (for running the container)
 - VS Code with Dev Containers extension
+- devcontainer CLI (for E2E tests)
 
 ## Next Steps After Setup
 
@@ -179,10 +180,13 @@ bats tests/e2e/         # E2E tests (requires Docker)
 
 E2E tests verify that generated projects can be built and run successfully in Docker.
 
-**Prerequisites**: E2E tests require Docker to be available. In Devcontainer environments, Docker-in-Docker (DinD) is enabled automatically.
+**Prerequisites**:
+- Docker & Docker Compose v2 (`docker compose` command)
+- devcontainer CLI (`npm install -g @devcontainers/cli`)
+- jq (JSON processor)
 
 ```bash
-# Run E2E tests (inside Devcontainer)
+# Run E2E tests
 bats tests/e2e/
 
 # Run specific E2E test file

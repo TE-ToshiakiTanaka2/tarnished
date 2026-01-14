@@ -20,6 +20,11 @@ E2E_CONTAINER_PREFIX="bats-e2e-test"
 # Default timeout for container operations (seconds)
 E2E_TIMEOUT=120
 
+# Default timeout for devcontainer up command (seconds)
+# This includes Docker build, feature installation, and postCreateCommand
+# Set higher value as devcontainer startup can be slow
+E2E_DEVCONTAINER_TIMEOUT=600
+
 # =============================================================================
 # Project Generation
 # =============================================================================
@@ -80,7 +85,7 @@ build_test_image() {
         "${project_dir}"
 }
 
-# Build using docker-compose
+# Build using docker compose
 # Arguments:
 #   $1 - project directory
 build_with_compose() {
@@ -93,7 +98,7 @@ build_with_compose() {
 
     (
         cd "${project_dir}" || return 1
-        docker-compose build
+        docker compose build
     )
 }
 
@@ -118,7 +123,7 @@ start_container() {
     echo "${container_name}"
 }
 
-# Start container using docker-compose
+# Start container using docker compose
 # Arguments:
 #   $1 - project directory
 #   $2 - service name (optional, defaults to "dev")
@@ -128,7 +133,7 @@ start_with_compose() {
 
     (
         cd "${project_dir}" || return 1
-        docker-compose up -d "${service}"
+        docker compose up -d "${service}"
     )
 }
 
@@ -142,7 +147,7 @@ stop_container() {
     docker rm -f "${container}" 2>/dev/null || true
 }
 
-# Stop containers using docker-compose
+# Stop containers using docker compose
 # Arguments:
 #   $1 - project directory
 stop_with_compose() {
@@ -150,7 +155,7 @@ stop_with_compose() {
 
     (
         cd "${project_dir}" || return 1
-        docker-compose down -v 2>/dev/null || true
+        docker compose down -v 2>/dev/null || true
     )
 }
 
@@ -169,7 +174,7 @@ exec_in_container() {
     docker exec "${container}" "$@"
 }
 
-# Execute a command using docker-compose
+# Execute a command using docker compose
 # Arguments:
 #   $1 - project directory
 #   $2 - service name
@@ -181,7 +186,7 @@ exec_with_compose() {
 
     (
         cd "${project_dir}" || return 1
-        docker-compose exec -T "${service}" "$@"
+        docker compose exec -T "${service}" "$@"
     )
 }
 
@@ -278,23 +283,43 @@ check_devcontainer_cli() {
 # Build and start a devcontainer
 # Arguments:
 #   $1 - workspace folder path
+#   $2 - timeout in seconds (optional, defaults to E2E_DEVCONTAINER_TIMEOUT or 600)
 # Outputs:
 #   Container ID on success
 #   Sets E2E_DEVCONTAINER_ID variable
 start_devcontainer() {
     local workspace_folder="$1"
+    local timeout="${2:-${E2E_DEVCONTAINER_TIMEOUT:-600}}"
     local output
     local container_id
+    local exit_code
 
     if ! check_devcontainer_cli; then
         echo "Error: devcontainer CLI not available" >&2
         return 1
     fi
 
-    # Start devcontainer and capture output
-    output=$(devcontainer up \
+    echo "Starting devcontainer with ${timeout}s timeout..." >&2
+
+    # Start devcontainer with timeout and debug logging
+    # Using timeout command to prevent infinite hangs
+    # --remote-env CI=true ensures post.sh skips interactive prompts
+    output=$(timeout "${timeout}" devcontainer up \
         --workspace-folder "${workspace_folder}" \
-        --remove-existing-container 2>&1)
+        --remove-existing-container \
+        --remote-env CI=true \
+        --log-level debug 2>&1) || exit_code=$?
+
+    # Check if timeout occurred (exit code 124)
+    if [[ "${exit_code:-0}" -eq 124 ]]; then
+        echo "Error: devcontainer up timed out after ${timeout} seconds" >&2
+        echo "This may indicate:" >&2
+        echo "  - Interactive prompts waiting for input (check post.sh)" >&2
+        echo "  - Slow network during feature installation" >&2
+        echo "  - Docker build issues" >&2
+        echo "Last output: ${output}" >&2
+        return 1
+    fi
 
     # Extract container ID from JSON output
     container_id=$(echo "${output}" | grep -o '"containerId":"[^"]*"' | cut -d'"' -f4)
@@ -341,8 +366,8 @@ cleanup_devcontainer() {
         # It's a workspace folder - try to find and stop the container
         if check_devcontainer_cli; then
             local container_id
-            # Try to get existing container ID
-            container_id=$(devcontainer up \
+            # Try to get existing container ID with short timeout (just querying, not starting)
+            container_id=$(timeout 30 devcontainer up \
                 --workspace-folder "${workspace_or_container}" \
                 --expect-existing-container 2>/dev/null | \
                 grep -o '"containerId":"[^"]*"' | cut -d'"' -f4 || true)
