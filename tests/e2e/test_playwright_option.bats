@@ -141,3 +141,45 @@ create_playwright_project() {
     run grep -rE "playwright|chromium|firefox|webkit" "${project_dir}/"
     assert_success
 }
+
+# =============================================================================
+# Post.sh Setup Tests
+# =============================================================================
+
+@test "e2e/playwright: post.sh contains playwright browser installation" {
+    local project_dir
+    project_dir=$(create_playwright_project "pw-postsh-test")
+
+    # Check if post.sh contains playwright install command
+    run grep -q "playwright install" "${project_dir}/.devcontainer/scripts/post.sh"
+    assert_success
+}
+
+@test "e2e/playwright: post.sh contains chromium installation" {
+    local project_dir
+    project_dir=$(create_playwright_project "pw-postsh-chromium-test")
+
+    # Check if post.sh contains chromium installation
+    run grep -q "chromium" "${project_dir}/.devcontainer/scripts/post.sh"
+    assert_success
+}
+
+# =============================================================================
+# Playwright Browser Installation Tests (via devcontainer)
+# =============================================================================
+
+@test "e2e/playwright: playwright browsers are installed after container setup" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
+    local project_dir
+    project_dir=$(create_playwright_project "pw-browsers-test")
+
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
+
+    # Check that playwright chromium is installed
+    run exec_in_devcontainer "${project_dir}" npx playwright --version
+    assert_success
+}
