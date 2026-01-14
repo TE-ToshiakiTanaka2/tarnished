@@ -1,0 +1,3 @@
+# Place SQL initialization scripts here.
+# Files will be executed in alphabetical order when the database is first created.
+# Example: 01_create_tables.sql, 02_seed_data.sql
