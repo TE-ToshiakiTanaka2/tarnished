@@ -78,7 +78,9 @@ templates/rust/
 | `vadimcn.vscode-lldb` | Debugger for Rust |
 | `serayuzgur.crates` | Cargo.toml dependency management |
 
-### 3. Post-Create Command
+### 3. Optional Cargo Tools
+
+The following tools can be optionally installed by users:
 
 ```bash
 cargo install --locked cargo-watch cargo-edit
@@ -87,6 +89,8 @@ cargo install --locked cargo-watch cargo-edit
 **Tools**:
 - `cargo-watch`: Auto-rebuild on file changes (`cargo watch -x run`)
 - `cargo-edit`: Add/remove dependencies easily (`cargo add`, `cargo rm`)
+
+**Note**: These are not installed automatically because `postCreateCommand` in plugin templates is not merged with the core template's `postCreateCommand`. Users can install these manually if needed.
 
 ### 4. Claude Code Hooks
 

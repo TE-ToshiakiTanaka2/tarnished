@@ -99,15 +99,6 @@ create_rust_project() {
     [[ "${extensions}" == *"serayuzgur.crates"* ]]
 }
 
-@test "e2e/rust: devcontainer.json contains postCreateCommand" {
-    local project_dir
-    project_dir=$(create_rust_project "rust-postcreate-test")
-
-    # Check for postCreateCommand with cargo install
-    run jq -e '.postCreateCommand | contains("cargo install")' "${project_dir}/.devcontainer/devcontainer.json"
-    assert_success
-}
-
 @test "e2e/rust: rustfmt.toml has correct edition" {
     local project_dir
     project_dir=$(create_rust_project "rust-rustfmt-test")
@@ -268,42 +259,6 @@ create_rust_project() {
     project_dir=$(create_rust_project "rust-postsh-test")
 
     [[ -x "${project_dir}/.devcontainer/scripts/post.sh" ]]
-}
-
-# =============================================================================
-# Cargo Tools Tests (postCreateCommand)
-# =============================================================================
-
-@test "e2e/rust: cargo-watch is available after postCreateCommand" {
-    # Skip if devcontainer CLI is not available
-    if ! check_devcontainer_cli; then
-        skip "devcontainer CLI is not available"
-    fi
-
-    local project_dir
-    project_dir=$(create_rust_project "rust-cargo-watch-test")
-
-    start_devcontainer "${project_dir}" >/dev/null 2>&1
-
-    # cargo-watch is invoked via cargo watch
-    run exec_in_devcontainer "${project_dir}" cargo watch --version
-    assert_success
-}
-
-@test "e2e/rust: cargo-edit is available after postCreateCommand" {
-    # Skip if devcontainer CLI is not available
-    if ! check_devcontainer_cli; then
-        skip "devcontainer CLI is not available"
-    fi
-
-    local project_dir
-    project_dir=$(create_rust_project "rust-cargo-edit-test")
-
-    start_devcontainer "${project_dir}" >/dev/null 2>&1
-
-    # cargo-edit provides cargo add command
-    run exec_in_devcontainer "${project_dir}" cargo add --version
-    assert_success
 }
 
 # =============================================================================
