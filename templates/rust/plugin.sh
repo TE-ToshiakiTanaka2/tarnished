@@ -85,4 +85,37 @@ plugin_post_copy() {
             fi
         fi
     done
+
+    # Append Rust setup commands to post.sh
+    local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
+
+    if [[ -f "$target_post_sh" ]]; then
+        print_info "Adding Rust setup to post.sh..."
+
+        cat >> "$target_post_sh" << 'EOF'
+
+# -----------------------------------------------------------------------------
+# Rust Development Tools Setup
+# -----------------------------------------------------------------------------
+if command -v cargo &> /dev/null; then
+    echo "Installing Rust development tools..."
+
+    # Install cargo-watch for auto-rebuild on file changes
+    if ! command -v cargo-watch &> /dev/null; then
+        echo "  - Installing cargo-watch..."
+        cargo install --locked cargo-watch
+    fi
+
+    # Install cargo-edit for easy dependency management (cargo add/rm)
+    if ! cargo add --version &> /dev/null 2>&1; then
+        echo "  - Installing cargo-edit..."
+        cargo install --locked cargo-edit
+    fi
+
+    echo "Rust development tools installed."
+fi
+EOF
+
+        print_success "Rust setup added to post.sh"
+    fi
 }

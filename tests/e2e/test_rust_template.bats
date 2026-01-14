@@ -290,3 +290,61 @@ create_rust_project() {
         skip "Claude settings not generated (claude template may not be enabled)"
     fi
 }
+
+# =============================================================================
+# Post.sh Rust Setup Tests
+# =============================================================================
+
+@test "e2e/rust: post.sh contains cargo-watch installation" {
+    local project_dir
+    project_dir=$(create_rust_project "rust-postsh-cargowatch-test")
+
+    # Check if post.sh contains cargo-watch installation
+    run grep -q "cargo-watch" "${project_dir}/.devcontainer/scripts/post.sh"
+    assert_success
+}
+
+@test "e2e/rust: post.sh contains cargo-edit installation" {
+    local project_dir
+    project_dir=$(create_rust_project "rust-postsh-cargoedit-test")
+
+    # Check if post.sh contains cargo-edit installation
+    run grep -q "cargo-edit" "${project_dir}/.devcontainer/scripts/post.sh"
+    assert_success
+}
+
+# =============================================================================
+# Cargo Tools Tests (via devcontainer)
+# =============================================================================
+
+@test "e2e/rust: cargo-watch is available after container setup" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
+    local project_dir
+    project_dir=$(create_rust_project "rust-cargo-watch-test")
+
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
+
+    # cargo-watch is invoked via cargo watch
+    run exec_in_devcontainer "${project_dir}" cargo watch --version
+    assert_success
+}
+
+@test "e2e/rust: cargo-edit is available after container setup" {
+    # Skip if devcontainer CLI is not available
+    if ! check_devcontainer_cli; then
+        skip "devcontainer CLI is not available"
+    fi
+
+    local project_dir
+    project_dir=$(create_rust_project "rust-cargo-edit-test")
+
+    start_devcontainer "${project_dir}" >/dev/null 2>&1
+
+    # cargo-edit provides cargo add command
+    run exec_in_devcontainer "${project_dir}" cargo add --version
+    assert_success
+}
