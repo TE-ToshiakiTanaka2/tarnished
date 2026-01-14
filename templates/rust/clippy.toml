@@ -1,0 +1,8 @@
+# Clippy linter configuration
+# See: https://doc.rust-lang.org/clippy/configuration.html
+
+# Maximum cognitive complexity before triggering a warning
+cognitive-complexity-threshold = 25
+
+# Maximum number of function arguments before triggering a warning
+too-many-arguments-threshold = 7

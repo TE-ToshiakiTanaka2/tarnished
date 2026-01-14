@@ -6,6 +6,5 @@
             ],
             "settings": {}
         }
-    },
-    "postCreateCommand": "npx playwright install --with-deps chromium || true"
+    }
 }
