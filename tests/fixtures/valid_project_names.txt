@@ -1,0 +1,10 @@
+myproject
+my-project
+my_project
+MyProject
+project123
+a
+abc
+test-project-123
+my_test_project
+Project_Name-123

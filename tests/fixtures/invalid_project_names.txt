@@ -1,0 +1,10 @@
+123project
+-myproject
+_myproject
+my project
+my.project
+my/project
+my:project
+project@name
+
+this-is-a-very-long-project-name-that-exceeds-the-maximum-allowed-length-of-fifty-characters
