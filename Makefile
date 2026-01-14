@@ -2,7 +2,7 @@
 # Makefile for Shell Script Testing Infrastructure
 # =============================================================================
 
-.PHONY: all test test-unit test-integration test-e2e test-all test-setup test-clean help
+.PHONY: all test test-unit test-integration test-e2e test-all test-setup test-clean help ensure-test-deps
 
 # Default target
 all: test
@@ -21,11 +21,35 @@ E2E_DIR := $(TESTS_DIR)/e2e
 BATS_OPTS := --timing --print-output-on-failure
 
 # =============================================================================
+# Dependency Check
+# =============================================================================
+
+## Ensure test dependencies are installed (bats + submodules)
+ensure-test-deps:
+	@if ! command -v bats >/dev/null 2>&1; then \
+		echo "Bats not found. Installing..."; \
+		if command -v apt-get >/dev/null 2>&1; then \
+			sudo apt-get update -qq && sudo apt-get install -y -qq bats; \
+		elif command -v brew >/dev/null 2>&1; then \
+			brew install bats-core; \
+		else \
+			echo "Error: Cannot install bats. Please install manually."; \
+			exit 1; \
+		fi; \
+		echo "Bats installed: $$(bats --version)"; \
+	fi
+	@if [ -f ".gitmodules" ] && [ ! -f "$(TESTS_DIR)/libs/bats-support/load.bash" ]; then \
+		echo "Initializing git submodules..."; \
+		git submodule update --init --recursive; \
+		echo "Submodules initialized."; \
+	fi
+
+# =============================================================================
 # Test Targets
 # =============================================================================
 
 ## Run unit tests only
-test-unit:
+test-unit: ensure-test-deps
 	@echo "Running unit tests..."
 	@if [ -d "$(UNIT_DIR)" ] && [ -n "$$(ls -A $(UNIT_DIR)/*.bats 2>/dev/null)" ]; then \
 		$(BATS) $(BATS_OPTS) $(UNIT_DIR)/*.bats; \
@@ -34,7 +58,7 @@ test-unit:
 	fi
 
 ## Run integration tests only
-test-integration:
+test-integration: ensure-test-deps
 	@echo "Running integration tests..."
 	@if [ -d "$(INTEGRATION_DIR)" ] && [ -n "$$(ls -A $(INTEGRATION_DIR)/*.bats 2>/dev/null)" ]; then \
 		$(BATS) $(BATS_OPTS) $(INTEGRATION_DIR)/*.bats; \
@@ -43,7 +67,7 @@ test-integration:
 	fi
 
 ## Run E2E tests only (local execution)
-test-e2e:
+test-e2e: ensure-test-deps
 	@echo "Running E2E tests (this may take a while)..."
 	@if [ -d "$(E2E_DIR)" ] && [ -n "$$(ls -A $(E2E_DIR)/*.bats 2>/dev/null)" ]; then \
 		$(BATS) $(BATS_OPTS) $(E2E_DIR)/*.bats; \
@@ -125,6 +149,7 @@ help:
 	@echo "  test             Run unit + integration tests (CI target)"
 	@echo "  test-all         Run all tests (unit, integration, E2E)"
 	@echo ""
+	@echo "  ensure-test-deps Auto-install test dependencies if missing"
 	@echo "  test-setup       Setup test environment (install bats)"
 	@echo "  test-clean       Clean test artifacts"
 	@echo ""

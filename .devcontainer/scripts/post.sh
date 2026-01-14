@@ -209,11 +209,25 @@ setup_superclaude
 # -----------------------------------------------------------------------------
 echo "Setting up test environment..."
 
-# Initialize git submodules for Bats-core
+# Install bats-core for shell script testing
+setup_bats() {
+    if command -v bats >/dev/null 2>&1; then
+        echo "  - Bats already installed: $(bats --version)"
+        return 0
+    fi
+
+    echo "  - Installing bats-core..."
+    sudo apt-get update -qq && sudo apt-get install -y -qq bats
+    echo "  - Bats installed: $(bats --version)"
+}
+
+setup_bats
+
+# Initialize git submodules for Bats helper libraries
 if [ -f "$DOTFILES_DIR/.gitmodules" ]; then
     cd "$DOTFILES_DIR"
     git submodule update --init --recursive
-    echo "  - Bats-core test framework initialized"
+    echo "  - Bats helper libraries initialized"
 fi
 
 echo "Post-creation setup script finished."
