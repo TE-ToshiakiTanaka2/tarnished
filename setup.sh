@@ -38,6 +38,8 @@ declare -A LANGUAGE_DISPLAY_NAMES=(
 )
 PLAYWRIGHT_ENABLED=false
 
+DOCKER_ENABLED=false
+
 # Core plugins that are always loaded
 declare -a CORE_PLUGINS=("core" "claude")
 
@@ -59,6 +61,7 @@ Options:
     --lang <languages>  Select language template(s), comma-separated
                         (e.g., --lang node or --lang node,python)
     --playwright        Include Playwright for E2E testing
+    --docker            Include Docker-in-Docker (DinD) support
 
 Arguments:
     PROJECT_NAME        Name for your project (optional, will prompt if not provided)
@@ -76,6 +79,8 @@ Examples:
     ./setup.sh --lang node                  # Node.js only
     ./setup.sh --lang node,python           # Node.js and Python
     ./setup.sh --lang node --playwright     # Node.js with Playwright
+    ./setup.sh --lang node --docker         # Node.js with Docker-in-Docker
+    ./setup.sh --lang node --docker --playwright  # Node.js with both
     ./setup.sh my-project --lang node -y    # Non-interactive mode
 
 Generated Files:
@@ -102,6 +107,7 @@ Features Included:
     - Selected language runtime(s)
     - VS Code extensions for development
     - Playwright (optional) for E2E testing
+    - Docker-in-Docker (optional) for container development
 
 EOF
 }
@@ -169,8 +175,8 @@ discover_available_languages() {
             continue
         fi
 
-        # Skip playwright (handled separately)
-        if [[ "$plugin_name" == "playwright" ]]; then
+        # Skip optional feature plugins (handled separately)
+        if [[ "$plugin_name" == "playwright" ]] || [[ "$plugin_name" == "docker" ]]; then
             continue
         fi
 
@@ -417,7 +423,17 @@ load_selected_plugins() {
         load_order+=("${TEMPLATES_DIR}/claude/plugin.sh")
     fi
 
-    # 4. Playwright plugin (if enabled)
+    # 4. Docker plugin (if enabled)
+    if [[ "$DOCKER_ENABLED" == true ]]; then
+        local docker_path="${TEMPLATES_DIR}/docker/plugin.sh"
+        if [[ -f "$docker_path" ]]; then
+            load_order+=("$docker_path")
+        else
+            print_warning "Docker plugin not found, skipping"
+        fi
+    fi
+
+    # 5. Playwright plugin (if enabled)
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         local playwright_path="${TEMPLATES_DIR}/playwright/plugin.sh"
         if [[ -f "$playwright_path" ]]; then
@@ -517,7 +533,10 @@ show_preview() {
     # Show selected languages
     print_info "Selected languages: ${SELECTED_LANGUAGES[*]}"
 
-    # Show Playwright status
+    # Show optional feature status
+    if [[ "$DOCKER_ENABLED" == true ]]; then
+        print_info "Docker-in-Docker: enabled"
+    fi
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         print_info "Playwright: enabled"
     fi
@@ -544,6 +563,9 @@ show_completion() {
     echo ""
     echo "Configuration:"
     echo "  Languages:   ${SELECTED_LANGUAGES[*]}"
+    if [[ "$DOCKER_ENABLED" == true ]]; then
+        echo "  Docker:      enabled"
+    fi
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         echo "  Playwright:  enabled"
     fi
@@ -593,6 +615,10 @@ main() {
                 ;;
             --playwright)
                 PLAYWRIGHT_ENABLED=true
+                shift
+                ;;
+            --docker)
+                DOCKER_ENABLED=true
                 shift
                 ;;
             -*)
