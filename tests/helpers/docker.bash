@@ -22,8 +22,7 @@ E2E_TIMEOUT=120
 
 # Default timeout for devcontainer up command (seconds)
 # This includes Docker build, feature installation, and postCreateCommand
-# Set higher value as devcontainer startup can be slow
-E2E_DEVCONTAINER_TIMEOUT=600
+E2E_DEVCONTAINER_TIMEOUT=180
 
 # =============================================================================
 # Project Generation
@@ -289,7 +288,7 @@ check_devcontainer_cli() {
 #   Sets E2E_DEVCONTAINER_ID variable
 start_devcontainer() {
     local workspace_folder="$1"
-    local timeout="${2:-${E2E_DEVCONTAINER_TIMEOUT:-600}}"
+    local timeout="${2:-${E2E_DEVCONTAINER_TIMEOUT:-180}}"
     local output
     local container_id
     local exit_code
@@ -303,26 +302,34 @@ start_devcontainer() {
 
     # Start devcontainer with timeout and debug logging
     # Using timeout command to prevent infinite hangs
+    # --kill-after=10: send SIGKILL 10 seconds after SIGTERM if process doesn't exit
+    # --foreground: allow devcontainer to receive signals properly
     # --remote-env CI=true ensures post.sh skips interactive prompts
-    output=$(timeout "${timeout}" devcontainer up \
+    output=$(timeout --kill-after=10 --foreground "${timeout}" devcontainer up \
         --workspace-folder "${workspace_folder}" \
         --remove-existing-container \
         --remote-env CI=true \
         --log-level debug 2>&1) || exit_code=$?
 
-    # Check if timeout occurred (exit code 124)
-    if [[ "${exit_code:-0}" -eq 124 ]]; then
-        echo "Error: devcontainer up timed out after ${timeout} seconds" >&2
-        echo "This may indicate:" >&2
-        echo "  - Interactive prompts waiting for input (check post.sh)" >&2
-        echo "  - Slow network during feature installation" >&2
-        echo "  - Docker build issues" >&2
-        echo "Last output: ${output}" >&2
-        return 1
-    fi
-
-    # Extract container ID from JSON output
+    # Extract container ID from JSON output first
+    # (devcontainer up may succeed but process doesn't exit cleanly)
     container_id=$(echo "${output}" | grep -o '"containerId":"[^"]*"' | cut -d'"' -f4)
+
+    # Check if timeout occurred (exit code 124) but devcontainer actually succeeded
+    if [[ "${exit_code:-0}" -eq 124 ]]; then
+        if [[ -n "${container_id}" ]]; then
+            # devcontainer up succeeded, but process didn't exit cleanly
+            echo "Warning: devcontainer up succeeded but timed out waiting for process to exit" >&2
+        else
+            echo "Error: devcontainer up timed out after ${timeout} seconds" >&2
+            echo "This may indicate:" >&2
+            echo "  - Interactive prompts waiting for input (check post.sh)" >&2
+            echo "  - Slow network during feature installation" >&2
+            echo "  - Docker build issues" >&2
+            echo "Last output: ${output}" >&2
+            return 1
+        fi
+    fi
 
     if [[ -z "${container_id}" ]]; then
         echo "Error: Failed to start devcontainer" >&2
