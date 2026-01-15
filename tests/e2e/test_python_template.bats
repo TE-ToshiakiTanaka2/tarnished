@@ -10,6 +10,9 @@
 # They require Docker and devcontainer CLI to be available.
 # =============================================================================
 
+# Shared project name for container reuse
+SHARED_PROJECT_NAME="python-e2e-shared"
+
 # Load test helpers
 setup() {
     load '../helpers/common'
@@ -28,6 +31,34 @@ setup() {
     if ! command -v docker &>/dev/null; then
         skip "Docker is not available"
     fi
+}
+
+# Get or create shared project directory (persists across tests in this file)
+get_shared_project() {
+    local shared_dir="${BATS_FILE_TMPDIR}/${SHARED_PROJECT_NAME}"
+
+    if [[ ! -d "${shared_dir}" ]]; then
+        mkdir -p "${shared_dir}"
+        (cd "${shared_dir}" && "${PROJECT_ROOT}/setup.sh" --lang python --yes "${SHARED_PROJECT_NAME}") >/dev/null 2>&1
+    fi
+
+    echo "${shared_dir}"
+}
+
+# Ensure shared container is running (called once per file)
+ensure_shared_container() {
+    local shared_dir
+    shared_dir=$(get_shared_project)
+
+    # Check if container is already running by trying to exec
+    if exec_in_devcontainer "${shared_dir}" echo "ready" >/dev/null 2>&1; then
+        echo "${shared_dir}"
+        return 0
+    fi
+
+    # Start container
+    start_devcontainer "${shared_dir}" >/dev/null 2>&1
+    echo "${shared_dir}"
 }
 
 teardown() {
@@ -152,11 +183,8 @@ create_python_project() {
         skip "devcontainer CLI is not available"
     fi
 
-    local project_dir
-    project_dir=$(create_python_project "python-startup-test")
-
-    # Start devcontainer
-    run start_devcontainer "${project_dir}"
+    # Use shared container
+    run ensure_shared_container
     assert_success
 }
 
@@ -171,9 +199,7 @@ create_python_project() {
     fi
 
     local project_dir
-    project_dir=$(create_python_project "python-git-test")
-
-    start_devcontainer "${project_dir}" >/dev/null 2>&1
+    project_dir=$(ensure_shared_container)
 
     run verify_devcontainer_command "${project_dir}" "git"
     assert_success
@@ -186,9 +212,7 @@ create_python_project() {
     fi
 
     local project_dir
-    project_dir=$(create_python_project "python-python-test")
-
-    start_devcontainer "${project_dir}" >/dev/null 2>&1
+    project_dir=$(ensure_shared_container)
 
     run verify_devcontainer_command "${project_dir}" "python"
     assert_success
@@ -201,9 +225,7 @@ create_python_project() {
     fi
 
     local project_dir
-    project_dir=$(create_python_project "python-uv-test")
-
-    start_devcontainer "${project_dir}" >/dev/null 2>&1
+    project_dir=$(ensure_shared_container)
 
     run verify_devcontainer_command "${project_dir}" "uv"
     assert_success
@@ -216,14 +238,10 @@ create_python_project() {
     fi
 
     local project_dir
-    project_dir=$(create_python_project "python-ruff-test")
+    project_dir=$(ensure_shared_container)
 
-    start_devcontainer "${project_dir}" >/dev/null 2>&1
-
-    # Install ruff via uv if not available (it might need to be installed)
-    exec_in_devcontainer "${project_dir}" uv tool install ruff 2>/dev/null || true
-
-    run verify_devcontainer_command "${project_dir}" "ruff"
+    # Use uvx to run ruff (uvx is uv's tool runner)
+    run exec_in_devcontainer "${project_dir}" uvx ruff --version
     assert_success
 }
 
@@ -234,9 +252,7 @@ create_python_project() {
     fi
 
     local project_dir
-    project_dir=$(create_python_project "python-pip-test")
-
-    start_devcontainer "${project_dir}" >/dev/null 2>&1
+    project_dir=$(ensure_shared_container)
 
     run verify_devcontainer_command "${project_dir}" "pip"
     assert_success
@@ -264,9 +280,7 @@ create_python_project() {
     fi
 
     local project_dir
-    project_dir=$(create_python_project "python-version-test")
-
-    start_devcontainer "${project_dir}" >/dev/null 2>&1
+    project_dir=$(ensure_shared_container)
 
     run get_devcontainer_command_version "${project_dir}" "python"
     assert_success

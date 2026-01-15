@@ -79,7 +79,9 @@ if command -v npx &> /dev/null; then
     echo "Installing Playwright browsers..."
 
     # Install Chromium browser with dependencies
-    npx playwright install --with-deps chromium || true
+    # Use CI=1 and npx --yes to prevent interactive prompts
+    # Redirect stdin from /dev/null for additional safety
+    CI=1 npx --yes playwright install --with-deps chromium < /dev/null || true
 
     echo "Playwright browsers installed."
 fi

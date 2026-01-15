@@ -13,7 +13,8 @@
     "ghcr.io/devcontainer-community/devcontainer-features/astral.sh-uv:1": {
       "version": "latest"
     },
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
   "customizations": {
     "vscode": {
