@@ -22,7 +22,8 @@ E2E_TIMEOUT=120
 
 # Default timeout for devcontainer up command (seconds)
 # This includes Docker build, feature installation, and postCreateCommand
-E2E_DEVCONTAINER_TIMEOUT=180
+# 300 seconds is needed for Python compilation and feature installation
+E2E_DEVCONTAINER_TIMEOUT=300
 
 # =============================================================================
 # Project Generation
@@ -270,6 +271,30 @@ e2e_full_cleanup() {
 }
 
 # =============================================================================
+# Process Management
+# =============================================================================
+
+# Kill a process and all its children
+# Arguments:
+#   $1 - process ID to kill
+_kill_process_tree() {
+    local pid="$1"
+
+    if [[ -z "${pid}" ]]; then
+        return 0
+    fi
+
+    # Try to kill by session ID first (processes started with setsid)
+    pkill -9 -s "${pid}" 2>/dev/null || true
+
+    # Also try process group
+    pkill -9 -g "${pid}" 2>/dev/null || true
+
+    # Finally, kill the process itself
+    kill -9 "${pid}" 2>/dev/null || true
+}
+
+# =============================================================================
 # Devcontainer CLI Operations
 # =============================================================================
 
@@ -288,10 +313,11 @@ check_devcontainer_cli() {
 #   Sets E2E_DEVCONTAINER_ID variable
 start_devcontainer() {
     local workspace_folder="$1"
-    local timeout="${2:-${E2E_DEVCONTAINER_TIMEOUT:-180}}"
-    local output
+    local timeout="${2:-${E2E_DEVCONTAINER_TIMEOUT:-300}}"
+    local output_file
     local container_id
-    local exit_code
+    local bg_pid
+    local elapsed=0
 
     if ! check_devcontainer_cli; then
         echo "Error: devcontainer CLI not available" >&2
@@ -300,42 +326,68 @@ start_devcontainer() {
 
     echo "Starting devcontainer with ${timeout}s timeout..." >&2
 
-    # Start devcontainer with timeout and debug logging
-    # Using timeout command to prevent infinite hangs
-    # --kill-after=10: send SIGKILL 10 seconds after SIGTERM if process doesn't exit
-    # --foreground: allow devcontainer to receive signals properly
+    # Create temp file for output
+    output_file=$(mktemp)
+
+    # Start devcontainer in a new session using setsid
     # --remote-env CI=true ensures post.sh skips interactive prompts
-    output=$(timeout --kill-after=10 --foreground "${timeout}" devcontainer up \
+    setsid devcontainer up \
         --workspace-folder "${workspace_folder}" \
         --remove-existing-container \
         --remote-env CI=true \
-        --log-level debug 2>&1) || exit_code=$?
+        --log-level debug >"${output_file}" 2>&1 &
+    bg_pid=$!
 
-    # Extract container ID from JSON output first
-    # (devcontainer up may succeed but process doesn't exit cleanly)
-    container_id=$(echo "${output}" | grep -o '"containerId":"[^"]*"' | cut -d'"' -f4)
-
-    # Check if timeout occurred (exit code 124) but devcontainer actually succeeded
-    if [[ "${exit_code:-0}" -eq 124 ]]; then
-        if [[ -n "${container_id}" ]]; then
-            # devcontainer up succeeded, but process didn't exit cleanly
-            echo "Warning: devcontainer up succeeded but timed out waiting for process to exit" >&2
-        else
-            echo "Error: devcontainer up timed out after ${timeout} seconds" >&2
-            echo "This may indicate:" >&2
-            echo "  - Interactive prompts waiting for input (check post.sh)" >&2
-            echo "  - Slow network during feature installation" >&2
-            echo "  - Docker build issues" >&2
-            echo "Last output: ${output}" >&2
-            return 1
+    # Wait for container ID to appear in output or timeout
+    while [[ ${elapsed} -lt ${timeout} ]]; do
+        # Check if process is still running
+        if ! kill -0 "${bg_pid}" 2>/dev/null; then
+            # Process finished, check output
+            break
         fi
+
+        # Try to extract container ID from current output
+        container_id=$(grep -o '"containerId":"[^"]*"' "${output_file}" 2>/dev/null | cut -d'"' -f4 || true)
+        if [[ -n "${container_id}" ]]; then
+            # Container started successfully
+            echo "Container started: ${container_id}" >&2
+            # Kill background process tree (it may be hanging on post-create commands)
+            _kill_process_tree "${bg_pid}"
+            break
+        fi
+
+        sleep 2
+        ((elapsed += 2))
+    done
+
+    # Final check for container ID
+    if [[ -z "${container_id}" ]]; then
+        container_id=$(grep -o '"containerId":"[^"]*"' "${output_file}" 2>/dev/null | cut -d'"' -f4 || true)
+    fi
+
+    # Timeout handling
+    if [[ ${elapsed} -ge ${timeout} ]]; then
+        echo "Error: devcontainer up timed out after ${timeout} seconds" >&2
+        echo "This may indicate:" >&2
+        echo "  - Interactive prompts waiting for input (check post.sh)" >&2
+        echo "  - Slow network during feature installation" >&2
+        echo "  - Docker build issues" >&2
+        echo "Last output:" >&2
+        tail -50 "${output_file}" >&2
+        _kill_process_tree "${bg_pid}"
+        rm -f "${output_file}"
+        return 1
     fi
 
     if [[ -z "${container_id}" ]]; then
         echo "Error: Failed to start devcontainer" >&2
-        echo "Output: ${output}" >&2
+        echo "Output:" >&2
+        cat "${output_file}" >&2
+        rm -f "${output_file}"
         return 1
     fi
+
+    rm -f "${output_file}"
 
     # Export for use in tests
     # shellcheck disable=SC2034

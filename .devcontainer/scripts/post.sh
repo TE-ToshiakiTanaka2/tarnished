@@ -275,6 +275,20 @@ setup_bats() {
 
 setup_bats
 
+# Install devcontainer CLI for E2E tests
+setup_devcontainer_cli() {
+    if command -v devcontainer >/dev/null 2>&1; then
+        echo "  - Devcontainer CLI already installed: $(devcontainer --version)"
+        return 0
+    fi
+
+    echo "  - Installing devcontainer CLI..."
+    sudo npm install -g @devcontainers/cli
+    echo "  - Devcontainer CLI installed: $(devcontainer --version)"
+}
+
+setup_devcontainer_cli
+
 # Initialize git submodules for Bats helper libraries
 if [ -f "$DOTFILES_DIR/.gitmodules" ]; then
     cd "$DOTFILES_DIR"
