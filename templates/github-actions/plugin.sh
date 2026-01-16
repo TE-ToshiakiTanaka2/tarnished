@@ -8,6 +8,7 @@
 # Available Actions:
 #   - auto-tag: Automatic semantic versioning tags on PR merge
 #   - project-automation: Automatic issue-to-project linking with field defaults
+#   - pr-status-update: Automatic issue status update when PR is opened
 #
 # Future Actions (planned):
 #   - auto-label: Automatic PR labeling based on branch/files
@@ -30,7 +31,7 @@ plugin_name() {
 }
 
 plugin_description() {
-    echo "GitHub Actions templates (auto-tag, project-automation, CI/CD workflows)"
+    echo "GitHub Actions templates (auto-tag, project-automation, pr-status-update, CI/CD workflows)"
 }
 
 # =============================================================================
@@ -46,6 +47,7 @@ plugin_description() {
 declare -a AVAILABLE_ACTIONS=(
     "auto-tag"
     "project-automation"
+    "pr-status-update"
     # "auto-label"      # TODO: Implement
     # "release-notes"   # TODO: Implement
 )
