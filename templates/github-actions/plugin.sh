@@ -13,6 +13,11 @@
 #   - auto-label: Automatic PR labeling based on branch/files
 #   - release-notes: Changelog generation on tag creation
 #
+# Testing:
+#   Run tests for all actions:  ./scripts/test.sh
+#   Run with coverage:          ./scripts/test.sh --coverage
+#   Run in watch mode:          ./scripts/test.sh --watch
+#
 # =============================================================================
 
 # Get the directory where this plugin is located
