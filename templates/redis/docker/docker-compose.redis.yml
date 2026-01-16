@@ -1,0 +1,19 @@
+services:
+  redis:
+    image: redis:7
+    container_name: ${COMPOSE_PROJECT_NAME:-app}_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  redis_data:
