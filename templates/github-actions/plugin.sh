@@ -13,10 +13,8 @@
 #   - auto-label: Automatic PR labeling based on branch/files
 #   - release-notes: Changelog generation on tag creation
 #
-# Testing:
-#   Run tests for all actions:  ./scripts/test.sh
-#   Run with coverage:          ./scripts/test.sh --coverage
-#   Run in watch mode:          ./scripts/test.sh --watch
+# Note: Action source code is maintained in .github/actions/ at repo root.
+#       This plugin contains only distribution files (action.yml + dist/).
 #
 # =============================================================================
 

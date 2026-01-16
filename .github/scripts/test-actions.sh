@@ -1,23 +1,22 @@
 #!/bin/bash
 # =============================================================================
-# GitHub Actions Plugin - Test Runner
+# GitHub Actions - Test Runner
 # =============================================================================
 #
-# This script runs tests for all GitHub Actions in the plugin.
-# Tests are run locally and are not committed to git.
+# This script runs tests for all GitHub Actions in .github/actions/.
 #
 # Usage:
-#   ./scripts/test.sh              # Run all tests
-#   ./scripts/test.sh --coverage   # Run tests with coverage
-#   ./scripts/test.sh --watch      # Run tests in watch mode
+#   .github/scripts/test-actions.sh              # Run all tests
+#   .github/scripts/test-actions.sh --coverage   # Run tests with coverage
+#   .github/scripts/test-actions.sh --watch      # Run tests in watch mode
 #
 # =============================================================================
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_DIR="$(dirname "$SCRIPT_DIR")"
-ACTIONS_DIR="${PLUGIN_DIR}/.github/actions"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+ACTIONS_DIR="${REPO_ROOT}/.github/actions"
 
 # Colors for output
 RED='\033[0;31m'
@@ -44,7 +43,7 @@ for arg in "$@"; do
 done
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}GitHub Actions Plugin - Test Runner${NC}"
+echo -e "${BLUE}GitHub Actions - Test Runner${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
@@ -103,7 +102,7 @@ for action_dir in "${ACTIONS_DIR}"/*/; do
         fi
 
         echo ""
-        cd "$PLUGIN_DIR"
+        cd "$REPO_ROOT"
     fi
 done
 
