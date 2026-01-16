@@ -1,0 +1,28 @@
+name: 'PR Status Update'
+description: 'Automatically update linked issue status in GitHub Project when PR is opened or reopened'
+author: 'tarnished'
+
+inputs:
+  token:
+    description: 'GitHub token with project permissions (requires project scope)'
+    required: true
+  config-path:
+    description: 'Path to configuration file'
+    required: false
+    default: '.github/project-automation.yml'
+
+outputs:
+  issues-updated:
+    description: 'Comma-separated list of updated issue numbers'
+  issues-count:
+    description: 'Number of issues updated'
+  project-id:
+    description: 'The project ID'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'git-pull-request'
+  color: 'blue'
