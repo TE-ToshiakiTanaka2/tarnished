@@ -237,3 +237,136 @@ create_node_project() {
     # Should output version string containing "v" (e.g., v22.x.x)
     assert_output --regexp "v[0-9]+"
 }
+
+# =============================================================================
+# CI Workflow Tests
+# =============================================================================
+
+@test "e2e/node: setup.sh generates GitHub Actions workflow" {
+    local project_dir
+    project_dir=$(create_node_project "node-workflow-test")
+
+    assert_file_exists "${project_dir}/.github/workflows/node-ci.yml"
+}
+
+@test "e2e/node: node-ci.yml contains required jobs" {
+    local project_dir
+    project_dir=$(create_node_project "node-ci-jobs-test")
+
+    # Check for lint job
+    run grep -q "lint:" "${project_dir}/.github/workflows/node-ci.yml"
+    assert_success
+
+    # Check for unit-test job
+    run grep -q "unit-test:" "${project_dir}/.github/workflows/node-ci.yml"
+    assert_success
+
+    # Check for integration-test job
+    run grep -q "integration-test:" "${project_dir}/.github/workflows/node-ci.yml"
+    assert_success
+}
+
+@test "e2e/node: node-ci.yml uses pnpm" {
+    local project_dir
+    project_dir=$(create_node_project "node-ci-pnpm-test")
+
+    run grep -q "pnpm/action-setup" "${project_dir}/.github/workflows/node-ci.yml"
+    assert_success
+}
+
+@test "e2e/node: setup.sh generates package.json" {
+    local project_dir
+    project_dir=$(create_node_project "node-package-test")
+
+    assert_file_exists "${project_dir}/package.json"
+}
+
+@test "e2e/node: package.json contains required scripts" {
+    local project_dir
+    project_dir=$(create_node_project "node-scripts-test")
+
+    # Check for lint script
+    run jq -e '.scripts.lint' "${project_dir}/package.json"
+    assert_success
+
+    # Check for test scripts
+    run jq -e '.scripts.test' "${project_dir}/package.json"
+    assert_success
+
+    run jq -e '.scripts["test:unit"]' "${project_dir}/package.json"
+    assert_success
+
+    run jq -e '.scripts["test:integration"]' "${project_dir}/package.json"
+    assert_success
+}
+
+@test "e2e/node: package.json contains required devDependencies" {
+    local project_dir
+    project_dir=$(create_node_project "node-deps-test")
+
+    # Check for biome
+    run jq -e '.devDependencies["@biomejs/biome"]' "${project_dir}/package.json"
+    assert_success
+
+    # Check for typescript
+    run jq -e '.devDependencies.typescript' "${project_dir}/package.json"
+    assert_success
+
+    # Check for vitest
+    run jq -e '.devDependencies.vitest' "${project_dir}/package.json"
+    assert_success
+}
+
+@test "e2e/node: setup.sh generates biome.json" {
+    local project_dir
+    project_dir=$(create_node_project "node-biome-test")
+
+    assert_file_exists "${project_dir}/biome.json"
+}
+
+@test "e2e/node: biome.json is valid JSON" {
+    local project_dir
+    project_dir=$(create_node_project "node-biome-valid-test")
+
+    run jq -e '.' "${project_dir}/biome.json"
+    assert_success
+}
+
+@test "e2e/node: setup.sh generates tsconfig.json" {
+    local project_dir
+    project_dir=$(create_node_project "node-tsconfig-test")
+
+    assert_file_exists "${project_dir}/tsconfig.json"
+}
+
+@test "e2e/node: tsconfig.json is valid JSON" {
+    local project_dir
+    project_dir=$(create_node_project "node-tsconfig-valid-test")
+
+    run jq -e '.' "${project_dir}/tsconfig.json"
+    assert_success
+}
+
+@test "e2e/node: setup.sh generates vitest.config.ts" {
+    local project_dir
+    project_dir=$(create_node_project "node-vitest-test")
+
+    assert_file_exists "${project_dir}/vitest.config.ts"
+}
+
+@test "e2e/node: setup.sh generates tests directory" {
+    local project_dir
+    project_dir=$(create_node_project "node-tests-dir-test")
+
+    [[ -d "${project_dir}/tests" ]]
+    [[ -d "${project_dir}/tests/unit" ]]
+    [[ -d "${project_dir}/tests/integration" ]]
+}
+
+@test "e2e/node: tests directory contains sample tests" {
+    local project_dir
+    project_dir=$(create_node_project "node-sample-tests")
+
+    assert_file_exists "${project_dir}/tests/unit/sample.test.ts"
+    assert_file_exists "${project_dir}/tests/integration/sample.integration.test.ts"
+}

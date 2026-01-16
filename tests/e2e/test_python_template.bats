@@ -304,3 +304,94 @@ create_python_project() {
         skip "Claude settings not generated (claude template may not be enabled)"
     fi
 }
+
+# =============================================================================
+# CI Workflow Tests
+# =============================================================================
+
+@test "e2e/python: setup.sh generates GitHub Actions workflow" {
+    local project_dir
+    project_dir=$(create_python_project "python-workflow-test")
+
+    assert_file_exists "${project_dir}/.github/workflows/python-ci.yml"
+}
+
+@test "e2e/python: python-ci.yml contains required jobs" {
+    local project_dir
+    project_dir=$(create_python_project "python-ci-jobs-test")
+
+    # Check for lint job
+    run grep -q "lint:" "${project_dir}/.github/workflows/python-ci.yml"
+    assert_success
+
+    # Check for unit-test job
+    run grep -q "unit-test:" "${project_dir}/.github/workflows/python-ci.yml"
+    assert_success
+
+    # Check for integration-test job
+    run grep -q "integration-test:" "${project_dir}/.github/workflows/python-ci.yml"
+    assert_success
+}
+
+@test "e2e/python: python-ci.yml uses uv" {
+    local project_dir
+    project_dir=$(create_python_project "python-ci-uv-test")
+
+    run grep -q "astral-sh/setup-uv" "${project_dir}/.github/workflows/python-ci.yml"
+    assert_success
+}
+
+@test "e2e/python: setup.sh generates pyproject.toml" {
+    local project_dir
+    project_dir=$(create_python_project "python-pyproject-test")
+
+    assert_file_exists "${project_dir}/pyproject.toml"
+}
+
+@test "e2e/python: pyproject.toml contains uv dev dependencies" {
+    local project_dir
+    project_dir=$(create_python_project "python-deps-test")
+
+    # Check for dev dependencies
+    run grep -q "ruff" "${project_dir}/pyproject.toml"
+    assert_success
+
+    run grep -q "mypy" "${project_dir}/pyproject.toml"
+    assert_success
+
+    run grep -q "pytest" "${project_dir}/pyproject.toml"
+    assert_success
+}
+
+@test "e2e/python: setup.sh generates tests directory" {
+    local project_dir
+    project_dir=$(create_python_project "python-tests-dir-test")
+
+    [[ -d "${project_dir}/tests" ]]
+    [[ -d "${project_dir}/tests/unit" ]]
+    [[ -d "${project_dir}/tests/integration" ]]
+}
+
+@test "e2e/python: tests directory contains sample tests" {
+    local project_dir
+    project_dir=$(create_python_project "python-sample-tests")
+
+    assert_file_exists "${project_dir}/tests/unit/test_sample.py"
+    assert_file_exists "${project_dir}/tests/integration/test_sample_integration.py"
+}
+
+@test "e2e/python: sample unit test is valid python" {
+    local project_dir
+    project_dir=$(create_python_project "python-valid-test")
+
+    run python3 -m py_compile "${project_dir}/tests/unit/test_sample.py"
+    assert_success
+}
+
+@test "e2e/python: sample integration test is valid python" {
+    local project_dir
+    project_dir=$(create_python_project "python-valid-int-test")
+
+    run python3 -m py_compile "${project_dir}/tests/integration/test_sample_integration.py"
+    assert_success
+}
