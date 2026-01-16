@@ -1,0 +1,56 @@
+# =============================================================================
+# GitHub Actions Workflow: Auto Tag on PR Merge
+# =============================================================================
+#
+# This workflow automatically creates semantic version tags when a PR is merged.
+# Tag version is determined by the branch type prefix:
+#   - major/* -> Major version bump (X.0.0)
+#   - release/* -> Minor version bump (0.X.0)
+#   - feature/* -> Patch version bump (0.0.X)
+#   - others -> Release Candidate (0.0.X-rc.N)
+#
+# Configuration: .github/version.yml
+#
+# Triggers: Pull request closed (merged) to main/develop
+# =============================================================================
+
+name: Auto Tag on PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - develop
+
+jobs:
+  auto-tag:
+    name: Create Version Tag
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for tag detection
+
+      - name: Run Auto Tag Action
+        id: auto-tag
+        uses: ./.github/actions/auto-tag
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "## Auto Tag Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Version** | \`${{ steps.auto-tag.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Previous** | \`${{ steps.auto-tag.outputs.previous-version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Type** | ${{ steps.auto-tag.outputs.version-type }} |" >> $GITHUB_STEP_SUMMARY
