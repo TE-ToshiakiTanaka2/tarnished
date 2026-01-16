@@ -64,6 +64,7 @@ action_exists() {
 }
 
 # Copy a single action to the target directory
+# Only copies essential files (action.yml, dist/) and excludes development files
 copy_action() {
     local action_name="$1"
     local target_dir="$2"
@@ -73,10 +74,20 @@ copy_action() {
     local dest_action="${target_dir}/.github/actions/${action_name}"
     local dest_workflow="${target_dir}/.github/workflows/${action_name}.yml"
 
-    # Copy action directory if exists
+    # Copy action directory if exists (only essential files)
     if [[ -d "$src_action" ]]; then
-        mkdir -p "${target_dir}/.github/actions"
-        cp -r "$src_action" "$dest_action"
+        mkdir -p "$dest_action"
+
+        # Copy action.yml
+        if [[ -f "${src_action}/action.yml" ]]; then
+            cp "${src_action}/action.yml" "$dest_action/"
+        fi
+
+        # Copy dist directory (bundled JavaScript)
+        if [[ -d "${src_action}/dist" ]]; then
+            cp -r "${src_action}/dist" "$dest_action/"
+        fi
+
         print_success "  Copied action: ${action_name}"
     fi
 
