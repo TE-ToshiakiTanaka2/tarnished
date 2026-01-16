@@ -1,0 +1,25 @@
+name: 'Auto Tag on PR Merge'
+description: 'Automatically create semantic version tags based on branch type when PR is merged'
+author: 'tarnished'
+
+inputs:
+  token:
+    description: 'GitHub token with contents:write and pull-requests:write permissions'
+    required: true
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: 'The created tag version (e.g., v1.2.3)'
+  previous-version:
+    description: 'The previous tag version'
+  version-type:
+    description: 'The version bump type (major, minor, patch, rc)'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'tag'
+  color: 'blue'
