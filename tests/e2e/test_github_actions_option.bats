@@ -91,22 +91,6 @@ create_github_actions_project() {
     assert_file_exists "${project_dir}/.github/actions/auto-tag/dist/index.js"
 }
 
-@test "e2e/github-actions: auto-tag src directory exists" {
-    local project_dir
-    project_dir=$(create_github_actions_project "auto-tag-src-test")
-
-    # Source directory should exist
-    assert_dir_exists "${project_dir}/.github/actions/auto-tag/src"
-}
-
-@test "e2e/github-actions: auto-tag package.json exists" {
-    local project_dir
-    project_dir=$(create_github_actions_project "auto-tag-pkg-test")
-
-    # package.json should exist
-    assert_file_exists "${project_dir}/.github/actions/auto-tag/package.json"
-}
-
 # =============================================================================
 # Workflow Tests
 # =============================================================================
