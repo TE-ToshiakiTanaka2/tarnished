@@ -42,6 +42,7 @@ DOCKER_ENABLED=false
 POSTGRESQL_ENABLED=false
 NEO4J_ENABLED=false
 REDIS_ENABLED=false
+GITHUB_ACTIONS_ENABLED=false
 
 # Core plugins that are always loaded
 declare -a CORE_PLUGINS=("core" "claude")
@@ -68,6 +69,7 @@ Options:
     --postgresql        Include PostgreSQL database support
     --neo4j             Include Neo4j graph database support
     --redis             Include Redis cache/session support
+    --github-actions    Include GitHub Actions templates (auto-tag, etc.)
 
 Arguments:
     PROJECT_NAME        Name for your project (optional, will prompt if not provided)
@@ -90,6 +92,7 @@ Examples:
     ./setup.sh --lang node --postgresql          # Node.js with PostgreSQL
     ./setup.sh --lang python --neo4j             # Python with Neo4j for GraphRAG
     ./setup.sh --lang node --redis               # Node.js with Redis
+    ./setup.sh --lang node --github-actions      # Node.js with GitHub Actions
     ./setup.sh my-project --lang node -y    # Non-interactive mode
 
 Generated Files:
@@ -118,6 +121,7 @@ Features Included:
     - Playwright (optional) for E2E testing
     - Docker-in-Docker (optional) for container development
     - PostgreSQL (optional) for database development
+    - GitHub Actions (optional) for CI/CD automation
 
 EOF
 }
@@ -473,7 +477,17 @@ load_selected_plugins() {
         fi
     fi
 
-    # 8. Playwright plugin (if enabled)
+    # 8. GitHub Actions plugin (if enabled)
+    if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
+        local github_actions_path="${TEMPLATES_DIR}/github-actions/plugin.sh"
+        if [[ -f "$github_actions_path" ]]; then
+            load_order+=("$github_actions_path")
+        else
+            print_warning "GitHub Actions plugin not found, skipping"
+        fi
+    fi
+
+    # 9. Playwright plugin (if enabled)
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         local playwright_path="${TEMPLATES_DIR}/playwright/plugin.sh"
         if [[ -f "$playwright_path" ]]; then
@@ -586,6 +600,9 @@ show_preview() {
     if [[ "$REDIS_ENABLED" == true ]]; then
         print_info "Redis: enabled"
     fi
+    if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
+        print_info "GitHub Actions: enabled"
+    fi
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         print_info "Playwright: enabled"
     fi
@@ -623,6 +640,9 @@ show_completion() {
     fi
     if [[ "$REDIS_ENABLED" == true ]]; then
         echo "  Redis:       enabled"
+    fi
+    if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
+        echo "  GitHub Actions: enabled"
     fi
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         echo "  Playwright:  enabled"
@@ -689,6 +709,10 @@ main() {
                 ;;
             --redis)
                 REDIS_ENABLED=true
+                shift
+                ;;
+            --github-actions)
+                GITHUB_ACTIONS_ENABLED=true
                 shift
                 ;;
             -*)
