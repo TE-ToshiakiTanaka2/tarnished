@@ -70,7 +70,7 @@ plugin_post_copy() {
     fi
 
     # Copy tool configuration files
-    local tool_configs=("ruff.toml" "mypy.ini" "pytest.ini")
+    local tool_configs=("ruff.toml" "mypy.ini" "pytest.ini" "pyproject.toml")
 
     for config_file in "${tool_configs[@]}"; do
         local source_config="${PLUGIN_DIR}/${config_file}"
@@ -86,4 +86,41 @@ plugin_post_copy() {
             fi
         fi
     done
+
+    # Copy GitHub Actions workflow
+    local source_workflows="${PLUGIN_DIR}/.github/workflows"
+    local target_workflows="${target_dir}/.github/workflows"
+
+    if [[ -d "$source_workflows" ]]; then
+        mkdir -p "$target_workflows"
+        for workflow_file in "${source_workflows}"/*.yml; do
+            if [[ -f "$workflow_file" ]]; then
+                local filename
+                filename=$(basename "$workflow_file")
+                local target_workflow="${target_workflows}/${filename}"
+
+                if [[ -f "$target_workflow" ]]; then
+                    print_warning "Skipping ${filename} (already exists in target)"
+                else
+                    print_info "Copying ${filename}..."
+                    cp "$workflow_file" "$target_workflow"
+                    print_success "${filename} copied"
+                fi
+            fi
+        done
+    fi
+
+    # Copy test directory structure
+    local source_tests="${PLUGIN_DIR}/tests"
+    local target_tests="${target_dir}/tests"
+
+    if [[ -d "$source_tests" ]]; then
+        if [[ -d "$target_tests" ]]; then
+            print_warning "Skipping tests directory (already exists in target)"
+        else
+            print_info "Copying tests directory..."
+            cp -r "$source_tests" "$target_tests"
+            print_success "tests directory copied"
+        fi
+    fi
 }
