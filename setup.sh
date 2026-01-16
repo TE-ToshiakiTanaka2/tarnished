@@ -41,6 +41,7 @@ PLAYWRIGHT_ENABLED=false
 DOCKER_ENABLED=false
 POSTGRESQL_ENABLED=false
 NEO4J_ENABLED=false
+REDIS_ENABLED=false
 
 # Core plugins that are always loaded
 declare -a CORE_PLUGINS=("core" "claude")
@@ -66,6 +67,7 @@ Options:
     --docker            Include Docker-in-Docker (DinD) support
     --postgresql        Include PostgreSQL database support
     --neo4j             Include Neo4j graph database support
+    --redis             Include Redis cache/session support
 
 Arguments:
     PROJECT_NAME        Name for your project (optional, will prompt if not provided)
@@ -87,6 +89,7 @@ Examples:
     ./setup.sh --lang node --docker --playwright  # Node.js with both
     ./setup.sh --lang node --postgresql          # Node.js with PostgreSQL
     ./setup.sh --lang python --neo4j             # Python with Neo4j for GraphRAG
+    ./setup.sh --lang node --redis               # Node.js with Redis
     ./setup.sh my-project --lang node -y    # Non-interactive mode
 
 Generated Files:
@@ -460,7 +463,17 @@ load_selected_plugins() {
         fi
     fi
 
-    # 7. Playwright plugin (if enabled)
+    # 7. Redis plugin (if enabled)
+    if [[ "$REDIS_ENABLED" == true ]]; then
+        local redis_path="${TEMPLATES_DIR}/redis/plugin.sh"
+        if [[ -f "$redis_path" ]]; then
+            load_order+=("$redis_path")
+        else
+            print_warning "Redis plugin not found, skipping"
+        fi
+    fi
+
+    # 8. Playwright plugin (if enabled)
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         local playwright_path="${TEMPLATES_DIR}/playwright/plugin.sh"
         if [[ -f "$playwright_path" ]]; then
@@ -570,6 +583,9 @@ show_preview() {
     if [[ "$NEO4J_ENABLED" == true ]]; then
         print_info "Neo4j: enabled"
     fi
+    if [[ "$REDIS_ENABLED" == true ]]; then
+        print_info "Redis: enabled"
+    fi
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         print_info "Playwright: enabled"
     fi
@@ -604,6 +620,9 @@ show_completion() {
     fi
     if [[ "$NEO4J_ENABLED" == true ]]; then
         echo "  Neo4j:       enabled"
+    fi
+    if [[ "$REDIS_ENABLED" == true ]]; then
+        echo "  Redis:       enabled"
     fi
     if [[ "$PLAYWRIGHT_ENABLED" == true ]]; then
         echo "  Playwright:  enabled"
@@ -666,6 +685,10 @@ main() {
                 ;;
             --neo4j)
                 NEO4J_ENABLED=true
+                shift
+                ;;
+            --redis)
+                REDIS_ENABLED=true
                 shift
                 ;;
             -*)
