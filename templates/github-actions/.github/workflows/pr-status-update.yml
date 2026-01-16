@@ -1,0 +1,24 @@
+name: PR Status Update
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+# Required permissions for GitHub Project access
+permissions:
+  issues: read
+  pull-requests: read
+  repository-projects: write
+
+jobs:
+  update-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Update linked issue status
+        uses: ./.github/actions/pr-status-update
+        with:
+          token: ${{ secrets.PROJECT_TOKEN }}
+          # config-path: .github/project-automation.yml  # Optional, this is the default
