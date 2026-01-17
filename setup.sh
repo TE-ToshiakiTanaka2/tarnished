@@ -551,11 +551,12 @@ prompt_language_selection() {
         done
 
         # Read single keypress from /dev/tty (supports curl | bash)
-        read -rsn1 key < /dev/tty
+        # IFS='' prevents SPACE from being treated as a field separator
+        IFS='' read -rsn1 key < /dev/tty
 
         # Handle arrow keys (escape sequences)
         if [[ "$key" == $'\x1b' ]]; then
-            read -rsn2 -t 0.1 key < /dev/tty
+            IFS='' read -rsn2 -t 0.1 key < /dev/tty
             case "$key" in
                 '[A') # Up arrow
                     ((current--)) || true
@@ -609,7 +610,7 @@ prompt_language_selection() {
 prompt_playwright() {
     echo ""
     echo -n "Include Playwright for E2E testing? [y/N]: "
-    read -r response < /dev/tty
+    IFS='' read -r response < /dev/tty
 
     if [[ "$response" =~ ^[Yy] ]]; then
         PLAYWRIGHT_ENABLED=true
@@ -784,7 +785,7 @@ prompt_project_name() {
 
     while true; do
         echo -n "Enter project name: "
-        read -r project_name < /dev/tty
+        IFS='' read -r project_name < /dev/tty
 
         if validate_project_name "$project_name"; then
             echo "$project_name"
@@ -1078,7 +1079,7 @@ main() {
     # Confirm unless --yes flag
     if [[ "$skip_confirm" != true ]]; then
         echo -n "Proceed with setup? [Y/n]: "
-        read -r confirm < /dev/tty
+        IFS='' read -r confirm < /dev/tty
         if [[ "$confirm" =~ ^[Nn] ]]; then
             print_warning "Setup cancelled"
             exit 0
@@ -1095,7 +1096,7 @@ main() {
         print_warning "Some files already exist in the current directory"
         if [[ "$skip_confirm" != true ]]; then
             echo -n "Overwrite existing files? [y/N]: "
-            read -r overwrite < /dev/tty
+            IFS='' read -r overwrite < /dev/tty
             if [[ ! "$overwrite" =~ ^[Yy] ]]; then
                 print_warning "Setup cancelled"
                 exit 0
