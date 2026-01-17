@@ -498,6 +498,7 @@ prompt_language_selection() {
     local -a selected=()
     local current=0
     local num_languages=${#languages[@]}
+    local first_draw=true
 
     # Initialize with node selected by default if available
     for i in "${!languages[@]}"; do
@@ -520,12 +521,13 @@ prompt_language_selection() {
     trap 'tput cnorm 2>/dev/null || true' EXIT
 
     while true; do
-        # Move cursor up to redraw
-        if [[ $current -gt 0 ]] || [[ ${selected[*]} != "" ]]; then
+        # Move cursor up to redraw (skip on first draw to prevent display corruption)
+        if [[ "$first_draw" != true ]]; then
             for ((i=0; i<num_languages; i++)); do
                 tput cuu1 2>/dev/null || echo -en "\033[1A"
             done
         fi
+        first_draw=false
 
         # Draw options
         for i in "${!languages[@]}"; do
@@ -784,7 +786,8 @@ prompt_project_name() {
     local project_name=""
 
     while true; do
-        echo -n "Enter project name: "
+        # Output prompt to /dev/tty to avoid capture by command substitution
+        echo -n "Enter project name: " > /dev/tty
         IFS='' read -r project_name < /dev/tty
 
         if validate_project_name "$project_name"; then
@@ -792,7 +795,7 @@ prompt_project_name() {
             return 0
         fi
 
-        echo ""
+        echo "" > /dev/tty
     done
 }
 
