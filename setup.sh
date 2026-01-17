@@ -1122,6 +1122,16 @@ main() {
     print_info "Executing plugin post-copy hooks..."
     execute_plugins_hook "plugin_post_copy" "$target_dir"
 
+    # Execute interactive setup hooks for plugins (e.g., github-actions)
+    if [[ "$skip_confirm" != true ]]; then
+        print_info "Executing plugin interactive setup hooks..."
+        execute_plugins_hook "plugin_interactive_setup" "$target_dir"
+    else
+        # Non-interactive mode: generate minimal config files
+        print_info "Executing plugin minimal setup hooks..."
+        execute_plugins_hook "plugin_minimal_setup" "$target_dir"
+    fi
+
     # Auto commit after language/tool configuration
     local lang_list="${SELECTED_LANGUAGES[*]}"
     auto_commit "feat: configure ${lang_list} development environment"
