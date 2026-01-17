@@ -801,7 +801,7 @@ execute_plugins_hook() {
 
     for plugin_path in "${LOADED_PLUGINS[@]}"; do
         # Unset previous hook functions to prevent carryover
-        unset -f plugin_pre_copy plugin_copy plugin_post_copy plugin_validate 2>/dev/null || true
+        unset -f plugin_pre_copy plugin_copy plugin_post_copy plugin_validate plugin_interactive_setup plugin_minimal_setup 2>/dev/null || true
 
         # Source plugin to get its functions
         source "$plugin_path"
