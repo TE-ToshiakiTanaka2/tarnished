@@ -888,9 +888,11 @@ main() {
     print_header
 
     # Setup GitHub repository (authentication, develop branch, default branch)
-    # This must be done first before any file operations
-    if ! setup_github_repository; then
-        exit 1
+    # Skip in dry-run mode since we don't need git operations for preview
+    if [[ "$dry_run" != true ]]; then
+        if ! setup_github_repository; then
+            exit 1
+        fi
     fi
 
     # Check dependencies
