@@ -21,6 +21,10 @@ setup() {
     # Setup temp directory
     setup_temp_dir
 
+    # Configure git for tests (needed in CI environments)
+    git config --global user.email "test@example.com" 2>/dev/null || true
+    git config --global user.name "Test User" 2>/dev/null || true
+
     # Extract GitHub operations functions from setup.sh using awk
     TEMP_FUNCTIONS="$(mktemp)"
     awk '

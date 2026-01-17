@@ -21,6 +21,10 @@ setup() {
     # Setup temp directory
     setup_temp_dir
 
+    # Configure git for tests (needed in CI environments)
+    git config --global user.email "test@example.com" 2>/dev/null || true
+    git config --global user.name "Test User" 2>/dev/null || true
+
     # Initialize global variables that setup.sh uses
     export SCRIPT_DIR="${PROJECT_ROOT}"
     export TEMPLATES_DIR="${PROJECT_ROOT}/templates"
