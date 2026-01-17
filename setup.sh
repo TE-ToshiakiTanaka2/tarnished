@@ -297,6 +297,45 @@ set_default_branch() {
     return 0
 }
 
+# Setup standard GitHub labels
+# Creates labels if they don't exist, skips if they already exist
+setup_github_labels() {
+    print_info "Setting up GitHub labels..."
+
+    # Define labels: name|color|description
+    local -a labels=(
+        "feature|0E8A16|New feature"
+        "bugfix|D73A4A|Bug fix"
+        "patch|FBCA04|Small changes"
+        "refactor|1D76DB|Code refactoring"
+        "documentation|0075CA|Documentation"
+    )
+
+    local created=0
+    local skipped=0
+
+    for label_def in "${labels[@]}"; do
+        IFS='|' read -r name color description <<< "$label_def"
+
+        # Try to create label, suppress error if already exists
+        if gh label create "$name" --color "$color" --description "$description" 2>/dev/null; then
+            print_success "  Created label: $name"
+            ((created++))
+        else
+            # Label likely already exists
+            ((skipped++))
+        fi
+    done
+
+    if [[ $created -gt 0 ]]; then
+        print_success "Created $created label(s), skipped $skipped existing"
+    else
+        print_info "All labels already exist ($skipped skipped)"
+    fi
+
+    return 0
+}
+
 # Auto commit changes with given message
 # Usage: auto_commit "commit message"
 auto_commit() {
@@ -338,6 +377,9 @@ setup_github_repository() {
 
     # Step 3: Set default branch (non-fatal if fails)
     set_default_branch
+
+    # Step 4: Setup standard labels (non-fatal if fails)
+    setup_github_labels
 
     echo ""
     print_success "GitHub repository setup complete"

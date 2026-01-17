@@ -1,0 +1,48 @@
+# =============================================================================
+# GitHub Actions Workflow: Project Automation
+# =============================================================================
+#
+# This workflow automatically adds issues to a GitHub Project and sets
+# initial field values based on configuration.
+#
+# Configuration: .github/project-automation.yml
+#
+# Required Secrets:
+#   - PROJECT_TOKEN: Personal Access Token with 'project' scope
+#
+# Triggers:
+#   - Issue opened
+#
+# =============================================================================
+
+name: Project Automation
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    name: Add Issue to Project
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Project Automation
+        id: project-automation
+        uses: ./.github/actions/project-automation
+        with:
+          token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "## Project Automation Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Issue** | #${{ github.event.issue.number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Project ID** | \`${{ steps.project-automation.outputs.project-id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Item ID** | \`${{ steps.project-automation.outputs.item-id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Already Existed** | ${{ steps.project-automation.outputs.already-exists }} |" >> $GITHUB_STEP_SUMMARY
