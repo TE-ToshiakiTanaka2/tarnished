@@ -57,6 +57,8 @@ export interface FieldOption {
 export interface IterationInfo {
   id: string;
   title: string;
+  startDate: string;
+  duration: number;
 }
 
 /**

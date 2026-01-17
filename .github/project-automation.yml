@@ -16,11 +16,18 @@ project:
   # Owner name (organization or user)
   owner: "TE-ToshiakiTanaka2"
   # Project number (visible in project URL)
-  number: 6
+  number: 3
 
 # Default field values when adding issues to project
+# Supported dynamic values:
+#   - @today: Current date (YYYY-MM-DD)
+#   - @current_iteration: Current iteration based on date
+#   - @iteration_end: End date of the current iteration
 defaults:
-  Status: "Todo"
+  Status: "Backlog"
+  Iteration: "@current_iteration"
+  Start: "@today"
+  End: "@iteration_end"
 
 # PR status update configuration
 pr:

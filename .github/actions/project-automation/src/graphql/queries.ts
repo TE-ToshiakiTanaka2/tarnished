@@ -34,6 +34,8 @@ export const GET_ORGANIZATION_PROJECT = `
                 iterations {
                   id
                   title
+                  startDate
+                  duration
                 }
               }
             }
@@ -80,6 +82,8 @@ export const GET_USER_PROJECT = `
                 iterations {
                   id
                   title
+                  startDate
+                  duration
                 }
               }
             }
