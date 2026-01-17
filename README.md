@@ -4,14 +4,27 @@ A boilerplate project for quickly setting up Devcontainer environments with best
 
 ## Quick Start
 
-Create a new Devcontainer environment in your project:
+### Remote Execution (Recommended)
+
+Run directly from GitHub without cloning:
 
 ```bash
-# Clone this repository
+curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash
+```
+
+With options:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash -s -- --lang node --docker
+```
+
+### Local Execution
+
+Clone and run locally:
+
+```bash
 git clone https://github.com/TE-ToshiakiTanaka2/tarnished.git
 cd tarnished
-
-# Run setup script
 ./setup.sh
 ```
 
@@ -45,6 +58,30 @@ The script will prompt you for a project name.
 ```bash
 ./setup.sh my-project
 ```
+
+### Remote Execution
+
+Execute setup.sh directly from GitHub:
+
+```bash
+# Basic usage (interactive mode)
+curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash
+
+# With project name
+curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash -s -- my-project
+
+# With options
+curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash -s -- --lang node --docker
+
+# Non-interactive with all options
+curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash -s -- my-project --lang python --yes
+```
+
+**Requirements for remote execution:**
+- git (for downloading setup files)
+- curl (for fetching the script)
+
+**Note:** The script automatically detects remote execution and downloads required files to a temporary directory, which is cleaned up after setup completes.
 
 ### Options
 
@@ -200,7 +237,7 @@ bats tests/e2e/test_node_template.bats
 - [ ] Python template
 - [ ] Rust template
 - [ ] Deno template
-- [ ] Remote template download via curl/wget
+- [x] Remote template download via curl/wget
 
 ## License
 
