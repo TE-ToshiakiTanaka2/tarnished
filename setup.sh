@@ -391,6 +391,24 @@ check_dependencies() {
 }
 
 # =============================================================================
+# TTY Helper Functions
+# =============================================================================
+
+# Get default project name from current directory
+# Returns directory name if valid, empty string otherwise
+get_default_project_name() {
+    local dir_name
+    dir_name=$(basename "$(pwd)")
+
+    # Validate directory name as project name
+    if validate_project_name "$dir_name" 2>/dev/null; then
+        echo "$dir_name"
+    else
+        echo ""
+    fi
+}
+
+# =============================================================================
 # Language Selection Functions
 # =============================================================================
 
@@ -532,12 +550,12 @@ prompt_language_selection() {
             fi
         done
 
-        # Read single keypress
-        read -rsn1 key
+        # Read single keypress from /dev/tty (supports curl | bash)
+        read -rsn1 key < /dev/tty
 
         # Handle arrow keys (escape sequences)
         if [[ "$key" == $'\x1b' ]]; then
-            read -rsn2 -t 0.1 key
+            read -rsn2 -t 0.1 key < /dev/tty
             case "$key" in
                 '[A') # Up arrow
                     ((current--)) || true
@@ -591,7 +609,7 @@ prompt_language_selection() {
 prompt_playwright() {
     echo ""
     echo -n "Include Playwright for E2E testing? [y/N]: "
-    read -r response
+    read -r response < /dev/tty
 
     if [[ "$response" =~ ^[Yy] ]]; then
         PLAYWRIGHT_ENABLED=true
@@ -766,7 +784,7 @@ prompt_project_name() {
 
     while true; do
         echo -n "Enter project name: "
-        read -r project_name
+        read -r project_name < /dev/tty
 
         if validate_project_name "$project_name"; then
             echo "$project_name"
@@ -978,6 +996,23 @@ main() {
         print_warning "No language plugins found, using core plugins only"
     fi
 
+    # Check if interactive mode is needed and TTY is available
+    local needs_interactive=false
+    if [[ -z "$lang_arg" ]] && [[ "$skip_confirm" != true ]]; then
+        needs_interactive=true
+    fi
+    if [[ -z "$project_name" ]] && [[ "$skip_confirm" != true ]]; then
+        needs_interactive=true
+    fi
+
+    # If interactive mode is needed, verify TTY is available
+    if [[ "$needs_interactive" == true ]]; then
+        if ! check_tty_available; then
+            show_interactive_mode_error
+            exit 1
+        fi
+    fi
+
     # Handle language selection
     if [[ -n "$lang_arg" ]]; then
         # Parse and validate provided languages
@@ -1013,7 +1048,18 @@ main() {
 
     # Get project name if not provided
     if [[ -z "$project_name" ]]; then
-        project_name=$(prompt_project_name)
+        # In non-interactive mode with skip_confirm, try to use directory name
+        if [[ "$skip_confirm" == true ]]; then
+            project_name=$(get_default_project_name)
+            if [[ -z "$project_name" ]]; then
+                print_error "Project name is required in non-interactive mode"
+                print_info "Please provide a project name as an argument or use a valid directory name"
+                exit 1
+            fi
+            print_info "Using directory name as project name: $project_name"
+        else
+            project_name=$(prompt_project_name)
+        fi
     else
         if ! validate_project_name "$project_name"; then
             exit 1
@@ -1032,7 +1078,7 @@ main() {
     # Confirm unless --yes flag
     if [[ "$skip_confirm" != true ]]; then
         echo -n "Proceed with setup? [Y/n]: "
-        read -r confirm
+        read -r confirm < /dev/tty
         if [[ "$confirm" =~ ^[Nn] ]]; then
             print_warning "Setup cancelled"
             exit 0
@@ -1048,7 +1094,7 @@ main() {
     if [[ -d ".devcontainer" ]] || [[ -f "docker-compose.yml" ]]; then
         print_warning "Some files already exist in the current directory"
         echo -n "Overwrite existing files? [y/N]: "
-        read -r overwrite
+        read -r overwrite < /dev/tty
         if [[ ! "$overwrite" =~ ^[Yy] ]]; then
             print_warning "Setup cancelled"
             exit 0
