@@ -1093,11 +1093,15 @@ main() {
     # Check if files already exist
     if [[ -d ".devcontainer" ]] || [[ -f "docker-compose.yml" ]]; then
         print_warning "Some files already exist in the current directory"
-        echo -n "Overwrite existing files? [y/N]: "
-        read -r overwrite < /dev/tty
-        if [[ ! "$overwrite" =~ ^[Yy] ]]; then
-            print_warning "Setup cancelled"
-            exit 0
+        if [[ "$skip_confirm" != true ]]; then
+            echo -n "Overwrite existing files? [y/N]: "
+            read -r overwrite < /dev/tty
+            if [[ ! "$overwrite" =~ ^[Yy] ]]; then
+                print_warning "Setup cancelled"
+                exit 0
+            fi
+        else
+            print_info "Proceeding with overwrite (--yes flag specified)"
         fi
     fi
 
