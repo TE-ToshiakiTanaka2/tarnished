@@ -30,6 +30,23 @@ setup() {
     git -C "${TEST_TEMP_DIR}" config user.name "Test User"
     git -C "${TEST_TEMP_DIR}" remote add origin https://github.com/test/test.git
     git -C "${TEST_TEMP_DIR}" commit --allow-empty -m "Initial commit" -q
+
+    # Mock gh command to avoid authentication prompts in tests
+    function gh() {
+        case "$1 $2" in
+            "auth status")
+                echo "Logged in to github.com"
+                return 0
+                ;;
+            "repo edit")
+                return 0
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    }
+    export -f gh
 }
 
 teardown() {
