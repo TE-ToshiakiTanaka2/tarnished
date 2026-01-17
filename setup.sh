@@ -58,6 +58,11 @@ Devcontainer Boilerplate Setup Script
 Usage:
     ./setup.sh [OPTIONS] [PROJECT_NAME]
 
+Prerequisites:
+    - Git repository cloned (e.g., via ghq)
+    - 'origin' remote configured
+    - GitHub CLI (gh) installed
+
 Options:
     -h, --help          Show this help message
     -d, --dry-run       Preview files without creating them
@@ -123,7 +128,149 @@ Features Included:
     - PostgreSQL (optional) for database development
     - GitHub Actions (optional) for CI/CD automation
 
+GitHub Integration:
+    This script automatically:
+    - Authenticates with GitHub CLI (prompts if not authenticated)
+    - Creates/checks out 'develop' branch
+    - Sets 'develop' as the default branch on GitHub (if permissions allow)
+    - Auto-commits setup changes to the develop branch
+
 EOF
+}
+
+# =============================================================================
+# GitHub Operations Functions
+# =============================================================================
+
+# Check GitHub CLI authentication status
+# Returns 0 if authenticated, 1 if not
+check_gh_auth() {
+    print_info "Checking GitHub CLI authentication..."
+
+    # Check if gh command exists
+    if ! command -v gh &> /dev/null; then
+        print_error "GitHub CLI (gh) is not installed"
+        print_info "Please install: https://cli.github.com/"
+        return 1
+    fi
+
+    # Check authentication status
+    if ! gh auth status &>/dev/null; then
+        print_warning "GitHub CLI is not authenticated"
+        print_info "Starting authentication flow..."
+        if ! gh auth login; then
+            print_error "GitHub authentication failed"
+            return 1
+        fi
+    fi
+
+    print_success "GitHub CLI authenticated"
+    return 0
+}
+
+# Setup develop branch (create if not exists, checkout if exists)
+setup_develop_branch() {
+    print_info "Setting up develop branch..."
+
+    # Check if we're in a git repository
+    if ! git rev-parse --git-dir &>/dev/null; then
+        print_error "Not a git repository"
+        return 1
+    fi
+
+    # Check if origin remote exists
+    if ! git remote get-url origin &>/dev/null; then
+        print_error "No 'origin' remote configured"
+        return 1
+    fi
+
+    # Fetch latest from remote
+    print_info "Fetching latest from remote..."
+    git fetch origin 2>/dev/null || true
+
+    # Check if develop branch exists locally
+    if git show-ref --verify --quiet refs/heads/develop; then
+        print_info "Develop branch exists locally, checking out..."
+        git checkout develop
+    # Check if develop branch exists on remote
+    elif git show-ref --verify --quiet refs/remotes/origin/develop; then
+        print_info "Develop branch exists on remote, checking out..."
+        git checkout -b develop origin/develop
+    else
+        print_info "Creating new develop branch..."
+        git checkout -b develop
+    fi
+
+    print_success "Now on develop branch"
+    return 0
+}
+
+# Set develop as default branch on GitHub
+set_default_branch() {
+    print_info "Setting develop as default branch on GitHub..."
+
+    # Try to set default branch
+    if gh repo edit --default-branch develop 2>/dev/null; then
+        print_success "Default branch set to develop"
+    else
+        print_warning "Could not set default branch (insufficient permissions or not a GitHub repo)"
+        print_info "Pushing develop branch to remote..."
+        if git push -u origin develop 2>/dev/null; then
+            print_success "Develop branch pushed to remote"
+        else
+            print_warning "Could not push to remote (network issue or permissions)"
+        fi
+        print_info "Please manually set develop as default branch in repository settings"
+    fi
+
+    return 0
+}
+
+# Auto commit changes with given message
+# Usage: auto_commit "commit message"
+auto_commit() {
+    local message="$1"
+
+    # Check if there are changes to commit
+    if git diff --quiet && git diff --cached --quiet && [[ -z "$(git ls-files --others --exclude-standard)" ]]; then
+        print_info "No changes to commit"
+        return 0
+    fi
+
+    git add -A
+    if git commit -m "$message" 2>/dev/null; then
+        print_success "Committed: $message"
+    else
+        print_info "Nothing to commit"
+    fi
+
+    return 0
+}
+
+# Main GitHub repository setup function
+# Orchestrates all GitHub-related operations
+setup_github_repository() {
+    print_info "Setting up GitHub repository..."
+    echo ""
+
+    # Step 1: Check GitHub CLI authentication
+    if ! check_gh_auth; then
+        print_error "GitHub setup failed: authentication required"
+        return 1
+    fi
+
+    # Step 2: Setup develop branch
+    if ! setup_develop_branch; then
+        print_error "GitHub setup failed: could not setup develop branch"
+        return 1
+    fi
+
+    # Step 3: Set default branch (non-fatal if fails)
+    set_default_branch
+
+    echo ""
+    print_success "GitHub repository setup complete"
+    return 0
 }
 
 # =============================================================================
@@ -648,6 +795,17 @@ show_completion() {
         echo "  Playwright:  enabled"
     fi
     echo ""
+
+    # Show git/GitHub information
+    echo "Git Status:"
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+    echo "  Branch:      ${current_branch}"
+    local commit_count
+    commit_count=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+    echo "  Commits:     ${commit_count}"
+    echo ""
+
     echo "Next steps:"
     echo "  1. Open the project in VS Code"
     echo "  2. Click 'Reopen in Container' when prompted"
@@ -728,6 +886,14 @@ main() {
     done
 
     print_header
+
+    # Setup GitHub repository (authentication, develop branch, default branch)
+    # Skip in dry-run mode since we don't need git operations for preview
+    if [[ "$dry_run" != true ]]; then
+        if ! setup_github_repository; then
+            exit 1
+        fi
+    fi
 
     # Check dependencies
     if ! check_dependencies; then
@@ -825,8 +991,15 @@ main() {
     print_info "Executing plugin copy hooks..."
     execute_plugins_hook "plugin_copy" "$target_dir"
 
+    # Auto commit after core setup
+    auto_commit "feat: initialize devcontainer environment"
+
     print_info "Executing plugin post-copy hooks..."
     execute_plugins_hook "plugin_post_copy" "$target_dir"
+
+    # Auto commit after language/tool configuration
+    local lang_list="${SELECTED_LANGUAGES[*]}"
+    auto_commit "feat: configure ${lang_list} development environment"
 
     # Finalization
     replace_placeholders "$target_dir" "$project_name"
@@ -835,6 +1008,9 @@ main() {
     # Execute validation hooks
     print_info "Executing plugin validation hooks..."
     execute_plugins_hook "plugin_validate" "$target_dir"
+
+    # Auto commit final configuration
+    auto_commit "chore: finalize project configuration"
 
     show_completion "$project_name"
 }

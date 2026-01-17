@@ -23,6 +23,30 @@ setup() {
 
     # Setup temp directory
     setup_temp_dir
+
+    # Initialize TEST_TEMP_DIR as git repository (required by setup.sh GitHub operations)
+    git -C "${TEST_TEMP_DIR}" init -q
+    git -C "${TEST_TEMP_DIR}" config user.email "test@example.com"
+    git -C "${TEST_TEMP_DIR}" config user.name "Test User"
+    git -C "${TEST_TEMP_DIR}" remote add origin https://github.com/test/test.git
+    git -C "${TEST_TEMP_DIR}" commit --allow-empty -m "Initial commit" -q
+
+    # Mock gh command to avoid authentication prompts in tests
+    function gh() {
+        case "$1 $2" in
+            "auth status")
+                echo "Logged in to github.com"
+                return 0
+                ;;
+            "repo edit")
+                return 0
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    }
+    export -f gh
 }
 
 teardown() {
@@ -30,7 +54,7 @@ teardown() {
 }
 
 # Helper to run setup.sh in a fresh temp subdirectory
-# Creates a new subdirectory, runs setup.sh there, and returns the path
+# Creates a new subdirectory with git repo, runs setup.sh there, and returns the path
 run_setup_in_project_dir() {
     local project_name="$1"
     shift
@@ -39,6 +63,13 @@ run_setup_in_project_dir() {
     # Create a project subdirectory
     local project_dir="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${project_dir}"
+
+    # Initialize git repository (required by setup.sh GitHub operations)
+    git -C "${project_dir}" init -q
+    git -C "${project_dir}" config user.email "test@example.com"
+    git -C "${project_dir}" config user.name "Test User"
+    git -C "${project_dir}" remote add origin https://github.com/test/test.git
+    git -C "${project_dir}" commit --allow-empty -m "Initial commit" -q
 
     # Run setup.sh in that directory
     bash -c "cd '${project_dir}' && '${PROJECT_ROOT}/setup.sh' ${args} '${project_name}'" >/dev/null 2>&1
@@ -221,7 +252,8 @@ run_setup_in_project_dir() {
 }
 
 @test "setup.sh: handles missing language gracefully" {
-    run "${PROJECT_ROOT}/setup.sh" --yes test-project 2>&1
+    # Use --dry-run to skip GitHub operations and actual file creation
+    run "${PROJECT_ROOT}/setup.sh" --dry-run --yes test-project 2>&1
     # Script may prompt for input or fail - just ensure it doesn't crash unexpectedly
     true
 }
