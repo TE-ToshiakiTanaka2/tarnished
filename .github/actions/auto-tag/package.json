@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
+    "build": "ncc build src/index.ts -o dist --license licenses.txt && find dist \\( -name '*.d.ts' -o -name '*.d.ts.map' -o -name '*.js.map' -o -name 'sourcemap-register.cjs' \\) -delete && find dist -type d -empty -delete",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format .",
