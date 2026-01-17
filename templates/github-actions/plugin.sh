@@ -428,9 +428,36 @@ plugin_interactive_setup() {
     # Check if project-automation action was installed
     if [[ -d "${target_dir}/.github/actions/project-automation" ]]; then
         echo ""
-        read -rp "Configure project-automation action? [y/N]: " setup_project
-        if [[ "$setup_project" =~ ^[Yy]$ ]]; then
+        echo -n "Configure project-automation action? [Y/n]: "
+        IFS='' read -r setup_project < /dev/tty
+        # Default to yes if empty or starts with Y/y
+        if [[ -z "$setup_project" ]] || [[ "$setup_project" =~ ^[Yy] ]]; then
             setup_project_automation "$target_dir"
+        else
+            print_info "Skipping project-automation setup"
+        fi
+    fi
+
+    return 0
+}
+
+# =============================================================================
+# Plugin Minimal Setup Hook (for non-interactive mode)
+# =============================================================================
+
+plugin_minimal_setup() {
+    local target_dir="$1"
+
+    # Check if project-automation action was installed
+    if [[ -d "${target_dir}/.github/actions/project-automation" ]]; then
+        local config_file="${target_dir}/.github/project-automation.yml"
+
+        # Only create if not exists
+        if [[ ! -f "$config_file" ]]; then
+            print_info "Creating minimal project-automation configuration..."
+            create_minimal_project_config "$config_file"
+            print_success "  Created: ${config_file}"
+            print_warning "  Remember to update the configuration with your project details!"
         fi
     fi
 
