@@ -1,0 +1,38 @@
+# =============================================================================
+# Project Automation Configuration
+# =============================================================================
+# This file configures automatic issue-to-project linking and PR status updates.
+#
+# Required Secret: PROJECT_TOKEN (PAT with 'project' scope)
+#
+# Used by:
+#   - .github/workflows/project-automation.yml (issue → project)
+#   - .github/workflows/pr-status-update.yml (PR → issue status)
+# =============================================================================
+
+project:
+  # Project type: 'organization' or 'repository'
+  type: repository
+  # Owner name (organization or user)
+  owner: "TE-ToshiakiTanaka2"
+  # Project number (visible in project URL)
+  number: 3
+
+# Default field values when adding issues to project
+# Supported dynamic values:
+#   - @today: Current date (YYYY-MM-DD)
+#   - @current_iteration: Current iteration based on date
+#   - @iteration_end: End date of the current iteration
+defaults:
+  Status: "Backlog"
+  Iteration: "@current_iteration"
+  Start: "@today"
+  End: "@iteration_end"
+
+# PR status update configuration
+pr:
+  # Status to set when PR is opened/reopened
+  status: "In progress"
+  # Regex pattern to extract issue number from branch name
+  # Matches: feature/user/#123/description, bugfix/user/#456/fix-something
+  branch_pattern: "^(?:feature|fix|bugfix|hotfix|refactor|docs|patch)[/-].*?#(\\d+)"

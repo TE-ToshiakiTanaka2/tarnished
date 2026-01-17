@@ -35708,6 +35708,8 @@ const GET_ORGANIZATION_PROJECT = `
                 iterations {
                   id
                   title
+                  startDate
+                  duration
                 }
               }
             }
@@ -35753,6 +35755,8 @@ const GET_USER_PROJECT = `
                 iterations {
                   id
                   title
+                  startDate
+                  duration
                 }
               }
             }
@@ -36009,6 +36013,59 @@ async function addItemToProject(client, projectId, contentId) {
 
 
 
+// Dynamic value constants
+const DYNAMIC_TODAY = '@today';
+const DYNAMIC_CURRENT_ITERATION = '@current_iteration';
+const DYNAMIC_ITERATION_END = '@iteration_end';
+// Cache for current iteration (to avoid recalculating)
+let cachedCurrentIteration = null;
+/**
+ * Get today's date in YYYY-MM-DD format
+ */
+function getToday() {
+    const now = new Date();
+    const isoString = now.toISOString();
+    return isoString.substring(0, 10); // YYYY-MM-DD
+}
+/**
+ * Find the current iteration based on today's date
+ */
+function findCurrentIteration(iterations) {
+    if (cachedCurrentIteration) {
+        return cachedCurrentIteration;
+    }
+    const today = new Date(getToday());
+    for (const iteration of iterations) {
+        const startDate = new Date(iteration.startDate);
+        const endDate = new Date(startDate);
+        endDate.setDate(endDate.getDate() + iteration.duration - 1);
+        if (today >= startDate && today <= endDate) {
+            cachedCurrentIteration = iteration;
+            return iteration;
+        }
+    }
+    // If no current iteration found, return the next upcoming iteration
+    const futureIterations = iterations
+        .filter((i) => new Date(i.startDate) > today)
+        .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+    const nextIteration = futureIterations[0];
+    if (nextIteration) {
+        core.info(`No current iteration found, using next upcoming: ${nextIteration.title}`);
+        cachedCurrentIteration = nextIteration;
+        return nextIteration;
+    }
+    return null;
+}
+/**
+ * Calculate the end date of an iteration
+ */
+function getIterationEndDate(iteration) {
+    const startDate = new Date(iteration.startDate);
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + iteration.duration - 1);
+    const isoString = endDate.toISOString();
+    return isoString.substring(0, 10); // YYYY-MM-DD
+}
 /**
  * Set a field value for a project item
  */
@@ -36032,7 +36089,7 @@ async function setFieldValue(params) {
             case 'ITERATION':
                 return await setIterationField(client, projectId, itemId, field, String(value));
             case 'DATE':
-                return await setDateField(client, projectId, itemId, field, String(value));
+                return await setDateField(client, projectId, itemId, field, String(value), fields);
             default:
                 core.warning(`Field type "${field.dataType}" is not supported for field "${fieldName}", skipping`);
                 return false;
@@ -36103,20 +36160,33 @@ async function setNumberField(client, projectId, itemId, field, value) {
 }
 /**
  * Set an iteration field value
+ * Supports dynamic value: @current_iteration
  */
 async function setIterationField(client, projectId, itemId, field, value) {
     if (!field.iterations || field.iterations.length === 0) {
         core.warning(`Field "${field.name}" has no iterations defined`);
         return false;
     }
-    // Find the iteration by title (case-insensitive)
-    const lowerValue = value.toLowerCase();
-    const iteration = field.iterations.find((i) => i.title.toLowerCase() === lowerValue);
-    if (!iteration) {
-        const availableIterations = field.iterations.map((i) => i.title).join(', ');
-        core.warning(`Iteration "${value}" not found for field "${field.name}". ` +
-            `Available iterations: ${availableIterations}`);
-        return false;
+    let iteration;
+    // Handle dynamic value: @current_iteration
+    if (value === DYNAMIC_CURRENT_ITERATION) {
+        iteration = findCurrentIteration(field.iterations);
+        if (!iteration) {
+            core.warning(`No current or upcoming iteration found for field "${field.name}"`);
+            return false;
+        }
+        core.info(`Resolved ${DYNAMIC_CURRENT_ITERATION} to "${iteration.title}"`);
+    }
+    else {
+        // Find the iteration by title (case-insensitive)
+        const lowerValue = value.toLowerCase();
+        iteration = field.iterations.find((i) => i.title.toLowerCase() === lowerValue);
+        if (!iteration) {
+            const availableIterations = field.iterations.map((i) => i.title).join(', ');
+            core.warning(`Iteration "${value}" not found for field "${field.name}". ` +
+                `Available iterations: ${availableIterations}`);
+            return false;
+        }
     }
     await client.mutate(UPDATE_ITERATION_FIELD, {
         projectId,
@@ -36129,21 +36199,44 @@ async function setIterationField(client, projectId, itemId, field, value) {
 }
 /**
  * Set a date field value
+ * Supports dynamic values: @today, @iteration_end
  */
-async function setDateField(client, projectId, itemId, field, value) {
+async function setDateField(client, projectId, itemId, field, value, allFields) {
+    let resolvedValue = value;
+    // Handle dynamic value: @today
+    if (value === DYNAMIC_TODAY) {
+        resolvedValue = getToday();
+        core.info(`Resolved ${DYNAMIC_TODAY} to "${resolvedValue}"`);
+    }
+    // Handle dynamic value: @iteration_end
+    else if (value === DYNAMIC_ITERATION_END) {
+        // Find the Iteration field to get current iteration
+        const iterationField = allFields.find((f) => f.dataType === 'ITERATION');
+        if (!iterationField || !iterationField.iterations || iterationField.iterations.length === 0) {
+            core.warning(`Cannot resolve ${DYNAMIC_ITERATION_END}: No Iteration field found`);
+            return false;
+        }
+        const currentIteration = findCurrentIteration(iterationField.iterations);
+        if (!currentIteration) {
+            core.warning(`Cannot resolve ${DYNAMIC_ITERATION_END}: No current iteration found`);
+            return false;
+        }
+        resolvedValue = getIterationEndDate(currentIteration);
+        core.info(`Resolved ${DYNAMIC_ITERATION_END} to "${resolvedValue}" (end of ${currentIteration.title})`);
+    }
     // Validate date format (YYYY-MM-DD)
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(value)) {
-        core.warning(`Invalid date format for field "${field.name}". Expected YYYY-MM-DD, got "${value}"`);
+    if (!dateRegex.test(resolvedValue)) {
+        core.warning(`Invalid date format for field "${field.name}". Expected YYYY-MM-DD, got "${resolvedValue}"`);
         return false;
     }
     await client.mutate(UPDATE_DATE_FIELD, {
         projectId,
         itemId,
         fieldId: field.id,
-        date: value,
+        date: resolvedValue,
     });
-    core.info(`Set "${field.name}" to "${value}"`);
+    core.info(`Set "${field.name}" to "${resolvedValue}"`);
     return true;
 }
 /**
