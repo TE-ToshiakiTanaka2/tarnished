@@ -252,7 +252,8 @@ run_setup_in_project_dir() {
 }
 
 @test "setup.sh: handles missing language gracefully" {
-    run "${PROJECT_ROOT}/setup.sh" --yes test-project 2>&1
+    # Use --dry-run to skip GitHub operations and actual file creation
+    run "${PROJECT_ROOT}/setup.sh" --dry-run --yes test-project 2>&1
     # Script may prompt for input or fail - just ensure it doesn't crash unexpectedly
     true
 }
