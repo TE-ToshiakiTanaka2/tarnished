@@ -12,7 +12,65 @@
 #   ./setup.sh --lang node,python # Select specific languages
 #   ./setup.sh --playwright       # Include Playwright E2E testing
 #
+# Remote Execution:
+#   curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash
+#   curl -fsSL ... | bash -s -- [OPTIONS] [PROJECT_NAME]
+#
 # =============================================================================
+
+# =============================================================================
+# Remote Execution Bootstrap
+# =============================================================================
+# Detect if running via pipe (curl | bash) and bootstrap if necessary
+
+REMOTE_REPO_URL="${DEVCONTAINER_REPO_URL:-https://github.com/TE-ToshiakiTanaka2/tarnished.git}"
+REMOTE_BRANCH="${DEVCONTAINER_BRANCH:-develop}"
+
+# Check if running from pipe (curl | bash)
+# BASH_SOURCE[0] is empty, "-", or doesn't exist as a file when piped
+if [[ -z "${BASH_SOURCE[0]}" ]] || [[ "${BASH_SOURCE[0]}" == "-" ]] || [[ ! -f "${BASH_SOURCE[0]}" ]]; then
+    echo "================================================"
+    echo "  Devcontainer Boilerplate - Remote Execution"
+    echo "================================================"
+    echo ""
+
+    # Check for git
+    if ! command -v git &> /dev/null; then
+        echo "Error: git is required for remote execution"
+        echo "Please install git and try again:"
+        echo "  Ubuntu/Debian: sudo apt-get install git"
+        echo "  macOS:         brew install git"
+        exit 1
+    fi
+
+    # Create temporary directory
+    BOOTSTRAP_TEMP_DIR=$(mktemp -d)
+
+    # Cleanup function
+    cleanup_bootstrap() {
+        if [[ -n "${BOOTSTRAP_TEMP_DIR:-}" ]] && [[ -d "$BOOTSTRAP_TEMP_DIR" ]]; then
+            rm -rf "$BOOTSTRAP_TEMP_DIR"
+        fi
+    }
+
+    # Register cleanup trap
+    trap cleanup_bootstrap EXIT
+
+    # Clone repository
+    echo "Downloading setup files..."
+    if ! git clone --depth 1 --branch "$REMOTE_BRANCH" --quiet "$REMOTE_REPO_URL" "$BOOTSTRAP_TEMP_DIR"; then
+        echo "Error: Failed to download setup files"
+        echo "Please check your network connection and try again"
+        exit 1
+    fi
+
+    echo "Starting setup..."
+    echo ""
+
+    # Execute local setup.sh with all arguments
+    # Using exec to replace current shell, ensuring proper exit code
+    exec bash "$BOOTSTRAP_TEMP_DIR/setup.sh" "$@"
+fi
 
 set -e
 
@@ -134,6 +192,19 @@ GitHub Integration:
     - Creates/checks out 'develop' branch
     - Sets 'develop' as the default branch on GitHub (if permissions allow)
     - Auto-commits setup changes to the develop branch
+
+Remote Execution:
+    Run directly from GitHub without cloning first:
+
+    curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash
+
+    With options:
+    curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash -s -- --lang node --docker
+
+    With project name:
+    curl -fsSL ... | bash -s -- my-project --lang python
+
+    Requirements: git, curl
 
 EOF
 }
