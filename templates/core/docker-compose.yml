@@ -7,6 +7,8 @@ services:
     volumes:
       # Mount the project directory into the container
       - .:/workspace:cached
+      # Persist bash history
+      - ~/.bash_history:/home/vscode/.bash_history:cached
       # Mount host's .gitconfig.local for user name/email
       - ~/.gitconfig.local:/home/vscode/.gitconfig.local:cached
       # GitHub CLI settings
