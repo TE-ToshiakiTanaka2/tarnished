@@ -345,3 +345,51 @@ update_gitignore() {
 
     print_success ".gitignore updated"
 }
+
+# =============================================================================
+# TTY Utility Functions
+# =============================================================================
+
+# Check if /dev/tty is available for interactive input
+# This is essential for curl | bash execution where stdin is piped
+# Returns 0 if available, 1 if not
+check_tty_available() {
+    # Check if /dev/tty exists and is a character device
+    if [[ ! -c /dev/tty ]]; then
+        return 1
+    fi
+
+    # Try to open /dev/tty for reading
+    if ! exec 3< /dev/tty 2>/dev/null; then
+        return 1
+    fi
+
+    # Close the test file descriptor
+    exec 3<&-
+    return 0
+}
+
+# Show error message when interactive mode is not available
+# Provides helpful guidance for non-interactive execution
+show_interactive_mode_error() {
+    print_error "Interactive mode is not available"
+    echo ""
+    echo "This appears to be a non-interactive environment (e.g., piped input, CI/CD)."
+    echo ""
+    echo "To run in non-interactive mode, specify all required options:"
+    echo ""
+    echo "  curl -fsSL <url>/setup.sh | bash -s -- --lang node my-project -y"
+    echo "  curl -fsSL <url>/setup.sh | bash -s -- --lang python --docker my-app -y"
+    echo ""
+    echo "Available options:"
+    echo "  --lang <languages>    Select language(s): node, python, rust, deno"
+    echo "  --playwright          Include Playwright E2E testing"
+    echo "  --docker              Include Docker-in-Docker support"
+    echo "  --postgresql          Include PostgreSQL database support"
+    echo "  --neo4j               Include Neo4j graph database support"
+    echo "  --redis               Include Redis cache/session support"
+    echo "  --github-actions      Include GitHub Actions templates"
+    echo "  -y, --yes             Skip confirmation prompts (required for non-interactive)"
+    echo ""
+    echo "For full options, see: ./setup.sh --help"
+}
