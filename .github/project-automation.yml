@@ -15,5 +15,9 @@ project:
   number: 3
 
 # Default field values
+# Dynamic values: @current_iteration, @today, @iteration_end
 defaults:
   Status: "Ready"
+  Iteration: "@current_iteration"
+  Start: "@today"
+  End: "@iteration_end"
