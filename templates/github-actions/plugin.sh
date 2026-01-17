@@ -183,7 +183,7 @@ setup_project_automation() {
     # Check if config already exists
     if [[ -f "$config_file" ]]; then
         print_warning "Configuration file already exists: ${config_file}"
-        read -rp "Overwrite? [y/N]: " overwrite
+        read -rp "Overwrite? [y/N]: " overwrite < /dev/tty
         if [[ ! "$overwrite" =~ ^[Yy]$ ]]; then
             print_info "Skipping project-automation setup"
             return 0
@@ -194,21 +194,35 @@ setup_project_automation() {
     echo "A GitHub Personal Access Token is required to fetch project fields."
     echo "This token will NOT be saved. You'll need to add it to repository secrets separately."
     echo ""
-    read -rsp "GitHub Personal Access Token (for field discovery): " pat
-    echo ""
 
-    if [[ -z "$pat" ]]; then
-        print_warning "No token provided. Creating minimal configuration."
-        create_minimal_project_config "$config_file"
-        return 0
-    fi
+    local pat=""
+    while true; do
+        read -rsp "GitHub Personal Access Token (for field discovery): " pat < /dev/tty
+        echo ""
+
+        if [[ -z "$pat" ]]; then
+            echo ""
+            echo -n "No token provided. Skip project-automation setup? [Y/n]: "
+            read -r skip_confirm < /dev/tty
+            if [[ -z "$skip_confirm" ]] || [[ "$skip_confirm" =~ ^[Yy] ]]; then
+                print_info "Skipping project-automation setup"
+                return 0
+            fi
+            # User chose not to skip, retry token input
+            echo ""
+            continue
+        fi
+
+        # Token provided, break the loop
+        break
+    done
 
     # Prompt for project type
     echo ""
     echo "Select GitHub Project type:"
     echo "  1) Organization Project"
     echo "  2) Repository (User) Project"
-    read -rp "Choice [1-2]: " project_type_choice
+    read -rp "Choice [1-2]: " project_type_choice < /dev/tty
 
     local project_type
     case "$project_type_choice" in
@@ -221,14 +235,14 @@ setup_project_automation() {
     esac
 
     # Prompt for owner
-    read -rp "Owner/Organization name: " owner
+    read -rp "Owner/Organization name: " owner < /dev/tty
     if [[ -z "$owner" ]]; then
         print_error "Owner name is required"
         return 1
     fi
 
     # Prompt for project number
-    read -rp "Project number: " project_number
+    read -rp "Project number: " project_number < /dev/tty
     if [[ -z "$project_number" ]] || ! [[ "$project_number" =~ ^[0-9]+$ ]]; then
         print_error "Valid project number is required"
         return 1
@@ -264,7 +278,7 @@ setup_project_automation() {
         echo ""
         echo "Available Status options:"
         echo "$status_options" | while read -r opt; do echo "  - $opt"; done
-        read -rp "Default Status: " status_value
+        read -rp "Default Status: " status_value < /dev/tty
     fi
 
     # Priority field
@@ -274,7 +288,7 @@ setup_project_automation() {
         echo ""
         echo "Available Priority options:"
         echo "$priority_options" | while read -r opt; do echo "  - $opt"; done
-        read -rp "Default Priority: " priority_value
+        read -rp "Default Priority: " priority_value < /dev/tty
     fi
 
     # Create configuration file
