@@ -292,3 +292,57 @@ run_setup_in_project_dir() {
 
     [[ -f "${project_dir}/CLAUDE.md" ]]
 }
+
+# =============================================================================
+# IFS Handling Tests (Issue #53)
+# =============================================================================
+# These tests verify that IFS='' is correctly applied to read commands
+# to prevent SPACE from being treated as a field separator.
+
+@test "setup.sh: read commands use IFS='' for proper SPACE handling" {
+    # Verify that all read commands with /dev/tty have IFS='' prefix
+    local setup_script="${PROJECT_ROOT}/setup.sh"
+
+    # Count read commands that use /dev/tty
+    local total_tty_reads
+    total_tty_reads=$(grep -c "read.*< /dev/tty" "${setup_script}")
+
+    # Count read commands with IFS='' prefix
+    local ifs_reads
+    ifs_reads=$(grep -c "IFS='' read.*< /dev/tty" "${setup_script}")
+
+    # All /dev/tty reads should have IFS=''
+    [[ "${total_tty_reads}" -eq "${ifs_reads}" ]]
+}
+
+@test "setup.sh: language selection read has IFS='' (single keypress)" {
+    # Verify the critical language selection read command has IFS=''
+    local setup_script="${PROJECT_ROOT}/setup.sh"
+
+    # Check for IFS='' read -rsn1 pattern (single keypress)
+    run grep "IFS='' read -rsn1" "${setup_script}"
+    assert_success
+}
+
+@test "setup.sh: arrow key read has IFS='' (escape sequences)" {
+    # Verify the arrow key handling read command has IFS=''
+    local setup_script="${PROJECT_ROOT}/setup.sh"
+
+    # Check for IFS='' read -rsn2 pattern (escape sequences)
+    run grep "IFS='' read -rsn2" "${setup_script}"
+    assert_success
+}
+
+@test "setup.sh: interactive prompts use IFS='' for consistent behavior" {
+    # Verify all interactive prompt reads have IFS=''
+    local setup_script="${PROJECT_ROOT}/setup.sh"
+
+    # Check for various interactive prompts
+    # Project name prompt
+    run grep -E "IFS='' read -r project_name" "${setup_script}"
+    assert_success
+
+    # Confirmation prompts
+    run grep -E "IFS='' read -r (confirm|overwrite|response)" "${setup_script}"
+    assert_success
+}

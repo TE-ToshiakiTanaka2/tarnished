@@ -232,6 +232,53 @@ bats tests/e2e/test_node_template.bats
 
 **Note**: If Docker is not available, E2E tests will be skipped automatically.
 
+## Troubleshooting
+
+### Language Selection Not Working (curl | bash)
+
+**Symptoms**: When running `setup.sh` via `curl | bash`, the language selection UI appears but:
+- SPACE key doesn't toggle selection
+- Pressing any key immediately confirms selection
+- Arrow keys don't navigate
+
+**Cause**: This is typically caused by bash's IFS (Internal Field Separator) handling in combination with `/dev/tty` input. The issue has been fixed in the latest version.
+
+**Solutions**:
+
+1. **Update to the latest version**: The issue is fixed in versions after commit b94f660.
+
+2. **Use non-interactive mode**: Specify all options directly:
+   ```bash
+   curl -fsSL <url>/setup.sh | bash -s -- --lang node --docker my-project -y
+   ```
+
+3. **Clone and run locally**: If interactive mode is required:
+   ```bash
+   git clone https://github.com/TE-ToshiakiTanaka2/tarnished.git
+   cd tarnished
+   ./setup.sh
+   ```
+
+### TTY Not Available Error
+
+**Symptoms**: Error message "Interactive mode is not available"
+
+**Cause**: The script is running in a non-interactive environment (CI/CD, piped input, etc.) without access to `/dev/tty`.
+
+**Solution**: Use non-interactive mode with all required options:
+```bash
+./setup.sh --lang node --yes my-project
+```
+
+### Environment-Specific Issues
+
+| Environment | Notes |
+|-------------|-------|
+| WSL2 | Fully supported. Use Windows Terminal for best experience. |
+| Docker | Use non-interactive mode (`-y` flag) |
+| CI/CD | Use non-interactive mode with explicit options |
+| SSH | Works normally if terminal is allocated (`ssh -t`) |
+
 ## Roadmap
 
 - [ ] Python template
