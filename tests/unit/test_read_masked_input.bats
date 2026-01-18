@@ -165,3 +165,17 @@ setup() {
     run grep -E "\[\[:print:\]\]" "$plugin_file"
     assert_success
 }
+
+@test "read_masked_input: uses stty to disable echo" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for stty -echo command (handles right-click paste)
+    run grep -E "stty -echo" "$plugin_file"
+    assert_success
+}
+
+@test "read_masked_input: restores stty settings after input" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for stty settings restoration
+    run grep -E 'stty "\$old_stty_settings"' "$plugin_file"
+    assert_success
+}
