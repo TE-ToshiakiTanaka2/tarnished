@@ -83,6 +83,13 @@ copy_with_confirm() {
         return 0
     fi
 
+    # Check if TTY is available for interactive confirmation
+    if [[ ! -e /dev/tty ]] || ! : < /dev/tty 2>/dev/null; then
+        # Non-interactive environment: skip by default
+        print_warning "Skipped: $dest (already exists, non-interactive)"
+        return 0
+    fi
+
     # Interactive confirmation
     echo -n "File exists: $dest - Overwrite? [y/N]: "
     local response
