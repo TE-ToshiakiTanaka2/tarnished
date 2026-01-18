@@ -63,6 +63,10 @@ read_masked_input() {
     local input=""
     local char=""
 
+    # Disable bracket paste mode to prevent escape sequences from being captured
+    # This is safe even if the terminal doesn't support it
+    printf '\e[?2004l' >/dev/tty 2>/dev/null || true
+
     while IFS= read -rsn1 char < /dev/tty; do
         if [[ -z "$char" ]]; then
             # Enter key pressed
@@ -74,12 +78,26 @@ read_masked_input() {
                 input="${input%?}"
                 printf '\b \b' >&2
             fi
+        elif [[ "$char" == $'\e' ]]; then
+            # Escape character detected - skip the entire escape sequence
+            # Read and discard characters until we hit ~ or timeout
+            local seq_char=""
+            while read -rsn1 -t 0.01 seq_char < /dev/tty 2>/dev/null; do
+                [[ "$seq_char" == "~" ]] && break
+            done
         else
             # Normal character (including pasted characters)
             input+="$char"
             printf '*' >&2
         fi
     done
+
+    # Re-enable bracket paste mode
+    printf '\e[?2004h' >/dev/tty 2>/dev/null || true
+
+    # Sanitize: remove any remaining non-printable characters except common ones
+    # This handles edge cases where escape sequences might slip through
+    input=$(printf '%s' "$input" | tr -cd '[:print:]')
 
     printf '%s' "$input"
 }

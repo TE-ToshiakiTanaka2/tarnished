@@ -93,3 +93,35 @@ setup() {
     run grep -E 'Token received.*\$\{#pat\}' "$plugin_file"
     assert_success
 }
+
+# =============================================================================
+# Bracket Paste Mode Handling Tests
+# =============================================================================
+
+@test "read_masked_input: disables bracket paste mode" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for bracket paste mode disable sequence
+    run grep -E "\\\\e\[\?2004l" "$plugin_file"
+    assert_success
+}
+
+@test "read_masked_input: re-enables bracket paste mode" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for bracket paste mode re-enable sequence
+    run grep -E "\\\\e\[\?2004h" "$plugin_file"
+    assert_success
+}
+
+@test "read_masked_input: handles escape sequences" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for escape character handling (detects ESC character and skips sequence)
+    run grep -E "\\\$'\\\\e'" "$plugin_file"
+    assert_success
+}
+
+@test "read_masked_input: sanitizes non-printable characters" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for tr sanitization command
+    run grep -E "tr -cd '\[:print:\]'" "$plugin_file"
+    assert_success
+}
