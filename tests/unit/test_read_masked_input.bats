@@ -125,3 +125,43 @@ setup() {
     run grep -E "tr -cd '\[:print:\]'" "$plugin_file"
     assert_success
 }
+
+# =============================================================================
+# WSL2 Compatibility Tests (Issue #80)
+# =============================================================================
+
+@test "read_masked_input: has delay after bracket paste disable" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for sleep delay after disabling bracket paste mode
+    run grep -A4 "printf.*2004l" "$plugin_file"
+    assert_success
+    assert_output --partial "sleep"
+}
+
+@test "read_masked_input: uses increased timeout for escape sequences" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for 0.1 second timeout (increased from 0.01 for WSL2)
+    run grep -E "read.*-t 0\.1" "$plugin_file"
+    assert_success
+}
+
+@test "read_masked_input: breaks on letter terminators" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for letter terminator detection [A-Za-z]
+    run grep -E "\[A-Za-z\]" "$plugin_file"
+    assert_success
+}
+
+@test "read_masked_input: has safety limit for escape sequences" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for escape_count safety limit
+    run grep -E "escape_count.*10" "$plugin_file"
+    assert_success
+}
+
+@test "read_masked_input: filters printable characters only" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for printable character check
+    run grep -E "\[\[:print:\]\]" "$plugin_file"
+    assert_success
+}

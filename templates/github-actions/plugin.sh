@@ -62,10 +62,14 @@ declare -a AVAILABLE_ACTIONS=(
 read_masked_input() {
     local input=""
     local char=""
+    local escape_count=0
 
     # Disable bracket paste mode to prevent escape sequences from being captured
     # This is safe even if the terminal doesn't support it
     printf '\e[?2004l' >/dev/tty 2>/dev/null || true
+
+    # Small delay to ensure the disable command takes effect (fixes WSL2 timing)
+    sleep 0.01
 
     while IFS= read -rsn1 char < /dev/tty; do
         if [[ -z "$char" ]]; then
@@ -80,15 +84,24 @@ read_masked_input() {
             fi
         elif [[ "$char" == $'\e' ]]; then
             # Escape character detected - skip the entire escape sequence
-            # Read and discard characters until we hit ~ or timeout
+            # Read and discard characters until we hit a terminator or timeout
+            # Increased timeout from 0.01 to 0.1 for WSL2 compatibility
             local seq_char=""
-            while read -rsn1 -t 0.01 seq_char < /dev/tty 2>/dev/null; do
+            escape_count=0
+            while read -rsn1 -t 0.1 seq_char < /dev/tty 2>/dev/null; do
+                # Break on common sequence terminators (~ for bracket paste, letters for others)
                 [[ "$seq_char" == "~" ]] && break
+                [[ "$seq_char" =~ [A-Za-z] ]] && break
+                # Safety limit to prevent infinite loop
+                ((escape_count++))
+                [[ $escape_count -gt 10 ]] && break
             done
         else
-            # Normal character (including pasted characters)
-            input+="$char"
-            printf '*' >&2
+            # Only accept printable characters (security: prevent control char injection)
+            if [[ "$char" =~ [[:print:]] ]]; then
+                input+="$char"
+                printf '*' >&2
+            fi
         fi
     done
 
