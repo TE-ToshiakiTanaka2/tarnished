@@ -35584,8 +35584,8 @@ function validateConfig(config) {
     }
     const project = cfg['project'];
     // Validate project.type
-    if (project['type'] !== 'organization' && project['type'] !== 'repository') {
-        throw new Error('project.type must be "organization" or "repository"');
+    if (project['type'] !== 'organization' && project['type'] !== 'user') {
+        throw new Error('project.type must be "organization" or "user"');
     }
     // Validate project.owner
     if (typeof project['owner'] !== 'string' || project['owner'].length === 0) {

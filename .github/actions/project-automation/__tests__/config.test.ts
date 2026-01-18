@@ -41,10 +41,10 @@ describe('config', () => {
       expect(result.defaults?.priority).toBe('Medium');
     });
 
-    it('should validate a valid repository config', () => {
+    it('should validate a valid user config', () => {
       const config = {
         project: {
-          type: 'repository',
+          type: 'user',
           owner: 'my-user',
           number: 5,
         },
@@ -52,7 +52,7 @@ describe('config', () => {
 
       const result = validateConfig(config);
 
-      expect(result.project.type).toBe('repository');
+      expect(result.project.type).toBe('user');
       expect(result.project.owner).toBe('my-user');
       expect(result.project.number).toBe(5);
       expect(result.defaults).toBeUndefined();
@@ -73,7 +73,7 @@ describe('config', () => {
         },
       };
 
-      expect(() => validateConfig(config)).toThrow('project.type must be "organization" or "repository"');
+      expect(() => validateConfig(config)).toThrow('project.type must be "organization" or "user"');
     });
 
     it('should throw error for empty owner', () => {

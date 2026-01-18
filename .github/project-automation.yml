@@ -7,8 +7,8 @@
 # =============================================================================
 
 project:
-  # Project type: 'organization' or 'repository'
-  type: organization
+  # Project type: 'organization' or 'user'
+  type: user
   # Owner name (organization or user)
   owner: "TE-ToshiakiTanaka2"
   # Project number (visible in project URL)

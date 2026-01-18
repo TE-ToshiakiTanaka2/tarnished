@@ -54,11 +54,11 @@ describe('project/finder', () => {
       expect(result.fields[0]?.name).toBe('Status');
     });
 
-    it('should find a repository project', async () => {
+    it('should find a user project', async () => {
       const mockClient = createMockClient();
       const config: ProjectConfig = {
         project: {
-          type: 'repository',
+          type: 'user',
           owner: 'my-user',
           number: 2,
         },

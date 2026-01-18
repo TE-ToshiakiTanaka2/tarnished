@@ -188,10 +188,10 @@ defaults:
       expect(config.defaults?.Priority).toBe('Medium');
     });
 
-    it('should load repository project config', () => {
+    it('should load user project config', () => {
       const configYaml = `
 project:
-  type: repository
+  type: user
   owner: my-user
   number: 1
 `;
@@ -201,7 +201,7 @@ project:
 
       const config = loadConfig('.github/project-automation.yml');
 
-      expect(config.project.type).toBe('repository');
+      expect(config.project.type).toBe('user');
       expect(config.defaults).toBeUndefined();
     });
 
@@ -255,7 +255,7 @@ project:
     });
   });
 
-  describe('User (repository) project workflow', () => {
+  describe('User project workflow', () => {
     it('should work with user projects', async () => {
       const mockUserProjectResponse = {
         user: {
@@ -279,7 +279,7 @@ project:
       mockClient.query.mockResolvedValueOnce(mockUserProjectResponse);
 
       const config: ProjectConfig = {
-        project: { type: 'repository', owner: 'test-user', number: 2 },
+        project: { type: 'user', owner: 'test-user', number: 2 },
       };
 
       const project = await findProject(mockClient as unknown as GraphQLClient, config);

@@ -3,8 +3,8 @@
  */
 export interface ProjectConfig {
     project: {
-        /** Project type: 'organization' or 'repository' */
-        type: 'organization' | 'repository';
+        /** Project type: 'organization' or 'user' */
+        type: 'organization' | 'user';
         /** Owner name (organization or user) */
         owner: string;
         /** Project number */
