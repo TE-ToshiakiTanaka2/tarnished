@@ -63,6 +63,12 @@ read_masked_input() {
     local input=""
     local char=""
     local escape_count=0
+    local old_stty_settings=""
+
+    # Save current terminal settings and disable echo at stty level
+    # This is more reliable than read -s for handling right-click paste
+    old_stty_settings=$(stty -g 2>/dev/null) || true
+    stty -echo 2>/dev/null || true
 
     # Disable bracket paste mode to prevent escape sequences from being captured
     # This is safe even if the terminal doesn't support it
@@ -107,6 +113,13 @@ read_masked_input() {
 
     # Re-enable bracket paste mode
     printf '\e[?2004h' >/dev/tty 2>/dev/null || true
+
+    # Restore terminal settings (re-enable echo)
+    if [[ -n "$old_stty_settings" ]]; then
+        stty "$old_stty_settings" 2>/dev/null || true
+    else
+        stty echo 2>/dev/null || true
+    fi
 
     # Sanitize: remove any remaining non-printable characters except common ones
     # This handles edge cases where escape sequences might slip through
