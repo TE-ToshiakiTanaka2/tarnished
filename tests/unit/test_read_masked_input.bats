@@ -131,24 +131,24 @@ setup() {
     assert_output --partial "sleep"
 }
 
-@test "read_masked_input: uses stty to disable echo" {
+@test "read_masked_input: uses stty to disable echo on /dev/tty" {
     local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for stty -echo command (handles right-click paste)
-    run grep -E "stty -echo" "$plugin_file"
+    # Check for stty -echo command with /dev/tty (for curl | bash compatibility)
+    run grep -E "stty.*-echo.*/dev/tty" "$plugin_file"
     assert_success
 }
 
-@test "read_masked_input: restores stty settings after input" {
+@test "read_masked_input: restores stty settings to /dev/tty" {
     local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for stty settings restoration
-    run grep -E 'stty "\$old_stty_settings"' "$plugin_file"
+    # Check for stty settings restoration to /dev/tty
+    run grep -E 'stty.*old_stty_settings.*/dev/tty' "$plugin_file"
     assert_success
 }
 
-@test "read_masked_input: reads entire line at once" {
+@test "read_masked_input: reads entire line silently" {
     local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for read -r (reads entire line, not char by char)
-    run grep -E "IFS=.*read -r input" "$plugin_file"
+    # Check for read -rs (reads entire line silently)
+    run grep -E "IFS=.*read -rs input" "$plugin_file"
     assert_success
 }
 
