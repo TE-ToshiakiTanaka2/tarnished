@@ -64,8 +64,9 @@ read_masked_input() {
     local old_stty_settings=""
 
     # Save current terminal settings and disable echo at stty level
-    old_stty_settings=$(stty -g 2>/dev/null) || true
-    stty -echo 2>/dev/null || true
+    # Use /dev/tty explicitly for curl | bash compatibility (stdin may be pipe)
+    old_stty_settings=$(stty -F /dev/tty -g 2>/dev/null || stty -g < /dev/tty 2>/dev/null) || true
+    stty -F /dev/tty -echo 2>/dev/null || stty -echo < /dev/tty 2>/dev/null || true
 
     # Disable bracket paste mode to prevent escape sequences from being captured
     printf '\e[?2004l' >/dev/tty 2>/dev/null || true
@@ -73,17 +74,17 @@ read_masked_input() {
     # Small delay to ensure settings take effect
     sleep 0.05
 
-    # Read entire line at once (simpler and more reliable than char-by-char)
-    IFS= read -r input < /dev/tty
+    # Read entire line at once, -s for silent mode as additional safeguard
+    IFS= read -rs input < /dev/tty
 
     # Re-enable bracket paste mode
     printf '\e[?2004h' >/dev/tty 2>/dev/null || true
 
-    # Restore terminal settings
+    # Restore terminal settings (explicitly to /dev/tty)
     if [[ -n "$old_stty_settings" ]]; then
-        stty "$old_stty_settings" 2>/dev/null || true
+        stty -F /dev/tty "$old_stty_settings" 2>/dev/null || stty "$old_stty_settings" < /dev/tty 2>/dev/null || true
     else
-        stty echo 2>/dev/null || true
+        stty -F /dev/tty echo 2>/dev/null || stty echo < /dev/tty 2>/dev/null || true
     fi
 
     # Sanitize: remove bracket paste escape sequences and non-printable characters
