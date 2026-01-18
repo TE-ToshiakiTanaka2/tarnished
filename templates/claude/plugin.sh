@@ -43,17 +43,17 @@ plugin_copy() {
 
     # Copy commands directory
     if [[ -d "${PLUGIN_DIR}/.claude/commands" ]]; then
-        cp -r "${PLUGIN_DIR}/.claude/commands" "${target_dir}/.claude/"
+        copy_dir_with_confirm "${PLUGIN_DIR}/.claude/commands" "${target_dir}/.claude/commands"
     fi
 
     # Copy scripts directory
     if [[ -d "${PLUGIN_DIR}/.claude/scripts" ]]; then
-        cp -r "${PLUGIN_DIR}/.claude/scripts" "${target_dir}/.claude/"
+        copy_dir_with_confirm "${PLUGIN_DIR}/.claude/scripts" "${target_dir}/.claude/scripts"
     fi
 
     # Copy CLAUDE.md
     if [[ -f "${PLUGIN_DIR}/CLAUDE.md" ]]; then
-        cp "${PLUGIN_DIR}/CLAUDE.md" "${target_dir}/"
+        copy_with_confirm "${PLUGIN_DIR}/CLAUDE.md" "${target_dir}/CLAUDE.md"
     fi
 
     print_success "Claude Code template files copied"
@@ -77,7 +77,7 @@ plugin_post_copy() {
 
         print_success "Claude Code settings merged"
     elif [[ -f "$plugin_settings" ]]; then
-        cp "$plugin_settings" "$target_settings"
+        copy_with_confirm "$plugin_settings" "$target_settings"
     fi
 
     # Make scripts executable

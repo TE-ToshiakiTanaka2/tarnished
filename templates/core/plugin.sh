@@ -39,22 +39,22 @@ plugin_copy() {
 
     # Copy .devcontainer directory
     if [[ -d "${PLUGIN_DIR}/.devcontainer" ]]; then
-        cp -r "${PLUGIN_DIR}/.devcontainer" "${target_dir}/"
+        copy_dir_with_confirm "${PLUGIN_DIR}/.devcontainer" "${target_dir}/.devcontainer"
     fi
 
     # Copy docker directory
     if [[ -d "${PLUGIN_DIR}/docker" ]]; then
-        cp -r "${PLUGIN_DIR}/docker" "${target_dir}/"
+        copy_dir_with_confirm "${PLUGIN_DIR}/docker" "${target_dir}/docker"
     fi
 
     # Copy .claude directory (base settings)
     if [[ -d "${PLUGIN_DIR}/.claude" ]]; then
-        cp -r "${PLUGIN_DIR}/.claude" "${target_dir}/"
+        copy_dir_with_confirm "${PLUGIN_DIR}/.claude" "${target_dir}/.claude"
     fi
 
     # Copy docker-compose.yml
     if [[ -f "${PLUGIN_DIR}/docker-compose.yml" ]]; then
-        cp "${PLUGIN_DIR}/docker-compose.yml" "${target_dir}/"
+        copy_with_confirm "${PLUGIN_DIR}/docker-compose.yml" "${target_dir}/docker-compose.yml"
     fi
 
     print_success "Core template files copied"

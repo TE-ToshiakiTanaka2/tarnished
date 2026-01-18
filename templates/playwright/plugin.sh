@@ -39,8 +39,7 @@ plugin_post_copy() {
     local plugin_config="${PLUGIN_DIR}/playwright.config.mjs"
     if [[ -f "$plugin_config" ]]; then
         print_info "Copying Playwright configuration file..."
-        cp "$plugin_config" "${target_dir}/"
-        print_success "Playwright configuration file copied"
+        copy_with_confirm "$plugin_config" "${target_dir}/playwright.config.mjs"
     fi
 
     # Create tests/e2e directory for Playwright tests

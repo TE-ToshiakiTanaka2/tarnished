@@ -76,13 +76,8 @@ plugin_post_copy() {
         local target_config="${target_dir}/${config_file}"
 
         if [[ -f "$source_config" ]]; then
-            if [[ -f "$target_config" ]]; then
-                print_warning "Skipping ${config_file} (already exists in target)"
-            else
-                print_info "Copying ${config_file}..."
-                cp "$source_config" "$target_config"
-                print_success "${config_file} copied"
-            fi
+            print_info "Copying ${config_file}..."
+            copy_with_confirm "$source_config" "$target_config"
         fi
     done
 
