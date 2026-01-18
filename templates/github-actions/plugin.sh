@@ -260,7 +260,8 @@ setup_project_automation() {
 
     if [[ -z "$fields_json" ]] || [[ "$fields_json" == "null" ]]; then
         print_warning "Could not fetch project fields. Creating minimal configuration."
-        create_project_config "$config_file" "$project_type" "$owner" "$project_number" "" ""
+        create_project_config "$config_file" "$project_type" "$owner" "$project_number" \
+            "" "" "" "" "" "" "" "" "" ""
         return 0
     fi
 
@@ -273,33 +274,98 @@ setup_project_automation() {
     echo ""
     print_info "Configure default field values (press Enter to skip):"
 
+    local status_field=""
     local status_value=""
+    local priority_field=""
     local priority_value=""
+    local iteration_field=""
+    local iteration_value=""
+    local start_field=""
+    local start_value=""
+    local end_field=""
+    local end_value=""
 
     # Status field
+    status_field=$(echo "$fields_json" | jq -r '.[] | select(.name | ascii_downcase == "status") | .name' 2>/dev/null | head -1)
     local status_options
     status_options=$(echo "$fields_json" | jq -r '.[] | select(.name | ascii_downcase == "status") | .options // [] | .[].name' 2>/dev/null)
     if [[ -n "$status_options" ]]; then
         echo ""
-        echo "Available Status options:"
+        echo "Available ${status_field:-Status} options:"
         echo "$status_options" | while read -r opt; do echo "  - $opt"; done
-        echo -n "Default Status: "
+        echo -n "Default ${status_field:-Status}: "
         IFS='' read -r status_value < /dev/tty
     fi
 
     # Priority field
+    priority_field=$(echo "$fields_json" | jq -r '.[] | select(.name | ascii_downcase == "priority") | .name' 2>/dev/null | head -1)
     local priority_options
     priority_options=$(echo "$fields_json" | jq -r '.[] | select(.name | ascii_downcase == "priority") | .options // [] | .[].name' 2>/dev/null)
     if [[ -n "$priority_options" ]]; then
         echo ""
-        echo "Available Priority options:"
+        echo "Available ${priority_field:-Priority} options:"
         echo "$priority_options" | while read -r opt; do echo "  - $opt"; done
-        echo -n "Default Priority: "
+        echo -n "Default ${priority_field:-Priority}: "
         IFS='' read -r priority_value < /dev/tty
     fi
 
+    # Iteration field
+    iteration_field=$(echo "$fields_json" | jq -r '.[] | select(.type == "ITERATION") | .name' 2>/dev/null | head -1)
+    if [[ -n "$iteration_field" ]]; then
+        # Get iteration options from API
+        local iterations
+        iterations=$(echo "$fields_json" | jq -r '.[] | select(.type == "ITERATION") | .iterations // [] | .[].title' 2>/dev/null)
+
+        echo ""
+        echo "Available ${iteration_field} options:"
+        echo "  1) @current_iteration (現在のイテレーション)"
+        local i=2
+        while IFS= read -r iter; do
+            if [[ -n "$iter" ]]; then
+                echo "  $i) $iter"
+                ((i++))
+            fi
+        done <<< "$iterations"
+
+        echo -n "Default ${iteration_field} [1]: "
+        IFS='' read -r iter_choice < /dev/tty
+
+        # Process selection
+        if [[ -z "$iter_choice" ]] || [[ "$iter_choice" == "1" ]]; then
+            iteration_value="@current_iteration"
+        else
+            # Get specific iteration (subtract 1 for 0-based index, then subtract 1 more for @current_iteration option)
+            local iter_index=$((iter_choice - 2))
+            iteration_value=$(echo "$iterations" | sed -n "$((iter_index + 1))p")
+            # Fallback to @current_iteration if invalid
+            if [[ -z "$iteration_value" ]]; then
+                iteration_value="@current_iteration"
+            fi
+        fi
+
+        # Auto-set Start/End fields when Iteration is selected
+        start_field=$(echo "$fields_json" | jq -r '.[] | select(.type == "DATE") | select(.name | ascii_downcase == "start") | .name' 2>/dev/null | head -1)
+        end_field=$(echo "$fields_json" | jq -r '.[] | select(.type == "DATE") | select(.name | ascii_downcase == "end") | .name' 2>/dev/null | head -1)
+
+        if [[ -n "$start_field" ]]; then
+            start_value="@today"
+            echo ""
+            print_info "Auto-setting ${start_field}: @today"
+        fi
+
+        if [[ -n "$end_field" ]]; then
+            end_value="@iteration_end"
+            print_info "Auto-setting ${end_field}: @iteration_end"
+        fi
+    fi
+
     # Create configuration file
-    create_project_config "$config_file" "$project_type" "$owner" "$project_number" "$status_value" "$priority_value"
+    create_project_config "$config_file" "$project_type" "$owner" "$project_number" \
+        "$status_field" "$status_value" \
+        "$priority_field" "$priority_value" \
+        "$iteration_field" "$iteration_value" \
+        "$start_field" "$start_value" \
+        "$end_field" "$end_value"
 
     print_success "Configuration created: ${config_file}"
     echo ""
@@ -344,6 +410,12 @@ query {
           ... on ProjectV2IterationField {
             name
             dataType
+            configuration {
+              iterations {
+                id
+                title
+              }
+            }
           }
         }
       }
@@ -360,11 +432,11 @@ EOF
         -d "{\"query\": $(echo "$query" | jq -Rs .)}" \
         https://api.github.com/graphql 2>/dev/null)
 
-    # Extract fields from response
-    echo "$response" | jq -r ".data.${query_type}.projectV2.fields.nodes // [] | map({name: .name, type: .dataType, options: .options})" 2>/dev/null
+    # Extract fields from response, including iteration configurations
+    echo "$response" | jq -r ".data.${query_type}.projectV2.fields.nodes // [] | map({name: .name, type: .dataType, options: .options, iterations: .configuration.iterations})" 2>/dev/null
 }
 
-# Create minimal project configuration (without defaults)
+# Create minimal project configuration (with dynamic defaults)
 create_minimal_project_config() {
     local config_file="$1"
 
@@ -387,21 +459,47 @@ project:
   # Project number (visible in project URL)
   number: 1
 
-# Default field values (uncomment and configure as needed)
-# defaults:
-#   status: "Backlog"
-#   priority: "Medium"
+# Default field values
+# Dynamic values: @current_iteration, @today, @iteration_end
+defaults:
+  Status: "Ready"
+  Iteration: "@current_iteration"
+  Start: "@today"
+  End: "@iteration_end"
 EOF
 }
 
 # Create project configuration with values
+# Parameters:
+#   $1  - config_file path
+#   $2  - project_type (organization/repository)
+#   $3  - owner name
+#   $4  - project number
+#   $5  - status_field name (from API)
+#   $6  - status_value
+#   $7  - priority_field name (from API)
+#   $8  - priority_value
+#   $9  - iteration_field name (from API)
+#   $10 - iteration_value
+#   $11 - start_field name (from API)
+#   $12 - start_value
+#   $13 - end_field name (from API)
+#   $14 - end_value
 create_project_config() {
     local config_file="$1"
     local project_type="$2"
     local owner="$3"
     local number="$4"
-    local status="$5"
-    local priority="$6"
+    local status_field="$5"
+    local status_value="$6"
+    local priority_field="$7"
+    local priority_value="$8"
+    local iteration_field="$9"
+    local iteration_value="${10}"
+    local start_field="${11}"
+    local start_value="${12}"
+    local end_field="${13}"
+    local end_value="${14}"
 
     mkdir -p "$(dirname "$config_file")"
 
@@ -424,17 +522,41 @@ project:
 EOF
 
     # Add defaults section if any values are set
-    if [[ -n "$status" ]] || [[ -n "$priority" ]]; then
+    local has_defaults=false
+    if [[ -n "$status_value" ]] || [[ -n "$priority_value" ]] || [[ -n "$iteration_value" ]]; then
+        has_defaults=true
+    fi
+
+    if [[ "$has_defaults" == "true" ]]; then
         echo "" >> "$config_file"
         echo "# Default field values" >> "$config_file"
+        echo "# Dynamic values: @current_iteration, @today, @iteration_end" >> "$config_file"
         echo "defaults:" >> "$config_file"
 
-        if [[ -n "$status" ]]; then
-            echo "  status: \"${status}\"" >> "$config_file"
+        if [[ -n "$status_value" ]]; then
+            local field_name="${status_field:-Status}"
+            echo "  ${field_name}: \"${status_value}\"" >> "$config_file"
         fi
 
-        if [[ -n "$priority" ]]; then
-            echo "  priority: \"${priority}\"" >> "$config_file"
+        if [[ -n "$priority_value" ]]; then
+            local field_name="${priority_field:-Priority}"
+            echo "  ${field_name}: \"${priority_value}\"" >> "$config_file"
+        fi
+
+        if [[ -n "$iteration_value" ]]; then
+            local field_name="${iteration_field:-Iteration}"
+            echo "  ${field_name}: \"${iteration_value}\"" >> "$config_file"
+
+            # Add Start/End if iteration is set
+            if [[ -n "$start_value" ]]; then
+                local start_name="${start_field:-Start}"
+                echo "  ${start_name}: \"${start_value}\"" >> "$config_file"
+            fi
+
+            if [[ -n "$end_value" ]]; then
+                local end_name="${end_field:-End}"
+                echo "  ${end_name}: \"${end_value}\"" >> "$config_file"
+            fi
         fi
     fi
 }
