@@ -213,65 +213,6 @@ EOF
 }
 
 # =============================================================================
-# File Copy Utility Functions
-# =============================================================================
-
-# Copy a single file with overwrite confirmation
-# Usage: copy_with_confirm <source> <destination>
-copy_with_confirm() {
-    local src="$1"
-    local dest="$2"
-
-    # If destination doesn't exist, copy directly
-    if [[ ! -e "$dest" ]]; then
-        cp "$src" "$dest"
-        return 0
-    fi
-
-    # Handle existing file based on flags
-    if [[ "$OVERWRITE_ALL" == true ]]; then
-        cp "$src" "$dest"
-        return 0
-    fi
-
-    if [[ "$skip_confirm" == true ]]; then
-        print_warning "Skipped: $dest (already exists)"
-        return 0
-    fi
-
-    # Interactive confirmation
-    echo -n "File exists: $dest - Overwrite? [y/N]: "
-    local response
-    IFS='' read -r response < /dev/tty
-    if [[ "$response" =~ ^[Yy] ]]; then
-        cp "$src" "$dest"
-    else
-        print_warning "Skipped: $dest (already exists)"
-    fi
-}
-
-# Copy a directory recursively with overwrite confirmation for each file
-# Usage: copy_dir_with_confirm <source_dir> <destination_dir>
-copy_dir_with_confirm() {
-    local src="$1"
-    local dest="$2"
-
-    # Create destination directory if needed
-    mkdir -p "$dest"
-
-    # Iterate through source files
-    while IFS= read -r -d '' file; do
-        local rel_path="${file#$src/}"
-        local dest_file="$dest/$rel_path"
-        local dest_dir
-        dest_dir="$(dirname "$dest_file")"
-
-        mkdir -p "$dest_dir"
-        copy_with_confirm "$file" "$dest_file"
-    done < <(find "$src" -type f -print0)
-}
-
-# =============================================================================
 # GitHub Operations Functions
 # =============================================================================
 
