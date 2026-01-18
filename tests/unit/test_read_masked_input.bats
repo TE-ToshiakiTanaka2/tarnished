@@ -55,17 +55,10 @@ setup() {
     assert_output --partial "/dev/tty"
 }
 
-@test "read_masked_input: handles backspace characters" {
-    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for backspace handling (both \x7f and \b)
-    run grep -E "\\\\x7f|\\\\b" "$plugin_file"
-    assert_success
-}
-
 @test "read_masked_input: outputs masked characters to stderr" {
     local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for printf '*' pattern
-    run grep -E "printf '\*'" "$plugin_file"
+    # Check for asterisk output pattern (tr ' ' '*')
+    run grep -E "tr ' ' '\*'" "$plugin_file"
     assert_success
 }
 
@@ -112,10 +105,10 @@ setup() {
     assert_success
 }
 
-@test "read_masked_input: handles escape sequences" {
+@test "read_masked_input: sanitizes escape sequences with sed" {
     local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for escape character handling (detects ESC character and skips sequence)
-    run grep -E "\\\$'\\\\e'" "$plugin_file"
+    # Check for sed sanitization of escape sequences
+    run grep -E "sed.*\\\\x1b" "$plugin_file"
     assert_success
 }
 
@@ -138,34 +131,6 @@ setup() {
     assert_output --partial "sleep"
 }
 
-@test "read_masked_input: uses increased timeout for escape sequences" {
-    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for 0.1 second timeout (increased from 0.01 for WSL2)
-    run grep -E "read.*-t 0\.1" "$plugin_file"
-    assert_success
-}
-
-@test "read_masked_input: breaks on letter terminators" {
-    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for letter terminator detection [A-Za-z]
-    run grep -E "\[A-Za-z\]" "$plugin_file"
-    assert_success
-}
-
-@test "read_masked_input: has safety limit for escape sequences" {
-    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for escape_count safety limit
-    run grep -E "escape_count.*10" "$plugin_file"
-    assert_success
-}
-
-@test "read_masked_input: filters printable characters only" {
-    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
-    # Check for printable character check
-    run grep -E "\[\[:print:\]\]" "$plugin_file"
-    assert_success
-}
-
 @test "read_masked_input: uses stty to disable echo" {
     local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
     # Check for stty -echo command (handles right-click paste)
@@ -177,5 +142,19 @@ setup() {
     local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
     # Check for stty settings restoration
     run grep -E 'stty "\$old_stty_settings"' "$plugin_file"
+    assert_success
+}
+
+@test "read_masked_input: reads entire line at once" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check for read -r (reads entire line, not char by char)
+    run grep -E "IFS=.*read -r input" "$plugin_file"
+    assert_success
+}
+
+@test "read_masked_input: prints asterisks after read completes" {
+    local plugin_file="${PROJECT_ROOT}/templates/github-actions/plugin.sh"
+    # Check that asterisks are printed based on input length
+    run grep -E 'printf.*\$input_len.*tr.*\*' "$plugin_file"
     assert_success
 }

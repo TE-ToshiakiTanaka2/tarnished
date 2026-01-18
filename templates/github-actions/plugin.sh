@@ -61,69 +61,41 @@ declare -a AVAILABLE_ACTIONS=(
 # Returns: input string via stdout
 read_masked_input() {
     local input=""
-    local char=""
-    local escape_count=0
     local old_stty_settings=""
 
     # Save current terminal settings and disable echo at stty level
-    # This is more reliable than read -s for handling right-click paste
     old_stty_settings=$(stty -g 2>/dev/null) || true
     stty -echo 2>/dev/null || true
 
     # Disable bracket paste mode to prevent escape sequences from being captured
-    # This is safe even if the terminal doesn't support it
     printf '\e[?2004l' >/dev/tty 2>/dev/null || true
 
-    # Small delay to ensure the disable command takes effect (fixes WSL2 timing)
-    sleep 0.01
+    # Small delay to ensure settings take effect
+    sleep 0.05
 
-    while IFS= read -rsn1 char < /dev/tty; do
-        if [[ -z "$char" ]]; then
-            # Enter key pressed
-            echo "" >&2
-            break
-        elif [[ "$char" == $'\x7f' ]] || [[ "$char" == $'\b' ]]; then
-            # Backspace (handle both key codes for compatibility)
-            if [[ -n "$input" ]]; then
-                input="${input%?}"
-                printf '\b \b' >&2
-            fi
-        elif [[ "$char" == $'\e' ]]; then
-            # Escape character detected - skip the entire escape sequence
-            # Read and discard characters until we hit a terminator or timeout
-            # Increased timeout from 0.01 to 0.1 for WSL2 compatibility
-            local seq_char=""
-            escape_count=0
-            while read -rsn1 -t 0.1 seq_char < /dev/tty 2>/dev/null; do
-                # Break on common sequence terminators (~ for bracket paste, letters for others)
-                [[ "$seq_char" == "~" ]] && break
-                [[ "$seq_char" =~ [A-Za-z] ]] && break
-                # Safety limit to prevent infinite loop
-                ((escape_count++))
-                [[ $escape_count -gt 10 ]] && break
-            done
-        else
-            # Only accept printable characters (security: prevent control char injection)
-            if [[ "$char" =~ [[:print:]] ]]; then
-                input+="$char"
-                printf '*' >&2
-            fi
-        fi
-    done
+    # Read entire line at once (simpler and more reliable than char-by-char)
+    IFS= read -r input < /dev/tty
 
     # Re-enable bracket paste mode
     printf '\e[?2004h' >/dev/tty 2>/dev/null || true
 
-    # Restore terminal settings (re-enable echo)
+    # Restore terminal settings
     if [[ -n "$old_stty_settings" ]]; then
         stty "$old_stty_settings" 2>/dev/null || true
     else
         stty echo 2>/dev/null || true
     fi
 
-    # Sanitize: remove any remaining non-printable characters except common ones
-    # This handles edge cases where escape sequences might slip through
-    input=$(printf '%s' "$input" | tr -cd '[:print:]')
+    # Sanitize: remove bracket paste escape sequences and non-printable characters
+    # \e[200~ is paste start, \e[201~ is paste end
+    input=$(printf '%s' "$input" | sed 's/\x1b\[[0-9;]*[~A-Za-z]//g' | tr -cd '[:print:]')
+
+    # Display asterisks for the sanitized input length
+    local input_len=${#input}
+    if [[ $input_len -gt 0 ]]; then
+        printf '%*s' "$input_len" '' | tr ' ' '*' >&2
+    fi
+    echo "" >&2
 
     printf '%s' "$input"
 }
