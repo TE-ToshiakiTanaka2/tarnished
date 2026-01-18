@@ -227,8 +227,7 @@ setup_project_automation() {
     local pat=""
     while true; do
         printf "GitHub Personal Access Token (for field discovery): "
-        IFS='' read -rs pat < /dev/tty
-        echo ""  # Add newline after silent input
+        pat=$(read_masked_input)
 
         if [[ -z "$pat" ]]; then
             echo ""
@@ -243,7 +242,8 @@ setup_project_automation() {
             continue
         fi
 
-        # Token provided, break the loop
+        # Token provided, show confirmation and break
+        print_success "Token received (${#pat} characters)"
         break
     done
 
