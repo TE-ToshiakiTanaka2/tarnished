@@ -276,7 +276,7 @@ setup_project_automation() {
     local project_type
     case "$project_type_choice" in
         1) project_type="organization" ;;
-        2) project_type="repository" ;;
+        2) project_type="user" ;;
         *)
             print_warning "Invalid choice. Defaulting to organization."
             project_type="organization"
@@ -498,7 +498,7 @@ create_minimal_project_config() {
 # =============================================================================
 
 project:
-  # Project type: 'organization' or 'repository'
+  # Project type: 'organization' or 'user'
   type: organization
   # Owner name (organization or user)
   owner: "your-org"
@@ -518,7 +518,7 @@ EOF
 # Create project configuration with values
 # Parameters:
 #   $1  - config_file path
-#   $2  - project_type (organization/repository)
+#   $2  - project_type (organization/user)
 #   $3  - owner name
 #   $4  - project number
 #   $5  - status_field name (from API)
@@ -559,7 +559,7 @@ create_project_config() {
 # =============================================================================
 
 project:
-  # Project type: 'organization' or 'repository'
+  # Project type: 'organization' or 'user'
   type: ${project_type}
   # Owner name (organization or user)
   owner: "${owner}"
