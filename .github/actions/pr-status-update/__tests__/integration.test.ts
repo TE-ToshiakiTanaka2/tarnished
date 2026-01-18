@@ -337,7 +337,7 @@ pr:
     it('should load config without PR section (backward compatible)', () => {
       const configYaml = `
 project:
-  type: repository
+  type: user
   owner: my-user
   number: 2
 defaults:
@@ -349,7 +349,7 @@ defaults:
 
       const config = loadConfig('.github/project-automation.yml');
 
-      expect(config.project.type).toBe('repository');
+      expect(config.project.type).toBe('user');
       expect(config.pr).toBeUndefined();
     });
 

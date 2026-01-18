@@ -37,9 +37,9 @@ export function validateConfig(config: unknown): ProjectConfig {
   const project = cfg['project'] as Record<string, unknown>;
 
   // Validate project.type
-  if (project['type'] !== 'organization' && project['type'] !== 'repository') {
+  if (project['type'] !== 'organization' && project['type'] !== 'user') {
     throw new Error(
-      'project.type must be "organization" or "repository"'
+      'project.type must be "organization" or "user"'
     );
   }
 
@@ -72,7 +72,7 @@ export function validateConfig(config: unknown): ProjectConfig {
 
   return {
     project: {
-      type: project['type'] as 'organization' | 'repository',
+      type: project['type'] as 'organization' | 'user',
       owner: project['owner'] as string,
       number: project['number'] as number,
     },

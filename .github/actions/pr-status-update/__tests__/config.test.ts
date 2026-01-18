@@ -19,16 +19,16 @@ describe('validateConfig', () => {
       expect(result.pr).toBeUndefined();
     });
 
-    it('validates config with repository type', () => {
+    it('validates config with user type', () => {
       const config = {
         project: {
-          type: 'repository',
+          type: 'user',
           owner: 'my-user',
           number: 2,
         },
       };
       const result = validateConfig(config);
-      expect(result.project.type).toBe('repository');
+      expect(result.project.type).toBe('user');
     });
 
     it('throws for missing project section', () => {
