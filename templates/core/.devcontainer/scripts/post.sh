@@ -33,6 +33,61 @@ is_interactive() {
 }
 
 # -----------------------------------------------------------------------------
+# Setup sudo PATH for nvm-installed Node.js
+# -----------------------------------------------------------------------------
+# When sudo is executed, the secure_path setting in sudoers overrides the user's
+# PATH environment variable. This function adds the nvm bin path to secure_path
+# so that `sudo npm` and `sudo node` commands work correctly.
+setup_sudo_path() {
+    echo "Setting up sudo PATH for nvm..."
+
+    # Get nvm bin path dynamically
+    local nvm_bin
+    nvm_bin=$(dirname "$(which node 2>/dev/null)" 2>/dev/null)
+
+    if [ -z "$nvm_bin" ] || [ ! -d "$nvm_bin" ]; then
+        echo "  - Node.js not found, skipping sudo PATH setup"
+        return 0
+    fi
+
+    echo "  - Detected nvm bin path: $nvm_bin"
+
+    # Check if sudoers.d file already exists with correct path
+    if [ -f /etc/sudoers.d/nvm-path ]; then
+        if grep -q "$nvm_bin" /etc/sudoers.d/nvm-path 2>/dev/null; then
+            echo "  - sudo PATH already configured"
+            return 0
+        fi
+    fi
+
+    # Get current secure_path from sudoers
+    local current_secure_path
+    current_secure_path=$(sudo grep -oP 'secure_path="\K[^"]+' /etc/sudoers 2>/dev/null || echo "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+
+    # Check if nvm path is already in secure_path
+    if [[ "$current_secure_path" == *"$nvm_bin"* ]]; then
+        echo "  - nvm path already in secure_path"
+        return 0
+    fi
+
+    # Create sudoers.d file with nvm path prepended
+    local new_secure_path="$nvm_bin:$current_secure_path"
+    echo "Defaults secure_path=\"$new_secure_path\"" | sudo tee /etc/sudoers.d/nvm-path > /dev/null
+    sudo chmod 0440 /etc/sudoers.d/nvm-path
+
+    # Validate sudoers syntax
+    if sudo visudo -c -f /etc/sudoers.d/nvm-path >/dev/null 2>&1; then
+        echo "  - sudo PATH configured successfully"
+    else
+        echo "  - Error: Invalid sudoers syntax, removing file"
+        sudo rm -f /etc/sudoers.d/nvm-path
+        return 1
+    fi
+}
+
+setup_sudo_path
+
+# -----------------------------------------------------------------------------
 # Git Configuration
 # -----------------------------------------------------------------------------
 echo "Setting up Git configuration..."
