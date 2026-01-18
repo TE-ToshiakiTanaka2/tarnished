@@ -56,6 +56,34 @@ declare -a AVAILABLE_ACTIONS=(
 # Helper Functions
 # =============================================================================
 
+# Read input with masked display (shows * for each character)
+# Supports paste and backspace for secure token entry
+# Returns: input string via stdout
+read_masked_input() {
+    local input=""
+    local char=""
+
+    while IFS= read -rsn1 char < /dev/tty; do
+        if [[ -z "$char" ]]; then
+            # Enter key pressed
+            echo "" >&2
+            break
+        elif [[ "$char" == $'\x7f' ]] || [[ "$char" == $'\b' ]]; then
+            # Backspace (handle both key codes for compatibility)
+            if [[ -n "$input" ]]; then
+                input="${input%?}"
+                printf '\b \b' >&2
+            fi
+        else
+            # Normal character (including pasted characters)
+            input+="$char"
+            printf '*' >&2
+        fi
+    done
+
+    printf '%s' "$input"
+}
+
 # Check if an action exists in the plugin
 action_exists() {
     local action_name="$1"
@@ -199,8 +227,7 @@ setup_project_automation() {
     local pat=""
     while true; do
         printf "GitHub Personal Access Token (for field discovery): "
-        IFS='' read -rs pat < /dev/tty
-        echo ""  # Add newline after silent input
+        pat=$(read_masked_input)
 
         if [[ -z "$pat" ]]; then
             echo ""
@@ -215,7 +242,8 @@ setup_project_automation() {
             continue
         fi
 
-        # Token provided, break the loop
+        # Token provided, show confirmation and break
+        print_success "Token received (${#pat} characters)"
         break
     done
 
