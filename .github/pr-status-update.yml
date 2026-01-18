@@ -1,0 +1,23 @@
+# =============================================================================
+# PR Status Update Configuration
+# =============================================================================
+# This file configures automatic issue status update when PR is opened.
+#
+# Required Secret: PROJECT_TOKEN (PAT with 'project' scope)
+# =============================================================================
+
+project:
+  # Project type: 'organization' or 'user'
+  type: user
+  # Owner name (organization or user)
+  owner: "TE-ToshiakiTanaka2"
+  # Project number (visible in project URL)
+  number: 3
+
+# PR status update settings
+pr:
+  # Status value to set when PR is opened/reopened
+  status: "In review"
+  # Regex pattern for extracting issue number from branch name
+  # Group 2 should capture the issue number
+  branch_pattern: "^(feature|fix|issue)-([0-9]+)"

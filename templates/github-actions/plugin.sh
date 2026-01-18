@@ -615,11 +615,210 @@ EOF
 }
 
 # =============================================================================
+# PR Status Update Interactive Setup
+# =============================================================================
+
+# Create PR status update configuration file
+# Parameters:
+#   $1 - config_file path
+#   $2 - project_type (organization/user)
+#   $3 - owner name
+#   $4 - project number
+#   $5 - status value for PR
+#   $6 - branch_pattern (optional)
+create_pr_status_update_config() {
+    local config_file="$1"
+    local project_type="$2"
+    local owner="$3"
+    local number="$4"
+    local status_value="$5"
+    local branch_pattern="${6:-^(feature|fix|issue)-([0-9]+)}"
+
+    mkdir -p "$(dirname "$config_file")"
+
+    cat > "$config_file" <<EOF
+# =============================================================================
+# PR Status Update Configuration
+# =============================================================================
+# This file configures automatic issue status update when PR is opened.
+#
+# Required Secret: PROJECT_TOKEN (PAT with 'project' scope)
+# =============================================================================
+
+project:
+  # Project type: 'organization' or 'user'
+  type: ${project_type}
+  # Owner name (organization or user)
+  owner: "${owner}"
+  # Project number (visible in project URL)
+  number: ${number}
+
+# PR status update settings
+pr:
+  # Status value to set when PR is opened/reopened
+  status: "${status_value}"
+  # Regex pattern for extracting issue number from branch name
+  # Group 2 should capture the issue number
+  branch_pattern: "${branch_pattern}"
+EOF
+}
+
+# Setup pr-status-update action with interactive configuration
+setup_pr_status_update() {
+    local target_dir="$1"
+    local config_file="${target_dir}/.github/pr-status-update.yml"
+    local project_config="${target_dir}/.github/project-automation.yml"
+
+    print_info "Setting up PR Status Update..."
+    echo ""
+
+    # Check if project-automation config exists
+    if [[ ! -f "$project_config" ]]; then
+        print_warning "project-automation.yml not found. Skipping pr-status-update setup."
+        print_info "Please configure project-automation first."
+        return 0
+    fi
+
+    # Check if config already exists
+    if [[ -f "$config_file" ]]; then
+        print_warning "Configuration file already exists: ${config_file}"
+        echo -n "Overwrite? [y/N]: "
+        IFS='' read -r overwrite < /dev/tty
+        if [[ ! "$overwrite" =~ ^[Yy]$ ]]; then
+            print_info "Skipping pr-status-update setup"
+            return 0
+        fi
+    fi
+
+    # Read project info from project-automation.yml
+    local project_type
+    local owner
+    local project_number
+
+    project_type=$(grep -E "^\s*type:" "$project_config" | head -1 | sed 's/.*type:\s*//' | tr -d '"' | tr -d "'" | xargs)
+    owner=$(grep -E "^\s*owner:" "$project_config" | head -1 | sed 's/.*owner:\s*//' | tr -d '"' | tr -d "'" | xargs)
+    project_number=$(grep -E "^\s*number:" "$project_config" | head -1 | sed 's/.*number:\s*//' | xargs)
+
+    if [[ -z "$project_type" ]] || [[ -z "$owner" ]] || [[ -z "$project_number" ]]; then
+        print_error "Could not read project info from project-automation.yml"
+        return 1
+    fi
+
+    print_info "Using project info from project-automation.yml:"
+    echo "  Type: ${project_type}"
+    echo "  Owner: ${owner}"
+    echo "  Number: ${project_number}"
+    echo ""
+
+    # Prompt for PAT (temporary, for field discovery)
+    echo "A GitHub Personal Access Token is required to fetch Status field options."
+    echo "This token will NOT be saved."
+    echo ""
+
+    local pat=""
+    while true; do
+        printf "GitHub Personal Access Token (for field discovery): "
+        pat=$(read_masked_input)
+
+        if [[ -z "$pat" ]]; then
+            echo ""
+            echo -n "No token provided. Use default Status value 'In review'? [Y/n]: "
+            IFS='' read -r use_default < /dev/tty
+            if [[ -z "$use_default" ]] || [[ "$use_default" =~ ^[Yy] ]]; then
+                # Create config with default value
+                create_pr_status_update_config "$config_file" "$project_type" "$owner" "$project_number" "In review"
+                print_success "Configuration created: ${config_file}"
+                return 0
+            fi
+            # User chose not to use default, retry token input
+            echo ""
+            continue
+        fi
+
+        # Token provided, show confirmation and break
+        print_success "Token received (${#pat} characters)"
+        break
+    done
+
+    # Fetch project fields to get Status options
+    print_info "Fetching Status field options..."
+    local fields_json
+    fields_json=$(fetch_project_fields "$pat" "$project_type" "$owner" "$project_number")
+
+    local status_value="In review"
+
+    if [[ -n "$fields_json" ]] && [[ "$fields_json" != "null" ]]; then
+        # Get Status field options
+        local status_options
+        status_options=$(echo "$fields_json" | jq -r '.[] | select(.name | ascii_downcase == "status") | .options // [] | .[].name' 2>/dev/null)
+
+        if [[ -n "$status_options" ]]; then
+            echo ""
+            echo "Available Status options:"
+            local i=1
+            local options_array=()
+            while IFS= read -r opt; do
+                if [[ -n "$opt" ]]; then
+                    options_array+=("$opt")
+                    if [[ "${opt,,}" == "in review" ]] || [[ "${opt,,}" == "in progress" ]]; then
+                        echo "  $i) $opt (recommended)"
+                    else
+                        echo "  $i) $opt"
+                    fi
+                    ((i++))
+                fi
+            done <<< "$status_options"
+
+            # Find default index (In review or In progress)
+            local default_index=1
+            for idx in "${!options_array[@]}"; do
+                local opt_lower="${options_array[$idx],,}"
+                if [[ "$opt_lower" == "in review" ]]; then
+                    default_index=$((idx + 1))
+                    break
+                elif [[ "$opt_lower" == "in progress" ]]; then
+                    default_index=$((idx + 1))
+                fi
+            done
+
+            echo ""
+            echo -n "Select Status for PR opened [${default_index}]: "
+            IFS='' read -r status_choice < /dev/tty
+
+            if [[ -z "$status_choice" ]]; then
+                status_choice=$default_index
+            fi
+
+            # Validate and get selected value
+            if [[ "$status_choice" =~ ^[0-9]+$ ]] && [[ $status_choice -ge 1 ]] && [[ $status_choice -le ${#options_array[@]} ]]; then
+                status_value="${options_array[$((status_choice - 1))]}"
+            else
+                print_warning "Invalid choice. Using default: In review"
+                status_value="In review"
+            fi
+        else
+            print_warning "Could not fetch Status options. Using default: In review"
+        fi
+    else
+        print_warning "Could not fetch project fields. Using default: In review"
+    fi
+
+    # Create configuration file
+    create_pr_status_update_config "$config_file" "$project_type" "$owner" "$project_number" "$status_value"
+
+    print_success "Configuration created: ${config_file}"
+    echo "  Status on PR open: ${status_value}"
+
+    return 0
+}
+
+# =============================================================================
 # Plugin Interactive Setup Hook
 # =============================================================================
 
 plugin_interactive_setup() {
     local target_dir="$1"
+    local project_automation_configured=false
 
     # Check if project-automation action was installed
     if [[ -d "${target_dir}/.github/actions/project-automation" ]]; then
@@ -629,8 +828,33 @@ plugin_interactive_setup() {
         # Default to yes if empty or starts with Y/y
         if [[ -z "$setup_project" ]] || [[ "$setup_project" =~ ^[Yy] ]]; then
             setup_project_automation "$target_dir"
+            # Check if config was created successfully
+            if [[ -f "${target_dir}/.github/project-automation.yml" ]]; then
+                project_automation_configured=true
+            fi
         else
             print_info "Skipping project-automation setup"
+            # Check if config already exists
+            if [[ -f "${target_dir}/.github/project-automation.yml" ]]; then
+                project_automation_configured=true
+            fi
+        fi
+    fi
+
+    # Check if pr-status-update action was installed and project-automation is configured
+    if [[ -d "${target_dir}/.github/actions/pr-status-update" ]]; then
+        if [[ "$project_automation_configured" == "true" ]]; then
+            echo ""
+            echo -n "Configure pr-status-update action? [Y/n]: "
+            IFS='' read -r setup_pr_status < /dev/tty
+            # Default to yes if empty or starts with Y/y
+            if [[ -z "$setup_pr_status" ]] || [[ "$setup_pr_status" =~ ^[Yy] ]]; then
+                setup_pr_status_update "$target_dir"
+            else
+                print_info "Skipping pr-status-update setup"
+            fi
+        else
+            print_info "Skipping pr-status-update setup (requires project-automation configuration)"
         fi
     fi
 
