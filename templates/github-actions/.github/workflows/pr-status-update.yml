@@ -21,4 +21,4 @@ jobs:
         uses: ./.github/actions/pr-status-update
         with:
           token: ${{ secrets.PROJECT_TOKEN }}
-          # config-path: .github/project-automation.yml  # Optional, this is the default
+          config-path: .github/pr-status-update.yml

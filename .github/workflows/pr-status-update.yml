@@ -5,7 +5,7 @@
 # This workflow automatically updates the status of linked issues in GitHub
 # Project when a PR is opened or reopened.
 #
-# Configuration: .github/project-automation.yml
+# Configuration: .github/pr-status-update.yml
 #
 # Required Secrets:
 #   - PROJECT_TOKEN: Personal Access Token with 'project' scope
@@ -42,6 +42,7 @@ jobs:
         uses: ./.github/actions/pr-status-update
         with:
           token: ${{ secrets.PROJECT_TOKEN }}
+          config-path: .github/pr-status-update.yml
 
       - name: Summary
         run: |

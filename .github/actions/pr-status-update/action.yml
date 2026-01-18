@@ -9,7 +9,7 @@ inputs:
   config-path:
     description: 'Path to configuration file'
     required: false
-    default: '.github/project-automation.yml'
+    default: '.github/pr-status-update.yml'
 
 outputs:
   issues-updated:
