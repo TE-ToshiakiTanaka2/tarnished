@@ -389,8 +389,16 @@ setup_project_automation() {
         fi
 
         # Auto-set Start/End fields when Iteration is selected
-        start_field=$(echo "$fields_json" | jq -r '.[] | select(.type == "DATE") | select(.name | ascii_downcase == "start") | .name' 2>/dev/null | head -1)
-        end_field=$(echo "$fields_json" | jq -r '.[] | select(.type == "DATE") | select(.name | ascii_downcase == "end") | .name' 2>/dev/null | head -1)
+        # Priority: "Start date" > "Start" for start field
+        start_field=$(echo "$fields_json" | jq -r '.[] | select(.type == "DATE") | select(.name | ascii_downcase == "start date") | .name' 2>/dev/null | head -1)
+        if [[ -z "$start_field" ]]; then
+            start_field=$(echo "$fields_json" | jq -r '.[] | select(.type == "DATE") | select(.name | ascii_downcase == "start") | .name' 2>/dev/null | head -1)
+        fi
+        # Priority: "Target date" > "End" for end field
+        end_field=$(echo "$fields_json" | jq -r '.[] | select(.type == "DATE") | select(.name | ascii_downcase == "target date") | .name' 2>/dev/null | head -1)
+        if [[ -z "$end_field" ]]; then
+            end_field=$(echo "$fields_json" | jq -r '.[] | select(.type == "DATE") | select(.name | ascii_downcase == "end") | .name' 2>/dev/null | head -1)
+        fi
 
         if [[ -n "$start_field" ]]; then
             start_value="@today"
