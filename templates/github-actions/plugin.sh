@@ -125,12 +125,12 @@ copy_action() {
 
         # Copy action.yml
         if [[ -f "${src_action}/action.yml" ]]; then
-            cp "${src_action}/action.yml" "$dest_action/"
+            copy_with_confirm "${src_action}/action.yml" "$dest_action/action.yml"
         fi
 
         # Copy dist directory (bundled JavaScript)
         if [[ -d "${src_action}/dist" ]]; then
-            cp -r "${src_action}/dist" "$dest_action/"
+            copy_dir_with_confirm "${src_action}/dist" "$dest_action/dist"
         fi
 
         print_success "  Copied action: ${action_name}"
@@ -139,7 +139,7 @@ copy_action() {
     # Copy workflow file if exists
     if [[ -f "$src_workflow" ]]; then
         mkdir -p "${target_dir}/.github/workflows"
-        cp "$src_workflow" "$dest_workflow"
+        copy_with_confirm "$src_workflow" "$dest_workflow"
         print_success "  Copied workflow: ${action_name}.yml"
     fi
 }
@@ -174,7 +174,7 @@ plugin_copy() {
 
     # Copy shared configuration files
     if [[ -f "${PLUGIN_DIR}/.github/version.yml" ]]; then
-        cp "${PLUGIN_DIR}/.github/version.yml" "${target_dir}/.github/"
+        copy_with_confirm "${PLUGIN_DIR}/.github/version.yml" "${target_dir}/.github/version.yml"
         print_success "  Copied config: version.yml"
     fi
 

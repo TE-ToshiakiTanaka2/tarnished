@@ -100,11 +100,8 @@ plugin_post_copy() {
     local target_init="${target_dir}/init"
 
     if [[ -d "$plugin_init" ]]; then
-        if [[ ! -d "$target_init" ]]; then
-            print_info "Creating init directory for Redis initialization scripts..."
-            cp -r "$plugin_init" "$target_init"
-            print_success "Init directory created"
-        fi
+        print_info "Copying init directory for Redis initialization scripts..."
+        copy_dir_with_confirm "$plugin_init" "$target_init"
     fi
 
     # Update .gitignore to include .env

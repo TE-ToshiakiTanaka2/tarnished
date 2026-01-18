@@ -101,6 +101,7 @@ POSTGRESQL_ENABLED=false
 NEO4J_ENABLED=false
 REDIS_ENABLED=false
 GITHUB_ACTIONS_ENABLED=false
+OVERWRITE_ALL=false
 
 # Core plugins that are always loaded
 declare -a CORE_PLUGINS=("core" "claude")
@@ -133,6 +134,7 @@ Options:
     --neo4j             Include Neo4j graph database support
     --redis             Include Redis cache/session support
     --github-actions    Include GitHub Actions templates (auto-tag, etc.)
+    --overwrite         Overwrite existing files without confirmation
 
 Arguments:
     PROJECT_NAME        Name for your project (optional, will prompt if not provided)
@@ -157,6 +159,7 @@ Examples:
     ./setup.sh --lang node --redis               # Node.js with Redis
     ./setup.sh --lang node --github-actions      # Node.js with GitHub Actions
     ./setup.sh my-project --lang node -y    # Non-interactive mode
+    ./setup.sh --overwrite                  # Overwrite existing files
 
 Generated Files:
     .devcontainer/
@@ -207,6 +210,65 @@ Remote Execution:
     Requirements: git, curl
 
 EOF
+}
+
+# =============================================================================
+# File Copy Utility Functions
+# =============================================================================
+
+# Copy a single file with overwrite confirmation
+# Usage: copy_with_confirm <source> <destination>
+copy_with_confirm() {
+    local src="$1"
+    local dest="$2"
+
+    # If destination doesn't exist, copy directly
+    if [[ ! -e "$dest" ]]; then
+        cp "$src" "$dest"
+        return 0
+    fi
+
+    # Handle existing file based on flags
+    if [[ "$OVERWRITE_ALL" == true ]]; then
+        cp "$src" "$dest"
+        return 0
+    fi
+
+    if [[ "$skip_confirm" == true ]]; then
+        print_warning "Skipped: $dest (already exists)"
+        return 0
+    fi
+
+    # Interactive confirmation
+    echo -n "File exists: $dest - Overwrite? [y/N]: "
+    local response
+    IFS='' read -r response < /dev/tty
+    if [[ "$response" =~ ^[Yy] ]]; then
+        cp "$src" "$dest"
+    else
+        print_warning "Skipped: $dest (already exists)"
+    fi
+}
+
+# Copy a directory recursively with overwrite confirmation for each file
+# Usage: copy_dir_with_confirm <source_dir> <destination_dir>
+copy_dir_with_confirm() {
+    local src="$1"
+    local dest="$2"
+
+    # Create destination directory if needed
+    mkdir -p "$dest"
+
+    # Iterate through source files
+    while IFS= read -r -d '' file; do
+        local rel_path="${file#$src/}"
+        local dest_file="$dest/$rel_path"
+        local dest_dir
+        dest_dir="$(dirname "$dest_file")"
+
+        mkdir -p "$dest_dir"
+        copy_with_confirm "$file" "$dest_file"
+    done < <(find "$src" -type f -print0)
 }
 
 # =============================================================================
@@ -1008,6 +1070,10 @@ main() {
                 GITHUB_ACTIONS_ENABLED=true
                 shift
                 ;;
+            --overwrite)
+                OVERWRITE_ALL=true
+                shift
+                ;;
             -*)
                 print_error "Unknown option: $1"
                 echo "Use --help for usage information"
@@ -1135,21 +1201,6 @@ main() {
 
     # Create target directory (current directory)
     local target_dir="."
-
-    # Check if files already exist
-    if [[ -d ".devcontainer" ]] || [[ -f "docker-compose.yml" ]]; then
-        print_warning "Some files already exist in the current directory"
-        if [[ "$skip_confirm" != true ]]; then
-            echo -n "Overwrite existing files? [y/N]: "
-            IFS='' read -r overwrite < /dev/tty
-            if [[ ! "$overwrite" =~ ^[Yy] ]]; then
-                print_warning "Setup cancelled"
-                exit 0
-            fi
-        else
-            print_info "Proceeding with overwrite (--yes flag specified)"
-        fi
-    fi
 
     # Execute plugin hooks in order
     print_info "Executing plugin pre-copy hooks..."

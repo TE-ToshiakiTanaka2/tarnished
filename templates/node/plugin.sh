@@ -78,13 +78,8 @@ plugin_post_copy() {
         local target_config="${target_dir}/${config_file}"
 
         if [[ -f "$source_config" ]]; then
-            if [[ -f "$target_config" ]]; then
-                print_warning "Skipping ${config_file} (already exists in target)"
-            else
-                print_info "Copying ${config_file}..."
-                cp "$source_config" "$target_config"
-                print_success "${config_file} copied"
-            fi
+            print_info "Copying ${config_file}..."
+            copy_with_confirm "$source_config" "$target_config"
         fi
     done
 
@@ -99,14 +94,8 @@ plugin_post_copy() {
                 local filename
                 filename=$(basename "$workflow_file")
                 local target_workflow="${target_workflows}/${filename}"
-
-                if [[ -f "$target_workflow" ]]; then
-                    print_warning "Skipping ${filename} (already exists in target)"
-                else
-                    print_info "Copying ${filename}..."
-                    cp "$workflow_file" "$target_workflow"
-                    print_success "${filename} copied"
-                fi
+                print_info "Copying ${filename}..."
+                copy_with_confirm "$workflow_file" "$target_workflow"
             fi
         done
     fi
@@ -116,12 +105,7 @@ plugin_post_copy() {
     local target_tests="${target_dir}/tests"
 
     if [[ -d "$source_tests" ]]; then
-        if [[ -d "$target_tests" ]]; then
-            print_warning "Skipping tests directory (already exists in target)"
-        else
-            print_info "Copying tests directory..."
-            cp -r "$source_tests" "$target_tests"
-            print_success "tests directory copied"
-        fi
+        print_info "Copying tests directory..."
+        copy_dir_with_confirm "$source_tests" "$target_tests"
     fi
 }
