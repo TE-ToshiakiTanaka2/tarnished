@@ -1,0 +1,14 @@
+{
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "files.exclude": {
+                    "**/.serena": true,
+                    "**/playwright-report": true,
+                    "**/playwright/.cache": true,
+                    "**/test-results": true
+                }
+            }
+        }
+    }
+}
