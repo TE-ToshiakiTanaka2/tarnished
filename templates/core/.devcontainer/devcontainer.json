@@ -20,7 +20,17 @@
         "eamodio.gitlens"
       ],
       "settings": {
-        "terminal.integrated.defaultProfile.linux": "bash"
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.exclude": {
+          "**/.git": true,
+          "**/.DS_Store": true,
+          "**/Thumbs.db": true,
+          "**/*.swp": true,
+          "**/*.swo": true,
+          "**/*~": true,
+          "**/.hg": true,
+          "**/.svn": true
+        }
       }
     }
   },

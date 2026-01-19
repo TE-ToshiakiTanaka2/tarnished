@@ -26,11 +26,13 @@ To create a GitHub Issue from a development request:
    - **Milestone** - Assign based on target area if applicable
    - **Assignee** - Assign to the user by default unless otherwise specified
 8. **Return issue number** - Provide the created issue number
-9. **Configure Project fields** (optional) - If `.github/project-automation.yml` exists:
+9. **🔴 CRITICAL: Configure Project fields** - If `.github/project-automation.yml` exists, this step is **MANDATORY**:
    - Wait for `project-automation` workflow to complete (max 30 seconds)
    - Analyze issue content to determine Size and Priority
-   - Set Project custom fields automatically
-   - Skip silently if configuration file doesn't exist
+   - Set Project custom fields automatically via GraphQL API
+   - **Skip ONLY if** `.github/project-automation.yml` does not exist
+
+> ⚠️ **IMPORTANT**: Steps 1-8 are NOT complete without Step 9 when `project-automation.yml` exists.
 
 ## Issue Description Format
 
@@ -138,6 +140,30 @@ If your project uses GitHub Projects with the `project-automation` workflow, the
 7. Configure issue settings (labels, assignee)
 8. Return issue number for tracking
 9. Configure Project fields (if `project-automation.yml` exists)
+
+## Completion Checklist
+
+Before reporting the issue number to the user, verify ALL steps are completed:
+
+- [ ] Issue created with English title
+- [ ] Labels assigned
+- [ ] Milestone assigned (if applicable)
+- [ ] Assignee set
+- [ ] **🔴 Project fields configured (Size & Priority)** - If `project-automation.yml` exists
+
+**Final Output Must Include:**
+```
+✅ Issue Created: #XX
+
+Settings:
+- Label: feature
+- Milestone: core
+- Assignee: @username
+
+Project Fields Configured:  ← REQUIRED if project-automation.yml exists
+- Size: M (reason)
+- Priority: P1 (reason)
+```
 
 ## Integration with Other Commands
 

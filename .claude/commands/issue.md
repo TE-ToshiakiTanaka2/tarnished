@@ -44,13 +44,15 @@ This command orchestrates a structured workflow by delegating to SuperClaude com
      - `deno` - Deno template
    - **Assignee** - Assign to the user by default unless otherwise specified
 9. **Return issue number** - Provide the created issue number (parent issue number if subtasks exist)
-10. **Configure Project fields** - After GitHub Actions (project-automation) completes, automatically set Project custom fields:
+10. **🔴 CRITICAL: Configure Project fields** - This step is **MANDATORY** when `.github/project-automation.yml` exists:
     - Wait for `project-automation` workflow to complete (max 30 seconds polling)
     - Retrieve Project field information via GraphQL
     - Analyze issue content to determine appropriate values for Size, Priority, etc.
     - Set field values automatically without user confirmation
     - Report the configured field values
-    - **Skip this step** if `.github/project-automation.yml` does not exist
+    - **Skip this step ONLY if** `.github/project-automation.yml` does not exist
+
+> ⚠️ **IMPORTANT**: Steps 1-9 are NOT complete without Step 10. Always check for `project-automation.yml` and configure Project fields if it exists.
 
 ## SuperClaude Command Delegation
 
@@ -342,6 +344,33 @@ Project Fields Configured:
     - Analyze issue content and set Size: M (based on task count and complexity)
     - Set Priority: Medium (based on `feature` label)
     - Report configured values
+
+## Completion Checklist
+
+Before reporting the issue number to the user, verify ALL steps are completed:
+
+- [ ] Issue created with English title and Japanese description
+- [ ] Labels assigned (feature/bugfix/patch/refactor/documentation)
+- [ ] Milestone assigned (core/github-actions/claude-code/python/node/rust/deno)
+- [ ] Assignee set
+- [ ] Documentation comment added (if complex issue)
+- [ ] **🔴 Project fields configured (Size & Priority)** - If `project-automation.yml` exists
+
+**Final Output Must Include:**
+```
+✅ Issue Created: #XX
+
+Settings:
+- Label: feature
+- Milestone: core
+- Assignee: @username
+
+Project Fields Configured:  ← THIS SECTION IS REQUIRED
+- Size: M (reason)
+- Priority: P1 (reason)
+```
+
+If Project fields section is missing, the command is NOT complete.
 
 ## Integration with Other Commands
 
