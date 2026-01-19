@@ -174,3 +174,46 @@ create_fixture_json() {
     echo "${json_content}" > "${filepath}"
     echo "${filepath}"
 }
+
+# =============================================================================
+# Git Repository Utilities (for e2e tests)
+# =============================================================================
+
+# Initialize a test directory as a Git repository
+# This is required for setup.sh which expects to run in a Git repository
+# Usage: init_test_git_repo "/path/to/test/dir"
+init_test_git_repo() {
+    local target_dir="$1"
+
+    if [[ -z "$target_dir" ]]; then
+        echo "Error: target_dir is required" >&2
+        return 1
+    fi
+
+    if [[ ! -d "$target_dir" ]]; then
+        echo "Error: target_dir does not exist: $target_dir" >&2
+        return 1
+    fi
+
+    (
+        cd "$target_dir" || return 1
+
+        # Initialize git repository
+        git init -q
+
+        # Configure git user for commits (required for commits to work)
+        git config user.email "test@example.com"
+        git config user.name "Test User"
+
+        # Create initial commit (required for branch operations)
+        touch .gitkeep
+        git add .gitkeep
+        git commit -q -m "Initial commit for test"
+
+        # Add dummy origin remote (setup.sh requires origin to be configured)
+        git remote add origin "https://github.com/test/test-repo.git"
+
+        # Create develop branch (setup.sh expects to be on develop branch)
+        git checkout -q -b develop
+    )
+}
