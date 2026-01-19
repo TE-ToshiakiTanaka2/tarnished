@@ -1,19 +1,16 @@
-import * as core from '@actions/core';
-import { GET_ORGANIZATION_PROJECT, GET_USER_PROJECT } from '../graphql/queries.js';
+import * as core from "@actions/core";
+import { GET_ORGANIZATION_PROJECT, GET_USER_PROJECT } from "../graphql/queries.js";
 /**
  * Find a project and retrieve its information including fields
  */
 export async function findProject(client, config) {
     const { type, owner, number } = config.project;
     core.info(`Finding ${type} project: ${owner}/#${number}`);
-    const query = type === 'organization' ? GET_ORGANIZATION_PROJECT : GET_USER_PROJECT;
+    const query = type === "organization" ? GET_ORGANIZATION_PROJECT : GET_USER_PROJECT;
     const response = await client.query(query, { owner, number });
-    const projectNode = type === 'organization'
-        ? response.organization?.projectV2
-        : response.user?.projectV2;
+    const projectNode = type === "organization" ? response.organization?.projectV2 : response.user?.projectV2;
     if (!projectNode) {
-        throw new Error(`Project not found: ${owner}/#${number}. ` +
-            'Make sure the project exists and the token has access to it.');
+        throw new Error(`Project not found: ${owner}/#${number}. Make sure the project exists and the token has access to it.`);
     }
     const fields = parseFields(projectNode.fields.nodes);
     core.info(`Found project: "${projectNode.title}" (${projectNode.id})`);
@@ -34,7 +31,7 @@ function parseFields(nodes) {
         const field = {
             id: node.id,
             name: node.name,
-            dataType: node.dataType ?? 'TEXT',
+            dataType: node.dataType ?? "TEXT",
         };
         // Add options for single select fields
         if (node.options) {

@@ -1,3 +1,21 @@
+# =============================================================================
+# GitHub Actions Workflow: PR Status Update
+# =============================================================================
+#
+# This workflow automatically updates the status of linked issues in GitHub
+# Project when a PR is opened or reopened.
+#
+# Configuration: .github/pr-status-update.yml
+#
+# Required Secrets:
+#   - PROJECT_TOKEN: Personal Access Token with 'project' scope
+#
+# Triggers:
+#   - Pull request opened
+#   - Pull request reopened
+#
+# =============================================================================
+
 name: PR Status Update
 
 on:
@@ -12,13 +30,26 @@ permissions:
 
 jobs:
   update-status:
+    name: Update Linked Issue Status
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Update linked issue status
+        id: pr-status-update
         uses: ./.github/actions/pr-status-update
         with:
           token: ${{ secrets.PROJECT_TOKEN }}
           config-path: .github/pr-status-update.yml
+
+      - name: Summary
+        run: |
+          echo "## PR Status Update Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **PR** | #${{ github.event.pull_request.number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Issues Updated** | ${{ steps.pr-status-update.outputs.issues-updated }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Count** | ${{ steps.pr-status-update.outputs.issues-count }} |" >> $GITHUB_STEP_SUMMARY

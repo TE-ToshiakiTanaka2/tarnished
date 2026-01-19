@@ -1,24 +1,24 @@
-import * as core from '@actions/core';
-import * as github from '@actions/github';
-import { loadConfig } from './config.js';
-import { GraphQLClient } from './graphql/client.js';
-import { findProject } from './project/finder.js';
-import { findItemInProject, addItemToProject, getIssueNodeId } from './project/item.js';
-import { setFieldValue } from './project/fields.js';
-import { detectIssues, type PullRequestContext } from './issue-detector.js';
+import * as core from "@actions/core";
+import * as github from "@actions/github";
+import { loadConfig } from "./config.js";
+import { GraphQLClient } from "./graphql/client.js";
+import { type PullRequestContext, detectIssues } from "./issue-detector.js";
+import { setFieldValue } from "./project/fields.js";
+import { findProject } from "./project/finder.js";
+import { addItemToProject, findItemInProject, getIssueNodeId } from "./project/item.js";
 
 async function run(): Promise<void> {
   try {
     // Get inputs
-    const token = core.getInput('token', { required: true });
-    const configPath = core.getInput('config-path') || '.github/project-automation.yml';
+    const token = core.getInput("token", { required: true });
+    const configPath = core.getInput("config-path") || ".github/project-automation.yml";
 
     // Get PR context
     const context = github.context;
     const pr = context.payload.pull_request;
 
     if (!pr) {
-      core.info('No pull request found in event payload, skipping');
+      core.info("No pull request found in event payload, skipping");
       return;
     }
 
@@ -32,7 +32,7 @@ async function run(): Promise<void> {
 
     // Check if PR section is configured
     if (!config.pr) {
-      core.info('No PR configuration found, skipping status update');
+      core.info("No PR configuration found, skipping status update");
       core.info('To enable PR status updates, add a "pr" section to your config file');
       return;
     }
@@ -53,16 +53,16 @@ async function run(): Promise<void> {
 
     core.info(`Detected ${detectedIssues.all.length} linked issue(s)`);
     if (detectedIssues.fromKeywords.length > 0) {
-      core.info(`  From keywords: ${detectedIssues.fromKeywords.map(n => `#${n}`).join(', ')}`);
+      core.info(`  From keywords: ${detectedIssues.fromKeywords.map((n) => `#${n}`).join(", ")}`);
     }
     if (detectedIssues.fromBranch.length > 0) {
-      core.info(`  From branch: ${detectedIssues.fromBranch.map(n => `#${n}`).join(', ')}`);
+      core.info(`  From branch: ${detectedIssues.fromBranch.map((n) => `#${n}`).join(", ")}`);
     }
 
     if (detectedIssues.all.length === 0) {
-      core.info('No linked issues detected, skipping');
-      core.setOutput('issues-updated', '');
-      core.setOutput('issues-count', '0');
+      core.info("No linked issues detected, skipping");
+      core.setOutput("issues-updated", "");
+      core.setOutput("issues-count", "0");
       return;
     }
 
@@ -71,7 +71,7 @@ async function run(): Promise<void> {
 
     // Find project and get field information
     const project = await findProject(client, config);
-    core.setOutput('project-id', project.id);
+    core.setOutput("project-id", project.id);
 
     // Get repository info for issue lookup
     const owner = context.repo.owner;
@@ -106,7 +106,7 @@ async function run(): Promise<void> {
           projectId: project.id,
           itemId,
           fields: project.fields,
-          fieldName: 'Status',
+          fieldName: "Status",
           value: statusValue,
         });
 
@@ -123,15 +123,15 @@ async function run(): Promise<void> {
     }
 
     // Set outputs
-    core.setOutput('issues-updated', updatedIssues.map(n => `#${n}`).join(', '));
-    core.setOutput('issues-count', updatedIssues.length.toString());
+    core.setOutput("issues-updated", updatedIssues.map((n) => `#${n}`).join(", "));
+    core.setOutput("issues-count", updatedIssues.length.toString());
 
     core.info(`PR status update completed: ${updatedIssues.length} issue(s) updated`);
   } catch (error) {
     if (error instanceof Error) {
       core.setFailed(error.message);
     } else {
-      core.setFailed('An unknown error occurred');
+      core.setFailed("An unknown error occurred");
     }
   }
 }

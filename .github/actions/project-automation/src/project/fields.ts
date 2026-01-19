@@ -1,19 +1,19 @@
-import * as core from '@actions/core';
-import { GraphQLClient } from '../graphql/client.js';
+import * as core from "@actions/core";
+import type { GraphQLClient } from "../graphql/client.js";
 import {
+  UPDATE_DATE_FIELD,
+  UPDATE_ITERATION_FIELD,
+  UPDATE_NUMBER_FIELD,
   UPDATE_SINGLE_SELECT_FIELD,
   UPDATE_TEXT_FIELD,
-  UPDATE_NUMBER_FIELD,
-  UPDATE_ITERATION_FIELD,
-  UPDATE_DATE_FIELD,
-} from '../graphql/mutations.js';
-import { findFieldByName } from './finder.js';
-import type { FieldInfo, IterationInfo, UpdateFieldValueResponse } from '../types.js';
+} from "../graphql/mutations.js";
+import type { FieldInfo, IterationInfo, UpdateFieldValueResponse } from "../types.js";
+import { findFieldByName } from "./finder.js";
 
 // Dynamic value constants
-const DYNAMIC_TODAY = '@today';
-const DYNAMIC_CURRENT_ITERATION = '@current_iteration';
-const DYNAMIC_ITERATION_END = '@iteration_end';
+const DYNAMIC_TODAY = "@today";
+const DYNAMIC_CURRENT_ITERATION = "@current_iteration";
+const DYNAMIC_ITERATION_END = "@iteration_end";
 
 // Cache for current iteration (to avoid recalculating)
 let cachedCurrentIteration: IterationInfo | null = null;
@@ -100,24 +100,24 @@ export async function setFieldValue(params: SetFieldValueParams): Promise<boolea
 
   try {
     switch (field.dataType) {
-      case 'SINGLE_SELECT':
+      case "SINGLE_SELECT":
         return await setSingleSelectField(client, projectId, itemId, field, String(value));
 
-      case 'TEXT':
+      case "TEXT":
         return await setTextField(client, projectId, itemId, field, String(value));
 
-      case 'NUMBER':
+      case "NUMBER":
         return await setNumberField(client, projectId, itemId, field, Number(value));
 
-      case 'ITERATION':
+      case "ITERATION":
         return await setIterationField(client, projectId, itemId, field, String(value));
 
-      case 'DATE':
+      case "DATE":
         return await setDateField(client, projectId, itemId, field, String(value), fields);
 
       default:
         core.warning(
-          `Field type "${field.dataType}" is not supported for field "${fieldName}", skipping`
+          `Field type "${field.dataType}" is not supported for field "${fieldName}", skipping`,
         );
         return false;
     }
@@ -137,7 +137,7 @@ async function setSingleSelectField(
   projectId: string,
   itemId: string,
   field: FieldInfo,
-  value: string
+  value: string,
 ): Promise<boolean> {
   if (!field.options || field.options.length === 0) {
     core.warning(`Field "${field.name}" has no options defined`);
@@ -149,10 +149,10 @@ async function setSingleSelectField(
   const option = field.options.find((o) => o.name.toLowerCase() === lowerValue);
 
   if (!option) {
-    const availableOptions = field.options.map((o) => o.name).join(', ');
+    const availableOptions = field.options.map((o) => o.name).join(", ");
     core.warning(
       `Option "${value}" not found for field "${field.name}". ` +
-      `Available options: ${availableOptions}`
+        `Available options: ${availableOptions}`,
     );
     return false;
   }
@@ -176,7 +176,7 @@ async function setTextField(
   projectId: string,
   itemId: string,
   field: FieldInfo,
-  value: string
+  value: string,
 ): Promise<boolean> {
   await client.mutate<UpdateFieldValueResponse>(UPDATE_TEXT_FIELD, {
     projectId,
@@ -197,9 +197,9 @@ async function setNumberField(
   projectId: string,
   itemId: string,
   field: FieldInfo,
-  value: number
+  value: number,
 ): Promise<boolean> {
-  if (isNaN(value)) {
+  if (Number.isNaN(value)) {
     core.warning(`Invalid number value for field "${field.name}"`);
     return false;
   }
@@ -224,7 +224,7 @@ async function setIterationField(
   projectId: string,
   itemId: string,
   field: FieldInfo,
-  value: string
+  value: string,
 ): Promise<boolean> {
   if (!field.iterations || field.iterations.length === 0) {
     core.warning(`Field "${field.name}" has no iterations defined`);
@@ -247,10 +247,10 @@ async function setIterationField(
     iteration = field.iterations.find((i) => i.title.toLowerCase() === lowerValue);
 
     if (!iteration) {
-      const availableIterations = field.iterations.map((i) => i.title).join(', ');
+      const availableIterations = field.iterations.map((i) => i.title).join(", ");
       core.warning(
         `Iteration "${value}" not found for field "${field.name}". ` +
-        `Available iterations: ${availableIterations}`
+          `Available iterations: ${availableIterations}`,
       );
       return false;
     }
@@ -277,7 +277,7 @@ async function setDateField(
   itemId: string,
   field: FieldInfo,
   value: string,
-  allFields: FieldInfo[]
+  allFields: FieldInfo[],
 ): Promise<boolean> {
   let resolvedValue = value;
 
@@ -289,7 +289,7 @@ async function setDateField(
   // Handle dynamic value: @iteration_end
   else if (value === DYNAMIC_ITERATION_END) {
     // Find the Iteration field to get current iteration
-    const iterationField = allFields.find((f) => f.dataType === 'ITERATION');
+    const iterationField = allFields.find((f) => f.dataType === "ITERATION");
     if (!iterationField || !iterationField.iterations || iterationField.iterations.length === 0) {
       core.warning(`Cannot resolve ${DYNAMIC_ITERATION_END}: No Iteration field found`);
       return false;
@@ -302,14 +302,16 @@ async function setDateField(
     }
 
     resolvedValue = getIterationEndDate(currentIteration);
-    core.info(`Resolved ${DYNAMIC_ITERATION_END} to "${resolvedValue}" (end of ${currentIteration.title})`);
+    core.info(
+      `Resolved ${DYNAMIC_ITERATION_END} to "${resolvedValue}" (end of ${currentIteration.title})`,
+    );
   }
 
   // Validate date format (YYYY-MM-DD)
   const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
   if (!dateRegex.test(resolvedValue)) {
     core.warning(
-      `Invalid date format for field "${field.name}". Expected YYYY-MM-DD, got "${resolvedValue}"`
+      `Invalid date format for field "${field.name}". Expected YYYY-MM-DD, got "${resolvedValue}"`,
     );
     return false;
   }
@@ -333,7 +335,7 @@ export async function setFieldValues(
   projectId: string,
   itemId: string,
   fields: FieldInfo[],
-  defaults: Record<string, string | number>
+  defaults: Record<string, string | number>,
 ): Promise<{ success: number; failed: number }> {
   let success = 0;
   let failed = 0;

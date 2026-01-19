@@ -1,5 +1,5 @@
-import { GraphQLClient } from '../graphql/client.js';
-import type { FieldInfo } from '../types.js';
+import type { GraphQLClient } from "../graphql/client.js";
+import type { FieldInfo } from "../types.js";
 export interface SetFieldValueParams {
     client: GraphQLClient;
     projectId: string;

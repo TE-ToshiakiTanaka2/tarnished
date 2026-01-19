@@ -1,10 +1,10 @@
-import * as core from '@actions/core';
-import { UPDATE_SINGLE_SELECT_FIELD, UPDATE_TEXT_FIELD, UPDATE_NUMBER_FIELD, UPDATE_ITERATION_FIELD, UPDATE_DATE_FIELD, } from '../graphql/mutations.js';
-import { findFieldByName } from './finder.js';
+import * as core from "@actions/core";
+import { UPDATE_DATE_FIELD, UPDATE_ITERATION_FIELD, UPDATE_NUMBER_FIELD, UPDATE_SINGLE_SELECT_FIELD, UPDATE_TEXT_FIELD, } from "../graphql/mutations.js";
+import { findFieldByName } from "./finder.js";
 // Dynamic value constants
-const DYNAMIC_TODAY = '@today';
-const DYNAMIC_CURRENT_ITERATION = '@current_iteration';
-const DYNAMIC_ITERATION_END = '@iteration_end';
+const DYNAMIC_TODAY = "@today";
+const DYNAMIC_CURRENT_ITERATION = "@current_iteration";
+const DYNAMIC_ITERATION_END = "@iteration_end";
 // Cache for current iteration (to avoid recalculating)
 let cachedCurrentIteration = null;
 /**
@@ -68,15 +68,15 @@ export async function setFieldValue(params) {
     }
     try {
         switch (field.dataType) {
-            case 'SINGLE_SELECT':
+            case "SINGLE_SELECT":
                 return await setSingleSelectField(client, projectId, itemId, field, String(value));
-            case 'TEXT':
+            case "TEXT":
                 return await setTextField(client, projectId, itemId, field, String(value));
-            case 'NUMBER':
+            case "NUMBER":
                 return await setNumberField(client, projectId, itemId, field, Number(value));
-            case 'ITERATION':
+            case "ITERATION":
                 return await setIterationField(client, projectId, itemId, field, String(value));
-            case 'DATE':
+            case "DATE":
                 return await setDateField(client, projectId, itemId, field, String(value), fields);
             default:
                 core.warning(`Field type "${field.dataType}" is not supported for field "${fieldName}", skipping`);
@@ -102,7 +102,7 @@ async function setSingleSelectField(client, projectId, itemId, field, value) {
     const lowerValue = value.toLowerCase();
     const option = field.options.find((o) => o.name.toLowerCase() === lowerValue);
     if (!option) {
-        const availableOptions = field.options.map((o) => o.name).join(', ');
+        const availableOptions = field.options.map((o) => o.name).join(", ");
         core.warning(`Option "${value}" not found for field "${field.name}". ` +
             `Available options: ${availableOptions}`);
         return false;
@@ -133,7 +133,7 @@ async function setTextField(client, projectId, itemId, field, value) {
  * Set a number field value
  */
 async function setNumberField(client, projectId, itemId, field, value) {
-    if (isNaN(value)) {
+    if (Number.isNaN(value)) {
         core.warning(`Invalid number value for field "${field.name}"`);
         return false;
     }
@@ -170,7 +170,7 @@ async function setIterationField(client, projectId, itemId, field, value) {
         const lowerValue = value.toLowerCase();
         iteration = field.iterations.find((i) => i.title.toLowerCase() === lowerValue);
         if (!iteration) {
-            const availableIterations = field.iterations.map((i) => i.title).join(', ');
+            const availableIterations = field.iterations.map((i) => i.title).join(", ");
             core.warning(`Iteration "${value}" not found for field "${field.name}". ` +
                 `Available iterations: ${availableIterations}`);
             return false;
@@ -199,7 +199,7 @@ async function setDateField(client, projectId, itemId, field, value, allFields) 
     // Handle dynamic value: @iteration_end
     else if (value === DYNAMIC_ITERATION_END) {
         // Find the Iteration field to get current iteration
-        const iterationField = allFields.find((f) => f.dataType === 'ITERATION');
+        const iterationField = allFields.find((f) => f.dataType === "ITERATION");
         if (!iterationField || !iterationField.iterations || iterationField.iterations.length === 0) {
             core.warning(`Cannot resolve ${DYNAMIC_ITERATION_END}: No Iteration field found`);
             return false;

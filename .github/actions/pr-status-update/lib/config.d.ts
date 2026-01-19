@@ -1,4 +1,4 @@
-import type { ExtendedProjectConfig } from './types.js';
+import type { ExtendedProjectConfig } from "./types.js";
 /**
  * Load and validate configuration from YAML file
  */

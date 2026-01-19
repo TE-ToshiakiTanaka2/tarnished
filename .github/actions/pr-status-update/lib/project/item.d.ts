@@ -1,4 +1,4 @@
-import { GraphQLClient } from '../graphql/client.js';
+import type { GraphQLClient } from "../graphql/client.js";
 /**
  * Check if an issue/PR is already in the project
  * Returns the item ID if found, null otherwise

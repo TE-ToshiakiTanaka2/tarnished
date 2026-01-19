@@ -1,5 +1,5 @@
-import { GraphQLClient } from '../graphql/client.js';
-import type { ProjectConfig, ProjectInfo, FieldInfo } from '../types.js';
+import type { GraphQLClient } from "../graphql/client.js";
+import type { FieldInfo, ProjectConfig, ProjectInfo } from "../types.js";
 /**
  * Find a project and retrieve its information including fields
  */
