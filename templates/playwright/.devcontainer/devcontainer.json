@@ -4,7 +4,13 @@
             "extensions": [
                 "ms-playwright.playwright"
             ],
-            "settings": {}
+            "settings": {
+                "files.exclude": {
+                    "**/playwright-report": true,
+                    "**/test-results": true,
+                    "**/playwright/.cache": true
+                }
+            }
         }
     }
 }
