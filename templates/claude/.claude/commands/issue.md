@@ -26,6 +26,11 @@ To create a GitHub Issue from a development request:
    - **Milestone** - Assign based on target area if applicable
    - **Assignee** - Assign to the user by default unless otherwise specified
 8. **Return issue number** - Provide the created issue number
+9. **Configure Project fields** (optional) - If `.github/project-automation.yml` exists:
+   - Wait for `project-automation` workflow to complete (max 30 seconds)
+   - Analyze issue content to determine Size and Priority
+   - Set Project custom fields automatically
+   - Skip silently if configuration file doesn't exist
 
 ## Issue Description Format
 
@@ -72,6 +77,51 @@ Any additional considerations, dependencies, or related issues
 - **Accurate labeling**: Use appropriate labels based on work type
 - **Comprehensive description**: Include all necessary information for developers to understand and implement the request
 
+## Project Field Configuration (Optional)
+
+If your project uses GitHub Projects with the `project-automation` workflow, the `/issue` command can automatically configure custom fields.
+
+### Prerequisites
+
+- `.github/project-automation.yml` must exist with project configuration:
+  ```yaml
+  project:
+    type: user  # or 'organization'
+    owner: "OWNER_NAME"
+    number: PROJECT_NUMBER
+  ```
+- GitHub Actions `project-automation` workflow must be configured
+- Project must have Size and/or Priority fields defined
+
+### Size Judgment Guidelines
+
+| Size | Criteria |
+|------|----------|
+| **XS** | Single file, config-only changes |
+| **S** | 1-2 files, simple changes |
+| **M** | 3-5 files, moderate complexity |
+| **L** | Multiple files/components |
+| **XL** | Architecture changes, major refactoring |
+
+### Priority Judgment Guidelines
+
+| Priority | Criteria |
+|----------|----------|
+| **High** | Bug fix, security-related, blocker |
+| **Medium** | Normal feature, improvement |
+| **Low** | Documentation, refactoring, nice-to-have |
+
+**Automatic Mappings**:
+- Label `bugfix` → Priority: High
+- Label `feature` → Priority: Medium
+- Label `documentation` → Priority: Low
+
+### Error Handling
+
+- If `project-automation.yml` doesn't exist: Skip silently
+- If Actions timeout (>30s): Display warning, skip configuration
+- If field not found: Skip with warning
+
 ## Example Workflow
 
 1. User presents: "Add a new feature to handle user settings"
@@ -87,6 +137,7 @@ Any additional considerations, dependencies, or related issues
    - **Description**: Detailed requirements
 7. Configure issue settings (labels, assignee)
 8. Return issue number for tracking
+9. Configure Project fields (if `project-automation.yml` exists)
 
 ## Integration with Other Commands
 
