@@ -1,12 +1,12 @@
-import * as core from '@actions/core';
-import { GraphQLClient } from '../graphql/client.js';
-import { GET_PROJECT_ITEMS, GET_ISSUE_BY_NUMBER } from '../graphql/queries.js';
-import { ADD_PROJECT_ITEM } from '../graphql/mutations.js';
+import * as core from "@actions/core";
+import type { GraphQLClient } from "../graphql/client.js";
+import { ADD_PROJECT_ITEM } from "../graphql/mutations.js";
+import { GET_ISSUE_BY_NUMBER, GET_PROJECT_ITEMS } from "../graphql/queries.js";
 import type {
-  GetProjectItemsResponse,
   AddProjectItemResponse,
   GetIssueByNumberResponse,
-} from '../types.js';
+  GetProjectItemsResponse,
+} from "../types.js";
 
 /**
  * Check if an issue/PR is already in the project
@@ -15,22 +15,22 @@ import type {
 export async function findItemInProject(
   client: GraphQLClient,
   projectId: string,
-  contentId: string
+  contentId: string,
 ): Promise<string | null> {
-  core.info('Checking if item already exists in project...');
+  core.info("Checking if item already exists in project...");
 
   let cursor: string | null = null;
-  let shouldContinue: boolean = true;
+  let shouldContinue = true;
 
   while (shouldContinue) {
     const queryResponse: GetProjectItemsResponse = await client.query<GetProjectItemsResponse>(
       GET_PROJECT_ITEMS,
-      { projectId, cursor }
+      { projectId, cursor },
     );
 
     const nodeData = queryResponse.node;
     if (!nodeData || !nodeData.items) {
-      core.warning('Could not retrieve project items');
+      core.warning("Could not retrieve project items");
       return null;
     }
 
@@ -48,7 +48,7 @@ export async function findItemInProject(
     cursor = pageInfo.endCursor;
   }
 
-  core.info('Item not found in project');
+  core.info("Item not found in project");
   return null;
 }
 
@@ -58,14 +58,14 @@ export async function findItemInProject(
 export async function addItemToProject(
   client: GraphQLClient,
   projectId: string,
-  contentId: string
+  contentId: string,
 ): Promise<string> {
-  core.info('Adding item to project...');
+  core.info("Adding item to project...");
 
-  const response = await client.mutate<AddProjectItemResponse>(
-    ADD_PROJECT_ITEM,
-    { projectId, contentId }
-  );
+  const response = await client.mutate<AddProjectItemResponse>(ADD_PROJECT_ITEM, {
+    projectId,
+    contentId,
+  });
 
   const itemId = response.addProjectV2ItemById.item.id;
   core.info(`Item added to project: ${itemId}`);
@@ -80,15 +80,16 @@ export async function getIssueNodeId(
   client: GraphQLClient,
   owner: string,
   repo: string,
-  issueNumber: number
+  issueNumber: number,
 ): Promise<string | null> {
   core.info(`Getting node ID for issue #${issueNumber}...`);
 
   try {
-    const response = await client.query<GetIssueByNumberResponse>(
-      GET_ISSUE_BY_NUMBER,
-      { owner, repo, number: issueNumber }
-    );
+    const response = await client.query<GetIssueByNumberResponse>(GET_ISSUE_BY_NUMBER, {
+      owner,
+      repo,
+      number: issueNumber,
+    });
 
     const issue = response.repository?.issue;
     if (!issue) {

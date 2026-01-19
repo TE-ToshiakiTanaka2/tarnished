@@ -1,4 +1,4 @@
-import type { DetectedIssues } from './types.js';
+import type { DetectedIssues } from "./types.js";
 /**
  * Detect issue numbers from PR title and body using keywords
  * @param title PR title

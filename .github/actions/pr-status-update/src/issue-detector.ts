@@ -1,10 +1,10 @@
-import type { DetectedIssues } from './types.js';
+import type { DetectedIssues } from "./types.js";
 
 /**
  * Default regex pattern for extracting issue number from branch name
  * Matches patterns like: feature/123-name, fix-456, bugfix/789, hotfix/101
  */
-const DEFAULT_BRANCH_PATTERN = '^(?:feature|fix|bugfix|hotfix)[/-]?(\\d+)';
+const DEFAULT_BRANCH_PATTERN = "^(?:feature|fix|bugfix|hotfix)[/-]?(\\d+)";
 
 /**
  * Regex pattern for detecting GitHub issue linking keywords
@@ -23,12 +23,13 @@ export function detectIssuesFromKeywords(title: string, body: string): number[] 
   const issues: Set<number> = new Set();
   const content = `${title}\n${body}`;
 
-  let match;
-  while ((match = KEYWORD_PATTERN.exec(content)) !== null) {
-    const issueNumber = parseInt(match[1] ?? '', 10);
-    if (!isNaN(issueNumber) && issueNumber > 0) {
+  let match: RegExpExecArray | null = KEYWORD_PATTERN.exec(content);
+  while (match !== null) {
+    const issueNumber = Number.parseInt(match[1] ?? "", 10);
+    if (!Number.isNaN(issueNumber) && issueNumber > 0) {
       issues.add(issueNumber);
     }
+    match = KEYWORD_PATTERN.exec(content);
   }
 
   // Reset regex state
@@ -48,12 +49,12 @@ export function detectIssuesFromBranch(branchName: string, pattern?: string): nu
   const regexPattern = pattern ?? DEFAULT_BRANCH_PATTERN;
 
   try {
-    const regex = new RegExp(regexPattern, 'i');
+    const regex = new RegExp(regexPattern, "i");
     const match = regex.exec(branchName);
 
-    if (match && match[1]) {
-      const issueNumber = parseInt(match[1], 10);
-      if (!isNaN(issueNumber) && issueNumber > 0) {
+    if (match?.[1]) {
+      const issueNumber = Number.parseInt(match[1], 10);
+      if (!Number.isNaN(issueNumber) && issueNumber > 0) {
         issues.add(issueNumber);
       }
     }
@@ -82,7 +83,7 @@ export interface PullRequestContext {
  * @returns DetectedIssues with issues from keywords, branch, and combined unique list
  */
 export function detectIssues(pr: PullRequestContext, branchPattern?: string): DetectedIssues {
-  const fromKeywords = detectIssuesFromKeywords(pr.title, pr.body ?? '');
+  const fromKeywords = detectIssuesFromKeywords(pr.title, pr.body ?? "");
   const fromBranch = detectIssuesFromBranch(pr.head.ref, branchPattern);
 
   // Combine and deduplicate

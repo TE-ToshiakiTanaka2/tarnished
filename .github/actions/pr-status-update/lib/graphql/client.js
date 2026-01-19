@@ -1,5 +1,5 @@
-import * as core from '@actions/core';
-import { graphql } from '@octokit/graphql';
+import * as core from "@actions/core";
+import { graphql } from "@octokit/graphql";
 /**
  * GraphQL client wrapper for GitHub API
  */
@@ -26,7 +26,7 @@ export class GraphQLClient {
                 core.error(`GraphQL query failed: ${error.message}`);
                 throw error;
             }
-            throw new Error('Unknown GraphQL error');
+            throw new Error("Unknown GraphQL error");
         }
     }
     /**
@@ -43,7 +43,7 @@ export class GraphQLClient {
                 core.error(`GraphQL mutation failed: ${error.message}`);
                 throw error;
             }
-            throw new Error('Unknown GraphQL error');
+            throw new Error("Unknown GraphQL error");
         }
     }
 }
