@@ -46,6 +46,7 @@ create_neo4j_project() {
     local project_name="${1:-e2e-neo4j-test}"
     E2E_PROJECT_DIR="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${E2E_PROJECT_DIR}"
+    init_test_git_repo "${E2E_PROJECT_DIR}"
 
     (cd "${E2E_PROJECT_DIR}" && "${PROJECT_ROOT}/setup.sh" --lang python --neo4j --yes "${project_name}") >/dev/null 2>&1
 
@@ -187,6 +188,7 @@ create_neo4j_project() {
     local project_name="neo4j-docker-test"
     E2E_PROJECT_DIR="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${E2E_PROJECT_DIR}"
+    init_test_git_repo "${E2E_PROJECT_DIR}"
 
     # Create project with both neo4j and docker
     run bash -c "cd '${E2E_PROJECT_DIR}' && '${PROJECT_ROOT}/setup.sh' --lang python --neo4j --docker --yes '${project_name}'"
@@ -205,6 +207,7 @@ create_neo4j_project() {
     local project_name="neo4j-postgresql-test"
     E2E_PROJECT_DIR="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${E2E_PROJECT_DIR}"
+    init_test_git_repo "${E2E_PROJECT_DIR}"
 
     # Create project with both neo4j and postgresql
     run bash -c "cd '${E2E_PROJECT_DIR}' && '${PROJECT_ROOT}/setup.sh' --lang python --neo4j --postgresql --yes '${project_name}'"
@@ -223,6 +226,7 @@ create_neo4j_project() {
     local project_name="neo4j-all-features-test"
     E2E_PROJECT_DIR="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${E2E_PROJECT_DIR}"
+    init_test_git_repo "${E2E_PROJECT_DIR}"
 
     # Create project with all optional features
     run bash -c "cd '${E2E_PROJECT_DIR}' && '${PROJECT_ROOT}/setup.sh' --lang python --neo4j --postgresql --docker --yes '${project_name}'"

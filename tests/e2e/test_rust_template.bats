@@ -39,6 +39,7 @@ get_shared_project() {
 
     if [[ ! -d "${shared_dir}" ]]; then
         mkdir -p "${shared_dir}"
+        init_test_git_repo "${shared_dir}"
         (cd "${shared_dir}" && "${PROJECT_ROOT}/setup.sh" --lang rust --yes "${SHARED_PROJECT_NAME}") >/dev/null 2>&1
     fi
 
@@ -83,6 +84,7 @@ create_rust_project() {
     local project_name="${1:-e2e-rust-test}"
     E2E_PROJECT_DIR="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${E2E_PROJECT_DIR}"
+    init_test_git_repo "${E2E_PROJECT_DIR}"
 
     (cd "${E2E_PROJECT_DIR}" && "${PROJECT_ROOT}/setup.sh" --lang rust --yes "${project_name}") >/dev/null 2>&1
 

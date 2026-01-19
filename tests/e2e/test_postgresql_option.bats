@@ -46,6 +46,7 @@ create_postgresql_project() {
     local project_name="${1:-e2e-postgresql-test}"
     E2E_PROJECT_DIR="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${E2E_PROJECT_DIR}"
+    init_test_git_repo "${E2E_PROJECT_DIR}"
 
     (cd "${E2E_PROJECT_DIR}" && "${PROJECT_ROOT}/setup.sh" --lang node --postgresql --yes "${project_name}") >/dev/null 2>&1
 
@@ -168,6 +169,7 @@ create_postgresql_project() {
     local project_name="postgresql-docker-test"
     E2E_PROJECT_DIR="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${E2E_PROJECT_DIR}"
+    init_test_git_repo "${E2E_PROJECT_DIR}"
 
     # Create project with both postgresql and docker
     run bash -c "cd '${E2E_PROJECT_DIR}' && '${PROJECT_ROOT}/setup.sh' --lang node --postgresql --docker --yes '${project_name}'"
@@ -186,6 +188,7 @@ create_postgresql_project() {
     local project_name="postgresql-playwright-test"
     E2E_PROJECT_DIR="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${E2E_PROJECT_DIR}"
+    init_test_git_repo "${E2E_PROJECT_DIR}"
 
     # Create project with both postgresql and playwright
     run bash -c "cd '${E2E_PROJECT_DIR}' && '${PROJECT_ROOT}/setup.sh' --lang node --postgresql --playwright --yes '${project_name}'"
@@ -204,6 +207,7 @@ create_postgresql_project() {
     local project_name="postgresql-all-features-test"
     E2E_PROJECT_DIR="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${E2E_PROJECT_DIR}"
+    init_test_git_repo "${E2E_PROJECT_DIR}"
 
     # Create project with all optional features
     run bash -c "cd '${E2E_PROJECT_DIR}' && '${PROJECT_ROOT}/setup.sh' --lang node --postgresql --docker --playwright --yes '${project_name}'"

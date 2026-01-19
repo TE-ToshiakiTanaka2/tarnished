@@ -31,6 +31,7 @@ create_github_actions_project() {
     local project_name="${1:-e2e-github-actions-test}"
     local project_dir="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${project_dir}"
+    init_test_git_repo "${project_dir}"
 
     (cd "${project_dir}" && "${PROJECT_ROOT}/setup.sh" --lang node --github-actions --yes "${project_name}") >/dev/null 2>&1
 
@@ -45,6 +46,7 @@ create_github_actions_project() {
     local project_name="github-actions-load-test"
     local project_dir="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${project_dir}"
+    init_test_git_repo "${project_dir}"
 
     # Run setup with --github-actions and capture output
     run bash -c "cd '${project_dir}' && '${PROJECT_ROOT}/setup.sh' --lang node --github-actions --yes '${project_name}' 2>&1"
@@ -177,6 +179,7 @@ create_github_actions_project() {
     local project_name="github-actions-docker-test"
     local project_dir="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${project_dir}"
+    init_test_git_repo "${project_dir}"
 
     # Create project with both github-actions and docker
     run bash -c "cd '${project_dir}' && '${PROJECT_ROOT}/setup.sh' --lang node --github-actions --docker --yes '${project_name}'"
@@ -194,6 +197,7 @@ create_github_actions_project() {
     local project_name="github-actions-playwright-test"
     local project_dir="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${project_dir}"
+    init_test_git_repo "${project_dir}"
 
     # Create project with both github-actions and playwright
     run bash -c "cd '${project_dir}' && '${PROJECT_ROOT}/setup.sh' --lang node --github-actions --playwright --yes '${project_name}'"
@@ -211,6 +215,7 @@ create_github_actions_project() {
     local project_name="github-actions-python-test"
     local project_dir="${TEST_TEMP_DIR}/${project_name}"
     mkdir -p "${project_dir}"
+    init_test_git_repo "${project_dir}"
 
     # Create project with python and github-actions
     run bash -c "cd '${project_dir}' && '${PROJECT_ROOT}/setup.sh' --lang python --github-actions --yes '${project_name}'"
