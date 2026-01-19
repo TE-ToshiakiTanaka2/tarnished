@@ -44,6 +44,13 @@ This command orchestrates a structured workflow by delegating to SuperClaude com
      - `deno` - Deno template
    - **Assignee** - Assign to the user by default unless otherwise specified
 9. **Return issue number** - Provide the created issue number (parent issue number if subtasks exist)
+10. **Configure Project fields** - After GitHub Actions (project-automation) completes, automatically set Project custom fields:
+    - Wait for `project-automation` workflow to complete (max 30 seconds polling)
+    - Retrieve Project field information via GraphQL
+    - Analyze issue content to determine appropriate values for Size, Priority, etc.
+    - Set field values automatically without user confirmation
+    - Report the configured field values
+    - **Skip this step** if `.github/project-automation.yml` does not exist
 
 ## SuperClaude Command Delegation
 
@@ -62,6 +69,7 @@ This command orchestrates a structured workflow by delegating to SuperClaude com
 - Creating well-structured GitHub Issues
 - Adding documentation notes as issue comments (for subsequent commands to use)
 - Configuring issue settings (labels, milestone, assignee)
+- Configuring Project custom fields (Size, Priority) based on issue analysis
 - Returning the issue number
 
 **This command does NOT include:**
@@ -168,6 +176,131 @@ For complex issues, add documentation as **GitHub Issue comments** (actual docum
 
 This information will be used by subsequent commands (e.g., `/implement`) to create actual documentation files.
 
+## Project Field Configuration
+
+After issue creation, if `.github/project-automation.yml` exists, configure Project custom fields automatically.
+
+### Prerequisites
+
+- `.github/project-automation.yml` must exist with project configuration
+- GitHub Actions `project-automation` workflow must be configured
+- Project must have Size and/or Priority fields defined
+
+### Workflow
+
+1. **Wait for Actions completion** (max 30 seconds):
+   ```bash
+   # Poll for project-automation workflow completion
+   gh run list --workflow=project-automation.yml --limit=1 --json status,conclusion
+   ```
+
+2. **Read project configuration**:
+   ```yaml
+   # From .github/project-automation.yml
+   project:
+     type: user  # or 'organization'
+     owner: "OWNER_NAME"
+     number: PROJECT_NUMBER
+   ```
+
+3. **Retrieve Project fields via GraphQL**:
+   ```bash
+   gh api graphql -f query='
+     query($owner: String!, $number: Int!) {
+       user(login: $owner) {
+         projectV2(number: $number) {
+           id
+           fields(first: 20) {
+             nodes {
+               ... on ProjectV2SingleSelectField {
+                 id
+                 name
+                 options { id name }
+               }
+             }
+           }
+         }
+       }
+     }
+   ' -f owner="OWNER" -F number=PROJECT_NUMBER
+   ```
+
+4. **Analyze issue and determine field values** (see guidelines below)
+
+5. **Set field values via GraphQL**:
+   ```bash
+   gh api graphql -f query='
+     mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+       updateProjectV2ItemFieldValue(input: {
+         projectId: $projectId
+         itemId: $itemId
+         fieldId: $fieldId
+         value: { singleSelectOptionId: $optionId }
+       }) {
+         projectV2Item { id }
+       }
+     }
+   ' -f projectId="PROJECT_ID" -f itemId="ITEM_ID" -f fieldId="FIELD_ID" -f optionId="OPTION_ID"
+   ```
+
+### Size Judgment Guidelines
+
+Analyze the issue content to determine implementation size:
+
+| Size | Criteria | Examples |
+|------|----------|----------|
+| **XS** | Single file, config-only changes | Fix typo, update version number |
+| **S** | 1-2 files, simple changes | Add simple validation, small bug fix |
+| **M** | 3-5 files, moderate complexity | Add new command, integrate new feature |
+| **L** | Multiple files/components | New template, multi-file refactoring |
+| **XL** | Architecture changes, major refactoring | Plugin system, major restructure |
+
+**Factors to Consider**:
+- Number of tasks listed in the issue
+- Technical complexity described
+- Estimated number of files to modify
+- Dependencies on external systems
+- Testing requirements
+
+### Priority Judgment Guidelines
+
+Analyze the issue content to determine priority:
+
+| Priority | Criteria | Indicators |
+|----------|----------|------------|
+| **High** | Urgent, blocking, security | `bugfix` label, security keywords, blocker |
+| **Medium** | Normal feature/improvement | `feature` label, standard development |
+| **Low** | Nice-to-have, documentation | `documentation` label, refactoring |
+
+**Automatic Mappings**:
+- Label `bugfix` → Priority: High
+- Label `feature` → Priority: Medium
+- Label `documentation` → Priority: Low
+- Label `patch` → Priority: Medium
+- Label `refactor` → Priority: Low
+
+**Keywords for High Priority**:
+- "urgent", "critical", "blocker", "security", "broken", "crash"
+
+### Error Handling
+
+| Scenario | Behavior |
+|----------|----------|
+| `project-automation.yml` not found | Skip Project field configuration silently |
+| Actions timeout (>30 seconds) | Display warning, skip configuration |
+| Actions failure | Display error message, skip configuration |
+| Field not found in Project | Skip that specific field with warning |
+| GraphQL API error | Display error, skip configuration |
+
+### Output Format
+
+After successful configuration:
+```
+Project Fields Configured:
+- Size: M (based on 5 tasks, moderate complexity)
+- Priority: Medium (feature label, normal development)
+```
+
 ## Best Practices
 
 - **English titles**: Always use English for issue titles to ensure international accessibility and searchability
@@ -204,6 +337,11 @@ This information will be used by subsequent commands (e.g., `/implement`) to cre
    - Assign to user
 10. Create subtasks if needed
 11. Return issue number for tracking
+12. **Configure Project fields** (if `project-automation.yml` exists):
+    - Wait for `project-automation` Actions to complete
+    - Analyze issue content and set Size: M (based on task count and complexity)
+    - Set Priority: Medium (based on `feature` label)
+    - Report configured values
 
 ## Integration with Other Commands
 
