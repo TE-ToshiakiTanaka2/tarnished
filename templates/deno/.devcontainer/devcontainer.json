@@ -1,0 +1,36 @@
+{
+  "features": {
+    "ghcr.io/devcontainers-community/features/deno:1": {
+      "version": "2.1.4"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "deno.enable": true,
+        "deno.lint": true,
+        "deno.unstable": false,
+        "editor.defaultFormatter": "denoland.vscode-deno",
+        "[typescript]": {
+          "editor.defaultFormatter": "denoland.vscode-deno"
+        },
+        "[typescriptreact]": {
+          "editor.defaultFormatter": "denoland.vscode-deno"
+        },
+        "[javascript]": {
+          "editor.defaultFormatter": "denoland.vscode-deno"
+        },
+        "[javascriptreact]": {
+          "editor.defaultFormatter": "denoland.vscode-deno"
+        },
+        "files.exclude": {
+          "**/.deno": true,
+          "**/coverage": true
+        }
+      },
+      "extensions": [
+        "denoland.vscode-deno"
+      ]
+    }
+  }
+}

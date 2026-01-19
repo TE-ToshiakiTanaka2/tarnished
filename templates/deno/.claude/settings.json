@@ -1,0 +1,62 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit(*.ts)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno lint $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.tsx)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno lint $CLAUDE_FILE_PATH"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write(*.ts)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno fmt $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Write(*.tsx)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno fmt $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.ts)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno fmt $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.tsx)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno fmt $CLAUDE_FILE_PATH"
+          }
+        ]
+      }
+    ]
+  }
+}
