@@ -12,8 +12,6 @@
 #
 # Triggers:
 #   - Issue opened
-#   - Issue labeled
-#   - Issue reopened
 #
 # =============================================================================
 
@@ -21,7 +19,7 @@ name: Project Automation
 
 on:
   issues:
-    types: [opened, labeled, reopened]
+    types: [opened]
 
 jobs:
   add-to-project:
