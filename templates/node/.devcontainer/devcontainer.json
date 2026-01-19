@@ -7,6 +7,13 @@
   },
   "customizations": {
     "vscode": {
+      "settings": {
+        "files.exclude": {
+          "**/node_modules": true,
+          "**/dist": true,
+          "**/.npm": true
+        }
+      },
       "extensions": [
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode"
