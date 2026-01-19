@@ -1,36 +1,34 @@
-import * as core from '@actions/core';
-import { GraphQLClient } from '../graphql/client.js';
-import { GET_ORGANIZATION_PROJECT, GET_USER_PROJECT } from '../graphql/queries.js';
+import * as core from "@actions/core";
+import type { GraphQLClient } from "../graphql/client.js";
+import { GET_ORGANIZATION_PROJECT, GET_USER_PROJECT } from "../graphql/queries.js";
 import type {
-  ProjectConfig,
-  ProjectInfo,
   FieldInfo,
   GetProjectResponse,
+  ProjectConfig,
+  ProjectInfo,
   ProjectV2FieldNode,
-} from '../types.js';
+} from "../types.js";
 
 /**
  * Find a project and retrieve its information including fields
  */
 export async function findProject(
   client: GraphQLClient,
-  config: ProjectConfig
+  config: ProjectConfig,
 ): Promise<ProjectInfo> {
   const { type, owner, number } = config.project;
 
   core.info(`Finding ${type} project: ${owner}/#${number}`);
 
-  const query = type === 'organization' ? GET_ORGANIZATION_PROJECT : GET_USER_PROJECT;
+  const query = type === "organization" ? GET_ORGANIZATION_PROJECT : GET_USER_PROJECT;
   const response = await client.query<GetProjectResponse>(query, { owner, number });
 
-  const projectNode = type === 'organization'
-    ? response.organization?.projectV2
-    : response.user?.projectV2;
+  const projectNode =
+    type === "organization" ? response.organization?.projectV2 : response.user?.projectV2;
 
   if (!projectNode) {
     throw new Error(
-      `Project not found: ${owner}/#${number}. ` +
-      'Make sure the project exists and the token has access to it.'
+      `Project not found: ${owner}/#${number}. Make sure the project exists and the token has access to it.`,
     );
   }
 
@@ -56,7 +54,7 @@ function parseFields(nodes: ProjectV2FieldNode[]): FieldInfo[] {
       const field: FieldInfo = {
         id: node.id,
         name: node.name,
-        dataType: node.dataType ?? 'TEXT',
+        dataType: node.dataType ?? "TEXT",
       };
 
       // Add options for single select fields
@@ -76,10 +74,7 @@ function parseFields(nodes: ProjectV2FieldNode[]): FieldInfo[] {
 /**
  * Find a field by name (case-insensitive)
  */
-export function findFieldByName(
-  fields: FieldInfo[],
-  name: string
-): FieldInfo | undefined {
+export function findFieldByName(fields: FieldInfo[], name: string): FieldInfo | undefined {
   const lowerName = name.toLowerCase();
   return fields.find((f) => f.name.toLowerCase() === lowerName);
 }

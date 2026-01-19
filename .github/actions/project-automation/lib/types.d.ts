@@ -4,7 +4,7 @@
 export interface ProjectConfig {
     project: {
         /** Project type: 'organization' or 'user' */
-        type: 'organization' | 'user';
+        type: "organization" | "user";
         /** Owner name (organization or user) */
         owner: string;
         /** Project number */
@@ -31,7 +31,7 @@ export interface FieldInfo {
     options?: FieldOption[];
     iterations?: IterationInfo[];
 }
-export type FieldDataType = 'TEXT' | 'NUMBER' | 'DATE' | 'SINGLE_SELECT' | 'ITERATION' | 'LABELS' | 'LINKED_PULL_REQUESTS' | 'TRACKS' | 'TRACKED_BY' | 'REVIEWERS' | 'REPOSITORY' | 'MILESTONE' | 'ASSIGNEES';
+export type FieldDataType = "TEXT" | "NUMBER" | "DATE" | "SINGLE_SELECT" | "ITERATION" | "LABELS" | "LINKED_PULL_REQUESTS" | "TRACKS" | "TRACKED_BY" | "REVIEWERS" | "REPOSITORY" | "MILESTONE" | "ASSIGNEES";
 export interface FieldOption {
     id: string;
     name: string;
