@@ -2,7 +2,9 @@
 # Makefile for Shell Script Testing Infrastructure
 # =============================================================================
 
-.PHONY: all test test-unit test-integration test-e2e test-all test-setup test-clean help ensure-test-deps
+.PHONY: all test test-unit test-integration test-e2e test-all test-setup test-clean help ensure-test-deps \
+       test-actions test-actions-install test-actions-typecheck test-actions-lint test-actions-build \
+       sync-actions-templates
 
 # Default target
 all: test
@@ -19,6 +21,11 @@ E2E_DIR := $(TESTS_DIR)/e2e
 
 # Bats options
 BATS_OPTS := --timing --print-output-on-failure
+
+# GitHub Actions configuration
+ACTIONS_DIR := .github/actions
+ACTIONS := project-automation pr-status-update auto-tag
+TEMPLATES_ACTIONS_DIR := templates/github-actions/.github
 
 # =============================================================================
 # Dependency Check
@@ -122,6 +129,78 @@ test-clean:
 ci-test: test
 
 # =============================================================================
+# GitHub Actions Testing
+# =============================================================================
+
+## Install dependencies for all GitHub Actions
+test-actions-install:
+	@echo "Installing dependencies for GitHub Actions..."
+	@for action in $(ACTIONS); do \
+		echo "  Installing $$action..."; \
+		cd $(ACTIONS_DIR)/$$action && pnpm install --frozen-lockfile && cd - > /dev/null; \
+	done
+	@echo "Dependencies installed."
+
+## Run typecheck for all GitHub Actions
+test-actions-typecheck: test-actions-install
+	@echo "Running typecheck for GitHub Actions..."
+	@for action in $(ACTIONS); do \
+		echo "  Typechecking $$action..."; \
+		cd $(ACTIONS_DIR)/$$action && pnpm run typecheck && cd - > /dev/null; \
+	done
+	@echo "Typecheck completed."
+
+## Run lint for all GitHub Actions
+test-actions-lint: test-actions-install
+	@echo "Running lint for GitHub Actions..."
+	@for action in $(ACTIONS); do \
+		echo "  Linting $$action..."; \
+		cd $(ACTIONS_DIR)/$$action && pnpm run lint && cd - > /dev/null; \
+	done
+	@echo "Lint completed."
+
+## Build all GitHub Actions
+test-actions-build: test-actions-install
+	@echo "Building GitHub Actions..."
+	@for action in $(ACTIONS); do \
+		echo "  Building $$action..."; \
+		cd $(ACTIONS_DIR)/$$action && pnpm run build && cd - > /dev/null; \
+	done
+	@echo "Build completed."
+
+## Run full check for all GitHub Actions (install → typecheck → lint → build → test)
+test-actions: test-actions-install
+	@echo "Running full check for GitHub Actions..."
+	@for action in $(ACTIONS); do \
+		echo ""; \
+		echo "=== Testing $$action ==="; \
+		echo "  [1/4] Typechecking..." && (cd $(ACTIONS_DIR)/$$action && pnpm run typecheck) && \
+		echo "  [2/4] Linting..." && (cd $(ACTIONS_DIR)/$$action && pnpm run lint) && \
+		echo "  [3/4] Building..." && (cd $(ACTIONS_DIR)/$$action && pnpm run build) && \
+		echo "  [4/4] Testing..." && (cd $(ACTIONS_DIR)/$$action && pnpm run test); \
+	done
+	@echo ""
+	@echo "All GitHub Actions checks completed successfully."
+
+## Sync GitHub Actions build artifacts to templates
+sync-actions-templates: test-actions-build
+	@echo "Syncing GitHub Actions to templates..."
+	@for action in $(ACTIONS); do \
+		echo "  Syncing $$action..."; \
+		mkdir -p $(TEMPLATES_ACTIONS_DIR)/actions/$$action/dist; \
+		cp $(ACTIONS_DIR)/$$action/action.yml $(TEMPLATES_ACTIONS_DIR)/actions/$$action/; \
+		rm -rf $(TEMPLATES_ACTIONS_DIR)/actions/$$action/dist/*; \
+		cp -r $(ACTIONS_DIR)/$$action/dist/* $(TEMPLATES_ACTIONS_DIR)/actions/$$action/dist/; \
+	done
+	@echo "  Syncing workflows..."
+	@cp .github/workflows/project-automation.yml $(TEMPLATES_ACTIONS_DIR)/workflows/
+	@cp .github/workflows/pr-status-update.yml $(TEMPLATES_ACTIONS_DIR)/workflows/
+	@cp .github/workflows/auto-tag.yml $(TEMPLATES_ACTIONS_DIR)/workflows/
+	@echo "  Syncing version.yml..."
+	@cp .github/version.yml $(TEMPLATES_ACTIONS_DIR)/
+	@echo "Sync completed."
+
+# =============================================================================
 # Linting
 # =============================================================================
 
@@ -143,16 +222,27 @@ lint-tests:
 help:
 	@echo "Available targets:"
 	@echo ""
+	@echo "Shell Script Testing:"
 	@echo "  test-unit        Run unit tests only"
 	@echo "  test-integration Run integration tests only"
 	@echo "  test-e2e         Run E2E tests only (local execution)"
 	@echo "  test             Run unit + integration tests (CI target)"
 	@echo "  test-all         Run all tests (unit, integration, E2E)"
 	@echo ""
+	@echo "GitHub Actions Testing:"
+	@echo "  test-actions          Run full check (typecheck → lint → build → test)"
+	@echo "  test-actions-install  Install dependencies for all actions"
+	@echo "  test-actions-typecheck Run typecheck for all actions"
+	@echo "  test-actions-lint     Run lint for all actions"
+	@echo "  test-actions-build    Build all actions"
+	@echo "  sync-actions-templates Sync build artifacts to templates/"
+	@echo ""
+	@echo "Setup and Cleanup:"
 	@echo "  ensure-test-deps Auto-install test dependencies if missing"
 	@echo "  test-setup       Setup test environment (install bats)"
 	@echo "  test-clean       Clean test artifacts"
 	@echo ""
+	@echo "Linting:"
 	@echo "  lint             Run shellcheck on all shell scripts"
 	@echo "  lint-tests       Run shellcheck on test helpers"
 	@echo ""
