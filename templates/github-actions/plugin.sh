@@ -104,21 +104,22 @@ read_masked_input() {
 # Prompt for GitHub Personal Access Token once
 # Used for field discovery in project-automation and pr-status-update
 # Returns: PAT string via stdout, empty string if skipped
+# Note: All prompts go to stderr so stdout only contains the PAT value
 prompt_for_pat() {
     local pat=""
 
-    echo ""
-    echo "A GitHub Personal Access Token is required to fetch project fields."
-    echo "This token will NOT be saved. You'll need to add it to repository secrets separately."
-    echo ""
+    echo "" >&2
+    echo "A GitHub Personal Access Token is required to fetch project fields." >&2
+    echo "This token will NOT be saved. You'll need to add it to repository secrets separately." >&2
+    echo "" >&2
 
     while true; do
-        printf "GitHub Personal Access Token (for field discovery): "
+        printf "GitHub Personal Access Token (for field discovery): " >&2
         pat=$(read_masked_input)
 
         if [[ -z "$pat" ]]; then
-            echo ""
-            echo -n "No token provided. Skip field discovery? [Y/n]: "
+            echo "" >&2
+            echo -n "No token provided. Skip field discovery? [Y/n]: " >&2
             IFS='' read -r skip_confirm < /dev/tty
             if [[ -z "$skip_confirm" ]] || [[ "$skip_confirm" =~ ^[Yy] ]]; then
                 # Return empty string to indicate skip
@@ -126,7 +127,7 @@ prompt_for_pat() {
                 return 0
             fi
             # User chose not to skip, retry token input
-            echo ""
+            echo "" >&2
             continue
         fi
 
