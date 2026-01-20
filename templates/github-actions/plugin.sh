@@ -136,7 +136,9 @@ prompt_for_pat() {
         fi
 
         # Token provided, show confirmation and return
-        print_success "Token received (${#pat} characters)"
+        # Note: print_success outputs to stdout, which would be captured by command substitution
+        # so we must redirect to /dev/tty explicitly
+        echo -e "${COLOR_GREEN}✓ Token received (${#pat} characters)${COLOR_NC}" > /dev/tty
         printf '%s' "$pat"
         return 0
     done
