@@ -6,11 +6,11 @@
 # It is sourced by post.sh during devcontainer initialization.
 #
 # Prerequisites:
-# - uv package manager
 # - is_interactive() function (defined in core's post.sh)
 #
-# Optional:
-# - Claude Code CLI (setup skipped if not available)
+# Optional (setup skipped if not available):
+# - Claude Code CLI
+# - uv package manager
 # =============================================================================
 
 # SuperClaude Framework Setup
@@ -27,6 +27,16 @@ setup_superclaude() {
     fi
 
     echo "  - Claude Code CLI detected"
+
+    # Check uv prerequisite
+    if ! command -v uv &> /dev/null; then
+        echo "  - Warning: uv is not installed"
+        echo "  - SuperClaude requires uv package manager"
+        echo "  - Skipping SuperClaude setup"
+        return 0
+    fi
+
+    echo "  - uv package manager detected"
 
     # Create Claude config directory
     mkdir -p "$HOME/.claude"
