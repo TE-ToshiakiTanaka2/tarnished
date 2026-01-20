@@ -72,7 +72,11 @@ read_masked_input() {
     printf '\e[?2004l' >/dev/tty 2>/dev/null || true
 
     # Small delay to ensure settings take effect
-    sleep 0.05
+    sleep 0.1
+
+    # Clear input buffer to prevent leftover characters from previous reads
+    # This is important in curl | bash environments where input may be buffered
+    while read -t 0.01 -n 1 -rs discard < /dev/tty 2>/dev/null; do :; done
 
     # Read entire line at once, -s for silent mode as additional safeguard
     IFS= read -rs input < /dev/tty
@@ -94,9 +98,9 @@ read_masked_input() {
     # Display asterisks for the sanitized input length
     local input_len=${#input}
     if [[ $input_len -gt 0 ]]; then
-        printf '%*s' "$input_len" '' | tr ' ' '*' >&2
+        printf '%*s' "$input_len" '' | tr ' ' '*' > /dev/tty
     fi
-    echo "" >&2
+    echo "" > /dev/tty
 
     printf '%s' "$input"
 }
