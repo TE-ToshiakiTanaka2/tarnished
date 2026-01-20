@@ -1,4 +1,7 @@
 {
+    "features": {
+        "ghcr.io/devcontainers-contrib/features/uv:latest": {}
+    },
     "customizations": {
         "vscode": {
             "settings": {
