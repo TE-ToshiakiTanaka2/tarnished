@@ -101,6 +101,42 @@ read_masked_input() {
     printf '%s' "$input"
 }
 
+# Prompt for GitHub Personal Access Token once
+# Used for field discovery in project-automation and pr-status-update
+# Returns: PAT string via stdout, empty string if skipped
+prompt_for_pat() {
+    local pat=""
+
+    echo ""
+    echo "A GitHub Personal Access Token is required to fetch project fields."
+    echo "This token will NOT be saved. You'll need to add it to repository secrets separately."
+    echo ""
+
+    while true; do
+        printf "GitHub Personal Access Token (for field discovery): "
+        pat=$(read_masked_input)
+
+        if [[ -z "$pat" ]]; then
+            echo ""
+            echo -n "No token provided. Skip field discovery? [Y/n]: "
+            IFS='' read -r skip_confirm < /dev/tty
+            if [[ -z "$skip_confirm" ]] || [[ "$skip_confirm" =~ ^[Yy] ]]; then
+                # Return empty string to indicate skip
+                printf ''
+                return 0
+            fi
+            # User chose not to skip, retry token input
+            echo ""
+            continue
+        fi
+
+        # Token provided, show confirmation and return
+        print_success "Token received (${#pat} characters)"
+        printf '%s' "$pat"
+        return 0
+    done
+}
+
 # Check if an action exists in the plugin
 action_exists() {
     local action_name="$1"
@@ -218,8 +254,12 @@ plugin_validate() {
 # =============================================================================
 
 # Setup project-automation action with interactive configuration
+# Parameters:
+#   $1 - target_dir
+#   $2 - pat (optional, if provided skips PAT prompt)
 setup_project_automation() {
     local target_dir="$1"
+    local pat="${2:-}"
     local config_file="${target_dir}/.github/project-automation.yml"
 
     print_info "Setting up Project Automation..."
@@ -236,33 +276,14 @@ setup_project_automation() {
         fi
     fi
 
-    # Prompt for PAT (temporary, for field discovery)
-    echo "A GitHub Personal Access Token is required to fetch project fields."
-    echo "This token will NOT be saved. You'll need to add it to repository secrets separately."
-    echo ""
-
-    local pat=""
-    while true; do
-        printf "GitHub Personal Access Token (for field discovery): "
-        pat=$(read_masked_input)
-
+    # Use provided PAT or prompt for one
+    if [[ -z "$pat" ]]; then
+        pat=$(prompt_for_pat)
         if [[ -z "$pat" ]]; then
-            echo ""
-            echo -n "No token provided. Skip project-automation setup? [Y/n]: "
-            IFS='' read -r skip_confirm < /dev/tty
-            if [[ -z "$skip_confirm" ]] || [[ "$skip_confirm" =~ ^[Yy] ]]; then
-                print_info "Skipping project-automation setup"
-                return 0
-            fi
-            # User chose not to skip, retry token input
-            echo ""
-            continue
+            print_info "Skipping project-automation setup (no token provided)"
+            return 0
         fi
-
-        # Token provided, show confirmation and break
-        print_success "Token received (${#pat} characters)"
-        break
-    done
+    fi
 
     # Prompt for project type
     echo ""
@@ -664,8 +685,12 @@ EOF
 }
 
 # Setup pr-status-update action with interactive configuration
+# Parameters:
+#   $1 - target_dir
+#   $2 - pat (optional, if provided skips PAT prompt)
 setup_pr_status_update() {
     local target_dir="$1"
+    local pat="${2:-}"
     local config_file="${target_dir}/.github/pr-status-update.yml"
     local project_config="${target_dir}/.github/project-automation.yml"
 
@@ -710,35 +735,25 @@ setup_pr_status_update() {
     echo "  Number: ${project_number}"
     echo ""
 
-    # Prompt for PAT (temporary, for field discovery)
-    echo "A GitHub Personal Access Token is required to fetch Status field options."
-    echo "This token will NOT be saved."
-    echo ""
-
-    local pat=""
-    while true; do
-        printf "GitHub Personal Access Token (for field discovery): "
-        pat=$(read_masked_input)
-
-        if [[ -z "$pat" ]]; then
-            echo ""
-            echo -n "No token provided. Use default Status value 'In review'? [Y/n]: "
-            IFS='' read -r use_default < /dev/tty
-            if [[ -z "$use_default" ]] || [[ "$use_default" =~ ^[Yy] ]]; then
-                # Create config with default value
-                create_pr_status_update_config "$config_file" "$project_type" "$owner" "$project_number" "In review"
-                print_success "Configuration created: ${config_file}"
-                return 0
-            fi
-            # User chose not to use default, retry token input
-            echo ""
-            continue
+    # Use provided PAT or handle missing PAT
+    if [[ -z "$pat" ]]; then
+        echo -n "No token available. Use default Status value 'In review'? [Y/n]: "
+        IFS='' read -r use_default < /dev/tty
+        if [[ -z "$use_default" ]] || [[ "$use_default" =~ ^[Yy] ]]; then
+            # Create config with default value
+            create_pr_status_update_config "$config_file" "$project_type" "$owner" "$project_number" "In review"
+            print_success "Configuration created: ${config_file}"
+            return 0
         fi
-
-        # Token provided, show confirmation and break
-        print_success "Token received (${#pat} characters)"
-        break
-    done
+        # User wants to provide PAT manually
+        pat=$(prompt_for_pat)
+        if [[ -z "$pat" ]]; then
+            # Still no PAT, use default
+            create_pr_status_update_config "$config_file" "$project_type" "$owner" "$project_number" "In review"
+            print_success "Configuration created with default: ${config_file}"
+            return 0
+        fi
+    fi
 
     # Fetch project fields to get Status options
     print_info "Fetching Status field options..."
@@ -819,6 +834,24 @@ setup_pr_status_update() {
 plugin_interactive_setup() {
     local target_dir="$1"
     local project_automation_configured=false
+    local shared_pat=""
+
+    # Determine if PAT is needed for any action
+    local needs_pat=false
+    if [[ -d "${target_dir}/.github/actions/project-automation" ]] || \
+       [[ -d "${target_dir}/.github/actions/pr-status-update" ]]; then
+        needs_pat=true
+    fi
+
+    # Prompt for PAT once if needed
+    if [[ "$needs_pat" == "true" ]]; then
+        echo ""
+        echo -n "Configure GitHub Actions with project field discovery? [Y/n]: "
+        IFS='' read -r configure_actions < /dev/tty
+        if [[ -z "$configure_actions" ]] || [[ "$configure_actions" =~ ^[Yy] ]]; then
+            shared_pat=$(prompt_for_pat)
+        fi
+    fi
 
     # Check if project-automation action was installed
     if [[ -d "${target_dir}/.github/actions/project-automation" ]]; then
@@ -827,7 +860,7 @@ plugin_interactive_setup() {
         IFS='' read -r setup_project < /dev/tty
         # Default to yes if empty or starts with Y/y
         if [[ -z "$setup_project" ]] || [[ "$setup_project" =~ ^[Yy] ]]; then
-            setup_project_automation "$target_dir"
+            setup_project_automation "$target_dir" "$shared_pat"
             # Check if config was created successfully
             if [[ -f "${target_dir}/.github/project-automation.yml" ]]; then
                 project_automation_configured=true
@@ -849,7 +882,7 @@ plugin_interactive_setup() {
             IFS='' read -r setup_pr_status < /dev/tty
             # Default to yes if empty or starts with Y/y
             if [[ -z "$setup_pr_status" ]] || [[ "$setup_pr_status" =~ ^[Yy] ]]; then
-                setup_pr_status_update "$target_dir"
+                setup_pr_status_update "$target_dir" "$shared_pat"
             else
                 print_info "Skipping pr-status-update setup"
             fi
