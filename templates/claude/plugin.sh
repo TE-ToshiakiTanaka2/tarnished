@@ -88,6 +88,25 @@ plugin_post_copy() {
     fi
 
     # -------------------------------------------------------------------------
+    # Devcontainer Features Integration (uv for SuperClaude)
+    # -------------------------------------------------------------------------
+
+    # Merge devcontainer.json features (uv package manager for SuperClaude)
+    local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
+    local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
+
+    if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
+        print_info "Merging Claude devcontainer features..."
+        local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
+
+        # Merge devcontainer.json with special handling for features and extensions
+        merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
+        mv "$temp_file" "$target_devcontainer"
+
+        print_success "Claude devcontainer features merged"
+    fi
+
+    # -------------------------------------------------------------------------
     # SuperClaude Framework Integration
     # -------------------------------------------------------------------------
 
