@@ -513,8 +513,30 @@ EOF
         -d "{\"query\": $(echo "$query" | jq -Rs .)}" \
         https://api.github.com/graphql 2>/dev/null)
 
+    # Check for API errors
+    local api_error
+    api_error=$(echo "$response" | jq -r '.message // .errors[0].message // empty' 2>/dev/null)
+    if [[ -n "$api_error" ]]; then
+        echo "API Error: $api_error" > /dev/tty
+        echo "[]"
+        return 1
+    fi
+
     # Extract fields from response, including iteration configurations
-    echo "$response" | jq -r ".data.${query_type}.projectV2.fields.nodes // [] | map({name: .name, type: .dataType, options: .options, iterations: .configuration.iterations})" 2>/dev/null
+    local fields
+    fields=$(echo "$response" | jq -r ".data.${query_type}.projectV2.fields.nodes // [] | map({name: .name, type: .dataType, options: .options, iterations: .configuration.iterations})" 2>/dev/null)
+
+    # Check if we got valid fields
+    if [[ -z "$fields" ]] || [[ "$fields" == "null" ]] || [[ "$fields" == "[]" ]]; then
+        # Try to get more specific error info
+        local project_error
+        project_error=$(echo "$response" | jq -r ".data.${query_type}.projectV2 // empty" 2>/dev/null)
+        if [[ -z "$project_error" ]] || [[ "$project_error" == "null" ]]; then
+            echo "Could not find project. Check owner name and project number." > /dev/tty
+        fi
+    fi
+
+    echo "$fields"
 }
 
 # Create minimal project configuration (with dynamic defaults)
