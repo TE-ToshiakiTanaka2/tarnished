@@ -40,17 +40,17 @@ impl TagCommands {
     /// Execute the tag subcommand
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
-            TagCommands::List => {
+            Self::List => {
                 println!("Tag list command (not implemented)");
             }
-            TagCommands::Create { name } => {
-                println!("Tag create '{}' command (not implemented)", name);
+            Self::Create { name } => {
+                println!("Tag create '{name}' command (not implemented)");
             }
-            TagCommands::Delete { name } => {
-                println!("Tag delete '{}' command (not implemented)", name);
+            Self::Delete { name } => {
+                println!("Tag delete '{name}' command (not implemented)");
             }
-            TagCommands::Bump { level } => {
-                println!("Tag bump {:?} command (not implemented)", level);
+            Self::Bump { level } => {
+                println!("Tag bump {level:?} command (not implemented)");
             }
         }
         Ok(())

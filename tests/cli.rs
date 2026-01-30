@@ -1,7 +1,11 @@
+#![allow(missing_docs)]
+#![allow(clippy::unwrap_used)]
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn erd() -> Command {
+    #[allow(deprecated)]
     Command::cargo_bin("erd").unwrap()
 }
 

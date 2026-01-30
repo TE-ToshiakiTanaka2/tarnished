@@ -31,20 +31,20 @@ impl IssueCommands {
     /// Execute the issue subcommand
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
-            IssueCommands::List => {
+            Self::List => {
                 println!("Issue list command (not implemented)");
             }
-            IssueCommands::Create => {
+            Self::Create => {
                 println!("Issue create command (not implemented)");
             }
-            IssueCommands::View { number } => {
-                println!("Issue view #{} command (not implemented)", number);
+            Self::View { number } => {
+                println!("Issue view #{number} command (not implemented)");
             }
-            IssueCommands::Edit { number } => {
-                println!("Issue edit #{} command (not implemented)", number);
+            Self::Edit { number } => {
+                println!("Issue edit #{number} command (not implemented)");
             }
-            IssueCommands::Close { number } => {
-                println!("Issue close #{} command (not implemented)", number);
+            Self::Close { number } => {
+                println!("Issue close #{number} command (not implemented)");
             }
         }
         Ok(())

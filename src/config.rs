@@ -32,7 +32,7 @@ impl Config {
     }
 
     /// Check if we have a valid token
-    pub fn has_token(&self) -> bool {
+    pub const fn has_token(&self) -> bool {
         self.token.is_some()
     }
 }

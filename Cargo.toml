@@ -2,10 +2,14 @@
 name = "erd"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.74"
 description = "A GitHub Issue/Tag management CLI tool"
 authors = ["TE-ToshiakiTanaka2"]
 license = "MIT"
 repository = "https://github.com/TE-ToshiakiTanaka2/tarnished"
+readme = "README.md"
+keywords = ["cli", "github", "issue", "tag"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
@@ -15,3 +19,31 @@ thiserror = "1"
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+
+# Lint configuration (Rust 1.74+)
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+# Lint groups (lower priority so individual lints can override)
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# Allow common patterns
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# These are fine for placeholder implementations
+unnecessary_wraps = "allow"
+
+# Build profiles
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

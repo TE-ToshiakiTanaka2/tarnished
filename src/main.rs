@@ -1,3 +1,14 @@
+//! # erd
+//!
+//! A GitHub Issue/Tag management CLI tool.
+//!
+//! ## Usage
+//!
+//! ```bash
+//! erd issue list
+//! erd tag create v1.0.0
+//! ```
+
 mod cli;
 mod config;
 mod error;

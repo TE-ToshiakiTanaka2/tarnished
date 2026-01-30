@@ -64,7 +64,7 @@ impl Cli {
         let config = self.to_config();
 
         if config.verbose {
-            eprintln!("Config: {:?}", config);
+            eprintln!("Config: {config:?}");
         }
 
         match &self.command {
