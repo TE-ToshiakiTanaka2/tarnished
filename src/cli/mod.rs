@@ -123,15 +123,9 @@ mod tests {
 
     #[test]
     fn test_cli_to_config() {
-        let cli = Cli::try_parse_from([
-            "erd",
-            "--repo",
-            "owner/repo",
-            "--verbose",
-            "issue",
-            "list",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["erd", "--repo", "owner/repo", "--verbose", "issue", "list"])
+                .unwrap();
         let config = cli.to_config();
 
         assert_eq!(config.repo, Some("owner/repo".to_string()));
