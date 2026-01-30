@@ -69,6 +69,7 @@ jobs:
       - name: Create and push tag
         if: steps.branch.outputs.name != ''
         run: |
+          # Config file is at .github/versioning.yml
           ./target/release/erd tag auto --branch "${{ steps.branch.outputs.name }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

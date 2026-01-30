@@ -133,7 +133,7 @@ fn test_tag_auto_requires_branch() {
 fn test_tag_auto_dry_run() {
     // This test runs within a git repository
     erd()
-        .args(["tag", "auto", "--branch", "feat/test", "--dry-run"])
+        .args(["tag", "auto", "--branch", "feature/test", "--dry-run"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Dry run"))
@@ -141,9 +141,10 @@ fn test_tag_auto_dry_run() {
 }
 
 #[test]
-fn test_tag_auto_dry_run_fix_branch() {
+fn test_tag_auto_dry_run_feature_branch() {
+    // feature/ prefix is configured for Patch bump in .github/versioning.yml
     erd()
-        .args(["tag", "auto", "--branch", "fix/bug-123", "--dry-run"])
+        .args(["tag", "auto", "--branch", "feature/new-button", "--dry-run"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Bump type: Patch"));
@@ -151,6 +152,7 @@ fn test_tag_auto_dry_run_fix_branch() {
 
 #[test]
 fn test_tag_auto_dry_run_unmatched_branch() {
+    // Unmatched branches default to RC bump
     erd()
         .args(["tag", "auto", "--branch", "chore/cleanup", "--dry-run"])
         .assert()

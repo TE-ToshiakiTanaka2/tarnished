@@ -1,6 +1,6 @@
 //! Tag configuration for automatic version bumping.
 //!
-//! Configuration is read from `.erd.toml` or `erd.toml` files.
+//! Configuration is read from `.github/versioning.yml`.
 
 use serde::Deserialize;
 use std::fs;
@@ -9,90 +9,41 @@ use std::path::Path;
 /// Root configuration structure
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
-    /// Tag-related configuration
+    /// Versioning configuration
     #[serde(default)]
-    pub tag: TagConfig,
+    pub versioning: VersioningConfig,
 }
 
-/// Tag configuration section
-#[derive(Debug, Deserialize)]
-pub struct TagConfig {
-    /// Tag prefix (default: "v")
-    #[serde(default = "default_prefix")]
-    pub prefix: String,
-
-    /// Initial version when no tags exist (default: "0.1.0")
-    #[serde(default = "default_initial_version")]
-    pub initial_version: String,
-
-    /// Version bump rules
-    #[serde(default)]
-    pub rules: TagRules,
-}
-
-impl Default for TagConfig {
-    fn default() -> Self {
-        Self {
-            prefix: default_prefix(),
-            initial_version: default_initial_version(),
-            rules: TagRules::default(),
-        }
-    }
-}
-
-fn default_prefix() -> String {
-    "v".to_string()
-}
-
-fn default_initial_version() -> String {
-    "0.1.0".to_string()
-}
-
-/// Tag rules configuration
+/// Versioning configuration section
 #[derive(Debug, Deserialize, Default)]
-pub struct TagRules {
-    /// List of branch patterns and their bump types
+pub struct VersioningConfig {
+    /// Branch prefix mappings
     #[serde(default)]
-    pub patterns: Vec<BumpPattern>,
+    pub branch_prefixes: BranchPrefixes,
+}
 
-    /// Default bump behavior when no pattern matches
+/// Branch prefix to version type mapping
+#[derive(Debug, Deserialize, Default)]
+pub struct BranchPrefixes {
+    /// Major version bump prefixes (X.0.0)
     #[serde(default)]
-    pub default: DefaultBump,
-}
+    pub major: Vec<String>,
 
-/// A branch pattern and its associated bump type
-#[derive(Debug, Deserialize, Clone)]
-pub struct BumpPattern {
-    /// Glob pattern to match branch names (e.g., "feat/*", "fix/*")
-    pub pattern: String,
+    /// Minor version bump prefixes (0.X.0)
+    #[serde(default)]
+    pub minor: Vec<String>,
 
-    /// Bump type when pattern matches
-    pub bump: BumpType,
-}
+    /// Patch version bump prefixes (0.0.X)
+    #[serde(default)]
+    pub patch: Vec<String>,
 
-/// Default bump behavior
-#[derive(Debug, Deserialize)]
-pub struct DefaultBump {
-    /// Bump type when no pattern matches (default: "rc")
-    #[serde(default = "default_bump_type")]
-    pub bump: BumpType,
-}
-
-impl Default for DefaultBump {
-    fn default() -> Self {
-        Self {
-            bump: default_bump_type(),
-        }
-    }
-}
-
-const fn default_bump_type() -> BumpType {
-    BumpType::Rc
+    /// Release prefixes (remove RC suffix)
+    #[serde(default)]
+    pub release: Vec<String>,
 }
 
 /// Version bump types
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BumpType {
     /// Major version bump (x.0.0)
     Major,
@@ -110,28 +61,62 @@ impl Config {
     /// Load configuration from file path
     pub fn load_from_file(path: &Path) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
+        let config: Self = serde_yaml::from_str(&content)?;
         Ok(config)
     }
 
-    /// Load configuration from default locations (.erd.toml or erd.toml)
+    /// Load configuration from default location (.github/versioning.yml)
     pub fn load_from_default() -> anyhow::Result<Self> {
-        let candidates = [".erd.toml", "erd.toml"];
+        let path = Path::new(".github/versioning.yml");
+        if path.exists() {
+            Self::load_from_file(path)
+        } else {
+            // Return default config if no file found
+            Ok(Self::default())
+        }
+    }
 
-        for candidate in candidates {
-            let path = Path::new(candidate);
-            if path.exists() {
-                return Self::load_from_file(path);
+    /// Load configuration from optional path or default location
+    pub fn load(path: Option<&Path>) -> anyhow::Result<Self> {
+        path.map_or_else(Self::load_from_default, Self::load_from_file)
+    }
+}
+
+impl BranchPrefixes {
+    /// Match a branch name and return the appropriate bump type.
+    ///
+    /// Returns `BumpType::Rc` if no prefix matches.
+    pub fn match_branch(&self, branch: &str) -> BumpType {
+        // Check major prefixes
+        for prefix in &self.major {
+            if branch.starts_with(prefix) {
+                return BumpType::Major;
             }
         }
 
-        // Return default config if no file found
-        Ok(Self::default())
-    }
+        // Check minor prefixes
+        for prefix in &self.minor {
+            if branch.starts_with(prefix) {
+                return BumpType::Minor;
+            }
+        }
 
-    /// Load configuration from optional path or default locations
-    pub fn load(path: Option<&Path>) -> anyhow::Result<Self> {
-        path.map_or_else(Self::load_from_default, Self::load_from_file)
+        // Check patch prefixes
+        for prefix in &self.patch {
+            if branch.starts_with(prefix) {
+                return BumpType::Patch;
+            }
+        }
+
+        // Check release prefixes
+        for prefix in &self.release {
+            if branch.starts_with(prefix) {
+                return BumpType::Release;
+            }
+        }
+
+        // Default to RC
+        BumpType::Rc
     }
 }
 
@@ -142,71 +127,101 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.tag.prefix, "v");
-        assert_eq!(config.tag.initial_version, "0.1.0");
-        assert_eq!(config.tag.rules.default.bump, BumpType::Rc);
+        assert!(config.versioning.branch_prefixes.major.is_empty());
+        assert!(config.versioning.branch_prefixes.minor.is_empty());
+        assert!(config.versioning.branch_prefixes.patch.is_empty());
     }
 
     #[test]
-    fn test_parse_minimal_config() {
-        let toml = "";
-        let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.tag.prefix, "v");
-    }
-
-    #[test]
-    fn test_parse_full_config() {
-        let toml = r#"
-[tag]
-prefix = "v"
-initial_version = "1.0.0"
-
-[[tag.rules.patterns]]
-pattern = "feat/*"
-bump = "minor"
-
-[[tag.rules.patterns]]
-pattern = "fix/*"
-bump = "patch"
-
-[[tag.rules.patterns]]
-pattern = "breaking/*"
-bump = "major"
-
-[[tag.rules.patterns]]
-pattern = "release/*"
-bump = "release"
-
-[tag.rules.default]
-bump = "rc"
+    fn test_parse_yaml_config() {
+        let yaml = r#"
+versioning:
+  branch_prefixes:
+    major:
+      - "major/"
+    minor:
+      - "release/"
+    patch:
+      - "feature/"
+      - "fix/"
 "#;
-        let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.tag.prefix, "v");
-        assert_eq!(config.tag.initial_version, "1.0.0");
-        assert_eq!(config.tag.rules.patterns.len(), 4);
-        assert_eq!(config.tag.rules.patterns[0].pattern, "feat/*");
-        assert_eq!(config.tag.rules.patterns[0].bump, BumpType::Minor);
-        assert_eq!(config.tag.rules.default.bump, BumpType::Rc);
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.versioning.branch_prefixes.major, vec!["major/"]);
+        assert_eq!(config.versioning.branch_prefixes.minor, vec!["release/"]);
+        assert_eq!(
+            config.versioning.branch_prefixes.patch,
+            vec!["feature/", "fix/"]
+        );
     }
 
     #[test]
-    fn test_parse_custom_prefix() {
-        let toml = r#"
-[tag]
-prefix = "release-"
-"#;
-        let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.tag.prefix, "release-");
+    fn test_match_branch_major() {
+        let prefixes = BranchPrefixes {
+            major: vec!["major/".to_string(), "breaking/".to_string()],
+            minor: vec!["release/".to_string()],
+            patch: vec!["feature/".to_string()],
+            release: vec![],
+        };
+        assert_eq!(prefixes.match_branch("major/v2"), BumpType::Major);
+        assert_eq!(prefixes.match_branch("breaking/api"), BumpType::Major);
     }
 
     #[test]
-    fn test_bump_type_deserialize() {
-        let toml = r#"
-[[tag.rules.patterns]]
-pattern = "test"
-bump = "major"
-"#;
-        let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.tag.rules.patterns[0].bump, BumpType::Major);
+    fn test_match_branch_minor() {
+        let prefixes = BranchPrefixes {
+            major: vec![],
+            minor: vec!["release/".to_string()],
+            patch: vec![],
+            release: vec![],
+        };
+        assert_eq!(prefixes.match_branch("release/v1.1.0"), BumpType::Minor);
+    }
+
+    #[test]
+    fn test_match_branch_patch() {
+        let prefixes = BranchPrefixes {
+            major: vec![],
+            minor: vec![],
+            patch: vec!["feature/".to_string(), "fix/".to_string()],
+            release: vec![],
+        };
+        assert_eq!(prefixes.match_branch("feature/new-button"), BumpType::Patch);
+        assert_eq!(prefixes.match_branch("fix/bug-123"), BumpType::Patch);
+    }
+
+    #[test]
+    fn test_match_branch_default_rc() {
+        let prefixes = BranchPrefixes {
+            major: vec!["major/".to_string()],
+            minor: vec!["release/".to_string()],
+            patch: vec!["feature/".to_string()],
+            release: vec![],
+        };
+        assert_eq!(prefixes.match_branch("chore/cleanup"), BumpType::Rc);
+        assert_eq!(prefixes.match_branch("docs/readme"), BumpType::Rc);
+        assert_eq!(prefixes.match_branch("random-branch"), BumpType::Rc);
+    }
+
+    #[test]
+    fn test_priority_order() {
+        // When a branch could match multiple prefixes, first match wins (major > minor > patch)
+        let prefixes = BranchPrefixes {
+            major: vec!["feature/".to_string()], // Put feature in major
+            minor: vec!["feature/".to_string()], // Also in minor
+            patch: vec![],
+            release: vec![],
+        };
+        // Major is checked first, so it should return Major
+        assert_eq!(prefixes.match_branch("feature/test"), BumpType::Major);
+    }
+
+    #[test]
+    fn test_empty_config() {
+        let yaml = "";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.versioning.branch_prefixes.match_branch("any"),
+            BumpType::Rc
+        );
     }
 }

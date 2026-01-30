@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use crate::branch_matcher::BranchMatcher;
 use crate::git_ops;
 use crate::tag_config::Config;
 use crate::version::SemVer;
@@ -42,7 +41,7 @@ pub enum TagCommands {
         #[arg(short, long, default_value = "false")]
         dry_run: bool,
 
-        /// Path to configuration file (defaults to .erd.toml or erd.toml)
+        /// Path to configuration file (defaults to .github/versioning.yml)
         #[arg(short, long)]
         config: Option<PathBuf>,
 
@@ -97,6 +96,12 @@ impl TagCommands {
     }
 }
 
+/// Default tag prefix
+const TAG_PREFIX: &str = "v";
+
+/// Default initial version
+const INITIAL_VERSION: &str = "0.1.0";
+
 /// Execute the auto-tagging command.
 fn execute_auto(
     branch: &str,
@@ -112,29 +117,24 @@ fn execute_auto(
 
     // Load configuration
     let config = Config::load(config_path)?;
-    let tag_config = &config.tag;
-
-    // Create branch matcher
-    let matcher = BranchMatcher::new(&tag_config.rules)?;
 
     // Determine bump type from branch name
-    let bump_type = matcher.match_branch(branch);
+    let bump_type = config.versioning.branch_prefixes.match_branch(branch);
 
     // Get current version (latest tag or initial)
-    let current_version = git_ops::get_latest_version(&tag_config.prefix)?;
+    let current_version = git_ops::get_latest_version(TAG_PREFIX)?;
 
     let Some(current_version) = current_version else {
-        // No existing tags, use initial version as base
-        let initial = SemVer::parse(&tag_config.initial_version)?;
+        // No existing tags, use initial version
+        let initial = SemVer::parse(INITIAL_VERSION)?;
         eprintln!("No existing tags found. Starting from initial version: {initial}");
-        // Return the initial version without bumping for the first tag
-        let new_tag = initial.to_tag(&tag_config.prefix);
+        let new_tag = initial.to_tag(TAG_PREFIX);
         return create_and_push_tag(&new_tag, dry_run, push, remote);
     };
 
     // Calculate new version
     let new_version = current_version.bump(bump_type);
-    let new_tag = new_version.to_tag(&tag_config.prefix);
+    let new_tag = new_version.to_tag(TAG_PREFIX);
 
     // Display information
     println!("Branch: {branch}");

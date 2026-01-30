@@ -16,9 +16,8 @@ clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 thiserror = "1"
 semver = "1"
-toml = "0.8"
 serde = { version = "1", features = ["derive"] }
-glob = "0.3"
+serde_yaml = "0.9"
 
 [dev-dependencies]
 assert_cmd = "2"

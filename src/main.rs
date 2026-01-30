@@ -9,7 +9,6 @@
 //! erd tag create v1.0.0
 //! ```
 
-mod branch_matcher;
 mod cli;
 mod config;
 mod error;
