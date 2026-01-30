@@ -153,6 +153,38 @@ EOF
 setup_ssh_host_config
 
 # -----------------------------------------------------------------------------
+# Rust Development Setup
+# -----------------------------------------------------------------------------
+setup_rust() {
+    echo "Setting up Rust development environment..."
+
+    # Check if Rust is installed (should be via DevContainer feature)
+    if ! command -v rustc &> /dev/null; then
+        echo "  - Warning: Rust is not installed"
+        echo "  - Rust should be installed via DevContainer feature"
+        return 1
+    fi
+
+    echo "  - Rust $(rustc --version | cut -d' ' -f2) detected"
+    echo "  - Cargo $(cargo --version | cut -d' ' -f2) detected"
+
+    # Ensure common components are installed
+    echo "  - Verifying Rust components..."
+    rustup component add clippy rustfmt 2>/dev/null || true
+
+    # Fetch project dependencies if Cargo.toml exists
+    if [ -f "/workspace/Cargo.toml" ]; then
+        echo "  - Fetching project dependencies..."
+        cd /workspace && cargo fetch 2>/dev/null || true
+        echo "  - Dependencies fetched"
+    fi
+
+    echo "  - Rust setup complete"
+}
+
+setup_rust
+
+# -----------------------------------------------------------------------------
 # SuperClaude Framework Setup
 # -----------------------------------------------------------------------------
 setup_superclaude() {
