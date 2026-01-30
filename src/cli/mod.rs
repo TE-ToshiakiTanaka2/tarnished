@@ -73,3 +73,69 @@ impl Cli {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_parse_help() {
+        // Verify CLI can be parsed (clap derive)
+        let result = Cli::try_parse_from(["erd", "--help"]);
+        assert!(result.is_err()); // --help causes early exit
+    }
+
+    #[test]
+    fn test_cli_parse_version() {
+        let result = Cli::try_parse_from(["erd", "--version"]);
+        assert!(result.is_err()); // --version causes early exit
+    }
+
+    #[test]
+    fn test_cli_parse_issue_list() {
+        let cli = Cli::try_parse_from(["erd", "issue", "list"]).unwrap();
+        assert!(matches!(cli.command, Commands::Issue { .. }));
+    }
+
+    #[test]
+    fn test_cli_parse_tag_list() {
+        let cli = Cli::try_parse_from(["erd", "tag", "list"]).unwrap();
+        assert!(matches!(cli.command, Commands::Tag { .. }));
+    }
+
+    #[test]
+    fn test_cli_parse_with_repo() {
+        let cli = Cli::try_parse_from(["erd", "--repo", "owner/repo", "issue", "list"]).unwrap();
+        assert_eq!(cli.repo, Some("owner/repo".to_string()));
+    }
+
+    #[test]
+    fn test_cli_parse_with_verbose() {
+        let cli = Cli::try_parse_from(["erd", "--verbose", "issue", "list"]).unwrap();
+        assert!(cli.verbose);
+    }
+
+    #[test]
+    fn test_cli_parse_with_quiet() {
+        let cli = Cli::try_parse_from(["erd", "--quiet", "issue", "list"]).unwrap();
+        assert!(cli.quiet);
+    }
+
+    #[test]
+    fn test_cli_to_config() {
+        let cli =
+            Cli::try_parse_from(["erd", "--repo", "owner/repo", "--verbose", "issue", "list"])
+                .unwrap();
+        let config = cli.to_config();
+
+        assert_eq!(config.repo, Some("owner/repo".to_string()));
+        assert!(config.verbose);
+        assert!(!config.quiet);
+    }
+
+    #[test]
+    fn test_cli_parse_invalid_command() {
+        let result = Cli::try_parse_from(["erd", "invalid"]);
+        assert!(result.is_err());
+    }
+}
