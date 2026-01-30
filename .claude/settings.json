@@ -1,0 +1,64 @@
+{
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "Bash(apt :*)",
+      "Bash(brew install :*)",
+      "Bash(chmod 777 :*)",
+      "Bash(gh repo delete:*)",
+      "Bash(git config :*)",
+      "Bash(rm -rf /*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/scripts/deny-check.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write(*.ts)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno fmt $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Write(*.tsx)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno fmt $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.ts)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno fmt $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.tsx)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno fmt $CLAUDE_FILE_PATH"
+          }
+        ]
+      }
+    ]
+  }
+}
