@@ -13,12 +13,17 @@
     "ghcr.io/devcontainer-community/devcontainer-features/astral.sh-uv:1": {
       "version": "latest"
     },
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "latest",
+      "profile": "default"
+    }
   },
   "customizations": {
     "vscode": {
       "extensions": [
         "tamasfe.even-better-toml", // TOML file support
+        "rust-lang.rust-analyzer", // Rust language support
         "anthropic.claude-code",
         "mhutchie.git-graph",
         "eamodio.gitlens",
