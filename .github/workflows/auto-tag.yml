@@ -1,0 +1,82 @@
+name: Auto Tag
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  auto-tag:
+    name: Create Version Tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for tags
+
+      - name: Get merged branch name
+        id: branch
+        run: |
+          # Extract branch name from merge commit message
+          # Format: "Merge pull request #N from owner/branch-name"
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          echo "Commit message: $COMMIT_MSG"
+
+          # Try to extract branch from merge commit
+          if echo "$COMMIT_MSG" | grep -q "Merge pull request"; then
+            BRANCH=$(echo "$COMMIT_MSG" | grep -oP 'from [^/]+/\K[^ ]+' || echo "")
+          else
+            # For squash merges, try to get from the PR body or use empty
+            BRANCH=""
+          fi
+
+          echo "Detected branch: $BRANCH"
+          echo "name=$BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Setup Rust
+        if: steps.branch.outputs.name != ''
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        if: steps.branch.outputs.name != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-
+
+      - name: Build erd
+        if: steps.branch.outputs.name != ''
+        run: cargo build --release
+
+      - name: Configure git
+        if: steps.branch.outputs.name != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag
+        if: steps.branch.outputs.name != ''
+        run: |
+          # Config file is at .github/versioning.yml
+          ./target/release/erd tag auto --branch "${{ steps.branch.outputs.name }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip tagging (no branch detected)
+        if: steps.branch.outputs.name == ''
+        run: |
+          echo "No branch name detected from commit message."
+          echo "This might be a direct push or squash merge."
+          echo "Skipping auto-tagging."
