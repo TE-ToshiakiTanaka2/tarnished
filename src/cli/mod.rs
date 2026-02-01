@@ -59,7 +59,7 @@ impl Cli {
         )
     }
 
-    /// Execute the CLI command
+    /// Execute the CLI command (sync version for non-async commands)
     pub fn execute(&self) -> anyhow::Result<()> {
         let config = self.to_config();
 
@@ -68,8 +68,38 @@ impl Cli {
         }
 
         match &self.command {
-            Commands::Issue { command } => command.execute(),
+            Commands::Issue { command } => {
+                if command.needs_async() {
+                    anyhow::bail!(
+                        "This command requires async execution. Use execute_async instead."
+                    );
+                }
+                command.execute(&config)
+            }
             Commands::Tag { command } => command.execute(),
+        }
+    }
+
+    /// Execute the CLI command (async version)
+    pub async fn execute_async(&self) -> anyhow::Result<()> {
+        let config = self.to_config();
+
+        if config.verbose {
+            eprintln!("Config: {config:?}");
+        }
+
+        match &self.command {
+            Commands::Issue { command } => command.execute_async(&config).await,
+            Commands::Tag { command } => command.execute(),
+        }
+    }
+
+    /// Check if the current command needs async execution
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn needs_async(&self) -> bool {
+        match &self.command {
+            Commands::Issue { command } => command.needs_async(),
+            Commands::Tag { .. } => false,
         }
     }
 }
