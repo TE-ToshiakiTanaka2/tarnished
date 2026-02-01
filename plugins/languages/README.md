@@ -8,10 +8,10 @@ Each language plugin is a directory containing:
 
 ```
 plugins/languages/<language>/
-├── plugin.sh          # Main plugin script (required)
-├── features.json      # Additional devcontainer features (optional)
-├── extensions.json    # Additional VSCode extensions (optional)
-├── hooks.json         # Claude Code hooks to add (optional)
+├── plugin.json        # Metadata and configuration (required)
+├── plugin.sh          # Implementation functions (required)
+├── templates/         # Workflow templates (optional)
+│   └── *.yml.template
 └── README.md          # Plugin documentation (optional)
 ```
 
@@ -20,106 +20,128 @@ plugins/languages/<language>/
 ### 1. Create the plugin directory
 
 ```bash
-mkdir -p plugins/languages/your-language
+mkdir -p plugins/languages/your-language/templates
 ```
 
-### 2. Create `plugin.sh`
+### 2. Create `plugin.json`
+
+```json
+{
+  "name": "your-language",
+  "version": "1.0.0",
+  "description": "Your Language development environment",
+  "category": "languages",
+  "dependencies": {
+    "features": ["git"],
+    "plugins": []
+  },
+  "variables": {
+    "LANGUAGE_VERSION": {
+      "description": "Language version to install",
+      "type": "select",
+      "default": "latest",
+      "options": ["latest", "lts", "1.0.0"]
+    }
+  },
+  "provides": {
+    "features": [],
+    "extensions": ["publisher.extension"],
+    "hooks": true,
+    "dockerfile": true,
+    "post_setup": true,
+    "workflows": true
+  }
+}
+```
+
+### 3. Create `plugin.sh`
 
 The main plugin script must implement the following functions:
 
 ```bash
-#!/bin/bash
+#!/bin/sh
 
-# Plugin metadata
-PLUGIN_NAME="your-language"
-PLUGIN_VERSION="1.0.0"
-PLUGIN_DESCRIPTION="Your Language development environment"
-
-# Called to get additional devcontainer features
-# Output: JSON object of features
+# Return devcontainer features JSON fragment
 get_features() {
     cat << 'EOF'
-{
     "ghcr.io/devcontainers/features/your-feature:1": {
-        "version": "latest"
+      "version": "${PLUGIN_VAR_LANGUAGE_VERSION:-latest}"
     }
-}
 EOF
 }
 
-# Called to get additional VSCode extensions
-# Output: JSON array of extension IDs
+# Return VSCode extensions JSON fragment
 get_extensions() {
     cat << 'EOF'
-[
-    "publisher.extension-name"
-]
+        "publisher.extension-name"
 EOF
 }
 
-# Called to get additional Dockerfile commands
-# Output: Dockerfile RUN commands
+# Return Dockerfile RUN commands
 get_dockerfile_extras() {
     cat << 'EOF'
-# Install additional packages
+# Your Language dependencies
 RUN apt-get update && apt-get install -y your-package
 EOF
 }
 
-# Called to get additional post.sh setup steps
-# Output: Bash script snippet
+# Return post.sh setup script (can use PLUGIN_VAR_* variables)
 get_post_setup() {
-    cat << 'EOF'
+    version="${PLUGIN_VAR_LANGUAGE_VERSION:-latest}"
+    cat << EOF
 # Your Language Setup
 setup_your_language() {
-    echo "Setting up Your Language..."
-    # Setup commands here
+    echo "Setting up Your Language version $version..."
 }
 setup_your_language
 EOF
 }
 
-# Called to get Claude Code hooks
-# Output: JSON array of hook configurations
+# Return Claude Code hooks JSON fragment
 get_hooks() {
     cat << 'EOF'
-[
-    {
+      {
         "matcher": "Write(*.ext)",
         "hooks": [
-            {
-                "type": "command",
-                "command": "your-formatter $CLAUDE_FILE_PATH"
-            }
+          {
+            "type": "command",
+            "command": "your-formatter $CLAUDE_FILE_PATH"
+          }
         ]
-    }
-]
+      }
 EOF
 }
 ```
 
-### 3. Test your plugin
+### 4. Test your plugin
 
 ```bash
-# Source the plugin
-source plugins/languages/your-language/plugin.sh
+# Validate plugin.json
+cat plugins/languages/your-language/plugin.json | jq .
 
-# Test functions
+# Source and test functions
+. plugins/languages/your-language/plugin.sh
 get_features
 get_extensions
 ```
+
+## Variable Types
+
+| Type | Description | UI |
+|------|-------------|-----|
+| `string` | Free text input | Text prompt |
+| `select` | Single choice | Numbered list |
+| `multiselect` | Multiple choices | Comma-separated numbers |
+| `boolean` | Yes/No | Y/N prompt |
 
 ## Available Plugins
 
 | Plugin | Description | Status |
 |--------|-------------|--------|
-| (none) | No plugins yet | - |
+| [rust](./rust/) | Rust development with rust-analyzer | Available |
 
-## Future Plugins
+## Planned Plugins
 
-Planned language plugins:
-
-- **rust** - Rust development with rust-analyzer
 - **python** - Python development with uv and ruff
 - **deno** - Deno/TypeScript development
 - **go** - Go development with gopls
@@ -138,8 +160,14 @@ To contribute a new language plugin:
 
 When `setup.sh` runs with a language plugin:
 
-1. Features from `get_features()` are merged into devcontainer.json
-2. Extensions from `get_extensions()` are merged into devcontainer.json
-3. Dockerfile extras from `get_dockerfile_extras()` are added to Dockerfile.dev
-4. Post setup from `get_post_setup()` is added to post.sh
-5. Hooks from `get_hooks()` are added to .claude/settings.json
+1. **Discovery** - Plugins are discovered from `plugins/languages/*/plugin.json`
+2. **Selection** - User selects plugins via interactive menu
+3. **Dependencies** - Plugin dependencies are resolved automatically
+4. **Configuration** - User configures plugin variables (if jq available)
+5. **Integration** - Plugin outputs are merged into generated files:
+   - Features from `get_features()` → devcontainer.json
+   - Extensions from `get_extensions()` → devcontainer.json
+   - Dockerfile extras from `get_dockerfile_extras()` → Dockerfile.dev
+   - Post setup from `get_post_setup()` → post.sh
+   - Hooks from `get_hooks()` → .claude/settings.json
+   - Workflow templates → .github/workflows/

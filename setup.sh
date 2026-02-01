@@ -209,6 +209,679 @@ process_template() {
 }
 
 # -----------------------------------------------------------------------------
+# Plugin System
+# -----------------------------------------------------------------------------
+
+# Plugin categories
+PLUGIN_CATEGORIES="languages tools github-actions"
+
+# Selected plugins (space-separated list of category/name)
+SELECTED_PLUGINS=""
+
+# Check if jq is available
+has_jq() {
+    command -v jq >/dev/null 2>&1
+}
+
+# Get script directory (for local plugin paths)
+get_script_dir() {
+    cd "$(dirname "$0")" && pwd
+}
+
+# Get plugin directory path
+# Usage: get_plugin_path "languages/rust"
+get_plugin_path() {
+    plugin="$1"
+    script_dir=$(get_script_dir)
+    printf "%s/plugins/%s" "$script_dir" "$plugin"
+}
+
+# Parse JSON value using jq or fallback
+# Usage: json_get "file.json" ".key" or json_get "file.json" ".key.subkey"
+json_get() {
+    json_file="$1"
+    json_path="$2"
+
+    if has_jq; then
+        jq -r "$json_path // empty" "$json_file" 2>/dev/null
+    else
+        # Simple fallback for basic paths like ".name", ".version"
+        key=$(printf "%s" "$json_path" | sed 's/^\.//')
+        grep "\"$key\"" "$json_file" 2>/dev/null | head -1 | sed 's/.*: *"\([^"]*\)".*/\1/'
+    fi
+}
+
+# Parse JSON array using jq or fallback
+# Usage: json_get_array "file.json" ".dependencies.features"
+json_get_array() {
+    json_file="$1"
+    json_path="$2"
+
+    if has_jq; then
+        jq -r "$json_path // [] | .[]" "$json_file" 2>/dev/null
+    else
+        # Fallback: very limited, only works for simple arrays
+        :
+    fi
+}
+
+# Check if plugin exists and has required files
+# Usage: validate_plugin "languages/rust"
+# Returns: 0 if valid, 1 if invalid
+validate_plugin() {
+    plugin="$1"
+    plugin_path=$(get_plugin_path "$plugin")
+
+    # Check plugin directory exists
+    if [ ! -d "$plugin_path" ]; then
+        return 1
+    fi
+
+    # Check required files
+    if [ ! -f "$plugin_path/plugin.json" ]; then
+        error "Plugin '$plugin' missing plugin.json"
+        return 1
+    fi
+
+    if [ ! -f "$plugin_path/plugin.sh" ]; then
+        error "Plugin '$plugin' missing plugin.sh"
+        return 1
+    fi
+
+    # Validate plugin.json has required fields
+    name=$(json_get "$plugin_path/plugin.json" ".name")
+    version=$(json_get "$plugin_path/plugin.json" ".version")
+    description=$(json_get "$plugin_path/plugin.json" ".description")
+
+    if [ -z "$name" ] || [ -z "$version" ] || [ -z "$description" ]; then
+        error "Plugin '$plugin' has invalid plugin.json (missing required fields)"
+        return 1
+    fi
+
+    return 0
+}
+
+# Discover all available plugins
+# Output: list of "category/name" (one per line)
+discover_plugins() {
+    script_dir=$(get_script_dir)
+
+    for category in $PLUGIN_CATEGORIES; do
+        category_dir="$script_dir/plugins/$category"
+        if [ -d "$category_dir" ]; then
+            for plugin_dir in "$category_dir"/*/; do
+                if [ -d "$plugin_dir" ]; then
+                    plugin_name=$(basename "$plugin_dir")
+                    plugin_id="$category/$plugin_name"
+                    if validate_plugin "$plugin_id" 2>/dev/null; then
+                        printf "%s\n" "$plugin_id"
+                    fi
+                fi
+            done
+        fi
+    done
+}
+
+# Get plugin metadata
+# Usage: get_plugin_info "languages/rust" "description"
+get_plugin_info() {
+    plugin="$1"
+    field="$2"
+    plugin_path=$(get_plugin_path "$plugin")
+    json_get "$plugin_path/plugin.json" ".$field"
+}
+
+# Get plugin feature dependencies
+# Usage: get_plugin_feature_deps "languages/rust"
+get_plugin_feature_deps() {
+    plugin="$1"
+    plugin_path=$(get_plugin_path "$plugin")
+    json_get_array "$plugin_path/plugin.json" ".dependencies.features"
+}
+
+# Get plugin dependencies (other plugins)
+# Usage: get_plugin_deps "languages/rust"
+get_plugin_deps() {
+    plugin="$1"
+    plugin_path=$(get_plugin_path "$plugin")
+    json_get_array "$plugin_path/plugin.json" ".dependencies.plugins"
+}
+
+# Check if a plugin is in the selected list
+# Usage: is_plugin_selected "languages/rust"
+is_plugin_selected() {
+    plugin="$1"
+    case " $SELECTED_PLUGINS " in
+        *" $plugin "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Add a plugin to selected list (if not already present)
+# Usage: add_selected_plugin "languages/rust"
+add_selected_plugin() {
+    plugin="$1"
+    if ! is_plugin_selected "$plugin"; then
+        SELECTED_PLUGINS="$SELECTED_PLUGINS $plugin"
+        SELECTED_PLUGINS=$(printf "%s" "$SELECTED_PLUGINS" | sed 's/^ *//')
+    fi
+}
+
+# Resolve plugin dependencies recursively
+# Adds dependent plugins to SELECTED_PLUGINS
+# Usage: resolve_plugin_dependencies "languages/rust"
+resolve_plugin_dependencies() {
+    plugin="$1"
+    visited="$2"
+
+    # Check for circular dependency
+    case " $visited " in
+        *" $plugin "*)
+            error "Circular dependency detected: $plugin"
+            return 1
+            ;;
+    esac
+
+    visited="$visited $plugin"
+
+    # Get plugin dependencies
+    deps=$(get_plugin_deps "$plugin")
+
+    for dep in $deps; do
+        if [ -n "$dep" ]; then
+            if validate_plugin "$dep" 2>/dev/null; then
+                # Recursively resolve dependencies
+                resolve_plugin_dependencies "$dep" "$visited" || return 1
+                # Add dependency to selected plugins
+                if ! is_plugin_selected "$dep"; then
+                    info "Auto-selecting dependency: $dep"
+                    add_selected_plugin "$dep"
+                fi
+            else
+                warn "Plugin dependency '$dep' not found, skipping"
+            fi
+        fi
+    done
+
+    return 0
+}
+
+# Enable features required by a plugin
+# Usage: enable_plugin_features "languages/rust"
+enable_plugin_features() {
+    plugin="$1"
+    deps=$(get_plugin_feature_deps "$plugin")
+
+    for dep in $deps; do
+        case "$dep" in
+            git)
+                if [ "$FEATURE_GIT" != "y" ]; then
+                    info "Auto-enabling feature: git (required by $plugin)"
+                    FEATURE_GIT="y"
+                fi
+                ;;
+            github-cli)
+                if [ "$FEATURE_GITHUB_CLI" != "y" ]; then
+                    info "Auto-enabling feature: github-cli (required by $plugin)"
+                    FEATURE_GITHUB_CLI="y"
+                fi
+                ;;
+            uv)
+                if [ "$FEATURE_UV" != "y" ]; then
+                    info "Auto-enabling feature: uv (required by $plugin)"
+                    FEATURE_UV="y"
+                fi
+                ;;
+            claude-code)
+                if [ "$FEATURE_CLAUDE_CODE" != "y" ]; then
+                    info "Auto-enabling feature: claude-code (required by $plugin)"
+                    FEATURE_CLAUDE_CODE="y"
+                fi
+                ;;
+        esac
+    done
+}
+
+# Source a plugin's plugin.sh
+# Usage: source_plugin "languages/rust"
+source_plugin() {
+    plugin="$1"
+    plugin_path=$(get_plugin_path "$plugin")
+
+    if [ -f "$plugin_path/plugin.sh" ]; then
+        # shellcheck disable=SC1090
+        . "$plugin_path/plugin.sh"
+        return 0
+    fi
+    return 1
+}
+
+# Collect all plugin features JSON
+# Output: JSON fragment for devcontainer.json features
+collect_plugin_features() {
+    result=""
+    for plugin in $SELECTED_PLUGINS; do
+        if source_plugin "$plugin"; then
+            if command -v get_features >/dev/null 2>&1; then
+                output=$(get_features)
+                if [ -n "$output" ]; then
+                    if [ -n "$result" ]; then
+                        result="${result}\n${output}"
+                    else
+                        result="$output"
+                    fi
+                fi
+                unset -f get_features 2>/dev/null || true
+            fi
+        fi
+    done
+    printf "%s" "$result"
+}
+
+# Collect all plugin extensions JSON
+# Output: JSON fragment for devcontainer.json extensions
+collect_plugin_extensions() {
+    result=""
+    for plugin in $SELECTED_PLUGINS; do
+        if source_plugin "$plugin"; then
+            if command -v get_extensions >/dev/null 2>&1; then
+                output=$(get_extensions)
+                if [ -n "$output" ]; then
+                    if [ -n "$result" ]; then
+                        result="${result},\n${output}"
+                    else
+                        result="$output"
+                    fi
+                fi
+                unset -f get_extensions 2>/dev/null || true
+            fi
+        fi
+    done
+    printf "%s" "$result"
+}
+
+# Collect all plugin Dockerfile extras
+# Output: Dockerfile RUN commands
+collect_plugin_dockerfile_extras() {
+    result=""
+    for plugin in $SELECTED_PLUGINS; do
+        if source_plugin "$plugin"; then
+            if command -v get_dockerfile_extras >/dev/null 2>&1; then
+                output=$(get_dockerfile_extras)
+                if [ -n "$output" ]; then
+                    if [ -n "$result" ]; then
+                        result="${result}\n\n${output}"
+                    else
+                        result="$output"
+                    fi
+                fi
+                unset -f get_dockerfile_extras 2>/dev/null || true
+            fi
+        fi
+    done
+    printf "%s" "$result"
+}
+
+# Collect all plugin post-setup scripts
+# Output: Bash script fragment
+collect_plugin_post_setup() {
+    result=""
+    for plugin in $SELECTED_PLUGINS; do
+        if source_plugin "$plugin"; then
+            if command -v get_post_setup >/dev/null 2>&1; then
+                output=$(get_post_setup)
+                if [ -n "$output" ]; then
+                    if [ -n "$result" ]; then
+                        result="${result}\n\n${output}"
+                    else
+                        result="$output"
+                    fi
+                fi
+                unset -f get_post_setup 2>/dev/null || true
+            fi
+        fi
+    done
+    printf "%s" "$result"
+}
+
+# Collect all plugin hooks JSON
+# Output: JSON fragment for .claude/settings.json hooks
+collect_plugin_hooks() {
+    result=""
+    for plugin in $SELECTED_PLUGINS; do
+        if source_plugin "$plugin"; then
+            if command -v get_hooks >/dev/null 2>&1; then
+                output=$(get_hooks)
+                if [ -n "$output" ]; then
+                    if [ -n "$result" ]; then
+                        result="${result},\n${output}"
+                    else
+                        result="$output"
+                    fi
+                fi
+                unset -f get_hooks 2>/dev/null || true
+            fi
+        fi
+    done
+    printf "%s" "$result"
+}
+
+# -----------------------------------------------------------------------------
+# Plugin Variable Configuration
+# -----------------------------------------------------------------------------
+
+# Prompt for single selection from options
+# Usage: result=$(prompt_select "Select version" "stable nightly 1.75.0" "stable")
+prompt_select() {
+    prompt_text="$1"
+    options="$2"
+    default="$3"
+
+    if ! is_interactive; then
+        printf "%s" "$default"
+        return 0
+    fi
+
+    echo "$prompt_text:"
+    i=1
+    default_num=1
+    for opt in $options; do
+        if [ "$opt" = "$default" ]; then
+            printf "  %d) %s (default)\n" "$i" "$opt"
+            default_num=$i
+        else
+            printf "  %d) %s\n" "$i" "$opt"
+        fi
+        i=$((i + 1))
+    done
+
+    printf "Enter number [%d]: " "$default_num"
+    read -r response
+
+    if [ -z "$response" ]; then
+        printf "%s" "$default"
+        return 0
+    fi
+
+    # Get selected option by number
+    i=1
+    for opt in $options; do
+        if [ "$i" = "$response" ]; then
+            printf "%s" "$opt"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+
+    # Invalid input, return default
+    printf "%s" "$default"
+}
+
+# Prompt for multiple selection from options
+# Usage: result=$(prompt_multiselect "Select components" "clippy rustfmt rust-src" "clippy rustfmt")
+prompt_multiselect() {
+    prompt_text="$1"
+    options="$2"
+    defaults="$3"
+
+    if ! is_interactive; then
+        printf "%s" "$defaults"
+        return 0
+    fi
+
+    echo "$prompt_text (comma-separated numbers):"
+    i=1
+    for opt in $options; do
+        marker=" "
+        case " $defaults " in
+            *" $opt "*) marker="*" ;;
+        esac
+        printf "  %d) [%s] %s\n" "$i" "$marker" "$opt"
+        i=$((i + 1))
+    done
+
+    printf "Enter numbers (e.g., 1,2,3) or press Enter for defaults: "
+    read -r response
+
+    if [ -z "$response" ]; then
+        printf "%s" "$defaults"
+        return 0
+    fi
+
+    # Parse comma-separated numbers
+    result=""
+    IFS=','
+    for num in $response; do
+        num=$(printf "%s" "$num" | tr -d ' ')
+        i=1
+        for opt in $options; do
+            if [ "$i" = "$num" ]; then
+                if [ -n "$result" ]; then
+                    result="$result $opt"
+                else
+                    result="$opt"
+                fi
+                break
+            fi
+            i=$((i + 1))
+        done
+    done
+    unset IFS
+
+    printf "%s" "$result"
+}
+
+# Get variable configuration from plugin.json
+# Usage: get_plugin_variables "languages/rust"
+get_plugin_variables() {
+    plugin="$1"
+    plugin_path=$(get_plugin_path "$plugin")
+
+    if has_jq; then
+        jq -r '.variables // {} | keys[]' "$plugin_path/plugin.json" 2>/dev/null
+    fi
+}
+
+# Get variable metadata from plugin.json
+# Usage: get_variable_info "languages/rust" "RUST_VERSION" "type"
+get_variable_info() {
+    plugin="$1"
+    var_name="$2"
+    field="$3"
+    plugin_path=$(get_plugin_path "$plugin")
+
+    if has_jq; then
+        jq -r ".variables.${var_name}.${field} // empty" "$plugin_path/plugin.json" 2>/dev/null
+    fi
+}
+
+# Get variable options as space-separated list
+# Usage: get_variable_options "languages/rust" "RUST_VERSION"
+get_variable_options() {
+    plugin="$1"
+    var_name="$2"
+    plugin_path=$(get_plugin_path "$plugin")
+
+    if has_jq; then
+        jq -r ".variables.${var_name}.options // [] | .[]" "$plugin_path/plugin.json" 2>/dev/null | tr '\n' ' ' | sed 's/ $//'
+    fi
+}
+
+# Get variable default value
+# Usage: get_variable_default "languages/rust" "RUST_VERSION"
+get_variable_default() {
+    plugin="$1"
+    var_name="$2"
+    plugin_path=$(get_plugin_path "$plugin")
+
+    if has_jq; then
+        default=$(jq -r ".variables.${var_name}.default" "$plugin_path/plugin.json" 2>/dev/null)
+        # Handle array defaults for multiselect
+        if printf "%s" "$default" | grep -q '^\['; then
+            jq -r ".variables.${var_name}.default | .[]" "$plugin_path/plugin.json" 2>/dev/null | tr '\n' ' ' | sed 's/ $//'
+        else
+            printf "%s" "$default"
+        fi
+    fi
+}
+
+# Configure all variables for a plugin
+# Sets environment variables PLUGIN_VAR_<NAME>
+# Usage: configure_plugin_variables "languages/rust"
+configure_plugin_variables() {
+    plugin="$1"
+    plugin_name=$(get_plugin_info "$plugin" "name")
+
+    variables=$(get_plugin_variables "$plugin")
+    if [ -z "$variables" ]; then
+        return 0
+    fi
+
+    echo ""
+    info "Configuring $plugin_name variables:"
+
+    for var in $variables; do
+        var_type=$(get_variable_info "$plugin" "$var" "type")
+        var_desc=$(get_variable_info "$plugin" "$var" "description")
+        var_default=$(get_variable_default "$plugin" "$var")
+        var_options=$(get_variable_options "$plugin" "$var")
+
+        case "$var_type" in
+            select)
+                value=$(prompt_select "  $var_desc" "$var_options" "$var_default")
+                ;;
+            multiselect)
+                value=$(prompt_multiselect "  $var_desc" "$var_options" "$var_default")
+                ;;
+            boolean)
+                if [ "$var_default" = "true" ]; then
+                    def="y"
+                else
+                    def="n"
+                fi
+                if confirm "  $var_desc" "$def"; then
+                    value="true"
+                else
+                    value="false"
+                fi
+                ;;
+            *)
+                value=$(prompt_input "  $var_desc" "$var_default")
+                ;;
+        esac
+
+        # Export as environment variable
+        eval "export PLUGIN_VAR_${var}=\"$value\""
+        success "  $var = $value"
+    done
+}
+
+# -----------------------------------------------------------------------------
+# Plugin Selection UI
+# -----------------------------------------------------------------------------
+
+# Display plugin selection menu for a category
+# Usage: select_plugins_from_category "languages"
+select_plugins_from_category() {
+    category="$1"
+    script_dir=$(get_script_dir)
+    category_dir="$script_dir/plugins/$category"
+
+    if [ ! -d "$category_dir" ]; then
+        return 0
+    fi
+
+    # Collect available plugins in this category
+    available=""
+    for plugin_dir in "$category_dir"/*/; do
+        if [ -d "$plugin_dir" ]; then
+            plugin_name=$(basename "$plugin_dir")
+            plugin_id="$category/$plugin_name"
+            if validate_plugin "$plugin_id" 2>/dev/null; then
+                available="$available $plugin_id"
+            fi
+        fi
+    done
+    available=$(printf "%s" "$available" | sed 's/^ *//')
+
+    if [ -z "$available" ]; then
+        info "No plugins available in $category"
+        return 0
+    fi
+
+    echo ""
+    echo "Available $category plugins:"
+    i=1
+    for plugin in $available; do
+        desc=$(get_plugin_info "$plugin" "description")
+        name=$(get_plugin_info "$plugin" "name")
+        printf "  %d) %s - %s\n" "$i" "$name" "$desc"
+        i=$((i + 1))
+    done
+
+    printf "Select plugins (comma-separated numbers, or Enter to skip): "
+    read -r response
+
+    if [ -z "$response" ]; then
+        return 0
+    fi
+
+    # Parse selection
+    IFS=','
+    for num in $response; do
+        num=$(printf "%s" "$num" | tr -d ' ')
+        i=1
+        for plugin in $available; do
+            if [ "$i" = "$num" ]; then
+                add_selected_plugin "$plugin"
+                success "Selected: $plugin"
+                break
+            fi
+            i=$((i + 1))
+        done
+    done
+    unset IFS
+}
+
+# Main plugin selection flow
+collect_plugin_selection() {
+    header "Plugin Selection"
+
+    # Check if any plugins exist
+    available_plugins=$(discover_plugins)
+    if [ -z "$available_plugins" ]; then
+        info "No plugins available"
+        return 0
+    fi
+
+    echo "Select plugins to include in your DevContainer:"
+
+    # Select from each category
+    for category in $PLUGIN_CATEGORIES; do
+        select_plugins_from_category "$category"
+    done
+
+    # Resolve dependencies
+    if [ -n "$SELECTED_PLUGINS" ]; then
+        echo ""
+        info "Resolving plugin dependencies..."
+        for plugin in $SELECTED_PLUGINS; do
+            resolve_plugin_dependencies "$plugin" "" || true
+            enable_plugin_features "$plugin"
+        done
+
+        # Configure variables for each selected plugin
+        if has_jq; then
+            for plugin in $SELECTED_PLUGINS; do
+                configure_plugin_variables "$plugin"
+            done
+        else
+            warn "jq not available, skipping plugin variable configuration"
+        fi
+    fi
+}
+
+# -----------------------------------------------------------------------------
 # Feature Configuration
 # -----------------------------------------------------------------------------
 
@@ -229,7 +902,13 @@ build_features_json() {
     fi
 
     if [ "$FEATURE_CLAUDE_CODE" = "y" ]; then
-        features="${features}    \"ghcr.io/anthropics/devcontainer-features/claude-code:1.0\": {}\n"
+        features="${features}    \"ghcr.io/anthropics/devcontainer-features/claude-code:1.0\": {},\n"
+    fi
+
+    # Add plugin features
+    plugin_features=$(collect_plugin_features)
+    if [ -n "$plugin_features" ]; then
+        features="${features}${plugin_features}\n"
     fi
 
     # Remove trailing comma and newline from last feature
@@ -251,6 +930,12 @@ build_extensions_json() {
 
     if [ "$FEATURE_CLAUDE_CODE" = "y" ]; then
         extensions="${extensions},\n        \"anthropic.claude-code\""
+    fi
+
+    # Add plugin extensions
+    plugin_extensions=$(collect_plugin_extensions)
+    if [ -n "$plugin_extensions" ]; then
+        extensions="${extensions},\n${plugin_extensions}"
     fi
 
     printf "%s" "$extensions"
@@ -306,8 +991,18 @@ generate_post_sh() {
 
     template=$(read_template "plugins/base/post.sh")
 
-    # Remove language setup placeholder for now
-    processed=$(printf "%s" "$template" | sed '/{{LANGUAGE_SETUP}}/d')
+    # Collect plugin post-setup scripts
+    plugin_setup=$(collect_plugin_post_setup)
+
+    # Replace language setup placeholder with plugin setup
+    if [ -n "$plugin_setup" ]; then
+        processed=$(printf "%s" "$template" | awk -v setup="$plugin_setup" '
+            /{{LANGUAGE_SETUP}}/ { print setup; next }
+            { print }
+        ')
+    else
+        processed=$(printf "%s" "$template" | sed '/{{LANGUAGE_SETUP}}/d')
+    fi
 
     printf "%s" "$processed" > .devcontainer/scripts/post.sh
     chmod +x .devcontainer/scripts/post.sh
@@ -341,8 +1036,18 @@ generate_dockerfile() {
 
     template=$(read_template "plugins/base/Dockerfile.dev")
 
-    # Remove extras placeholder for now
-    processed=$(printf "%s" "$template" | sed '/{{DOCKERFILE_EXTRAS}}/d')
+    # Collect plugin dockerfile extras
+    plugin_extras=$(collect_plugin_dockerfile_extras)
+
+    # Replace extras placeholder with plugin extras
+    if [ -n "$plugin_extras" ]; then
+        processed=$(printf "%s" "$template" | awk -v extras="$plugin_extras" '
+            /{{DOCKERFILE_EXTRAS}}/ { print extras; next }
+            { print }
+        ')
+    else
+        processed=$(printf "%s" "$template" | sed '/{{DOCKERFILE_EXTRAS}}/d')
+    fi
 
     printf "%s" "$processed" > docker/Dockerfile.dev
     success "Created: docker/Dockerfile.dev"
@@ -361,8 +1066,18 @@ generate_claude_settings() {
 
     template=$(read_template "plugins/claude/settings.json")
 
-    # Empty hooks for now
-    processed=$(printf "%s" "$template" | sed 's/{{HOOKS}}//')
+    # Collect plugin hooks
+    plugin_hooks=$(collect_plugin_hooks)
+
+    # Replace hooks placeholder with plugin hooks
+    if [ -n "$plugin_hooks" ]; then
+        processed=$(printf "%s" "$template" | awk -v hooks="$plugin_hooks" '
+            /{{HOOKS}}/ { print hooks; next }
+            { print }
+        ')
+    else
+        processed=$(printf "%s" "$template" | sed 's/{{HOOKS}}//')
+    fi
 
     printf "%s" "$processed" > .claude/settings.json
     success "Created: .claude/settings.json"
@@ -426,6 +1141,48 @@ generate_github_workflows() {
     fi
 
     info "Note: Configure PROJECT_TOKEN secret and .github/project.yml for workflows to function"
+}
+
+# Generate workflow files from plugins
+generate_plugin_workflows() {
+    header "Generating Plugin Workflows"
+
+    has_workflows=false
+
+    for plugin in $SELECTED_PLUGINS; do
+        plugin_path=$(get_plugin_path "$plugin")
+        templates_dir="$plugin_path/templates"
+
+        if [ -d "$templates_dir" ]; then
+            for template_file in "$templates_dir"/*.template; do
+                if [ -f "$template_file" ]; then
+                    has_workflows=true
+                    filename=$(basename "$template_file" .template)
+                    output_path=".github/workflows/$filename"
+
+                    mkdir -p .github/workflows
+
+                    if ! check_overwrite "$output_path"; then
+                        warn "Skipped: $output_path"
+                        continue
+                    fi
+
+                    # Read and process template
+                    template=$(cat "$template_file")
+                    processed=$(printf "%s" "$template" | \
+                        sed "s/{{PROJECT_NAME}}/${PROJECT_NAME}/g" | \
+                        sed "s/{{PROJECT_NAME_LOWER}}/${PROJECT_NAME_LOWER}/g")
+
+                    printf "%s" "$processed" > "$output_path"
+                    success "Created: $output_path (from $plugin)"
+                fi
+            done
+        fi
+    done
+
+    if [ "$has_workflows" = false ]; then
+        info "No plugin workflows to generate"
+    fi
 }
 
 # -----------------------------------------------------------------------------
@@ -556,9 +1313,14 @@ generate_files() {
     generate_deny_check_sh
     generate_claude_commands
 
-    # Optional: GitHub workflows
+    # Optional: GitHub workflows (legacy)
     if [ "$FEATURE_GITHUB_WORKFLOWS" = "y" ]; then
         generate_github_workflows
+    fi
+
+    # Generate plugin workflows (new plugin system)
+    if [ -n "$SELECTED_PLUGINS" ]; then
+        generate_plugin_workflows
     fi
 }
 
@@ -586,6 +1348,17 @@ show_summary() {
     [ "$FEATURE_CLAUDE_CODE" = "y" ] && echo "  - claude-code"
     [ "$FEATURE_UV" = "y" ] && echo "  - uv (for SuperClaude)"
     [ "$FEATURE_GITHUB_WORKFLOWS" = "y" ] && echo "  - github-workflows (erd integration)"
+
+    # Show selected plugins
+    if [ -n "$SELECTED_PLUGINS" ]; then
+        echo ""
+        echo "Plugins installed:"
+        for plugin in $SELECTED_PLUGINS; do
+            plugin_desc=$(get_plugin_info "$plugin" "description")
+            echo "  - $plugin: $plugin_desc"
+        done
+    fi
+
     echo ""
     echo "Next steps:"
     echo "  1. Open this folder in VS Code"
@@ -606,6 +1379,7 @@ main() {
     check_prerequisites
     collect_project_info
     collect_feature_selection
+    collect_plugin_selection
     generate_files
     show_summary
 }
