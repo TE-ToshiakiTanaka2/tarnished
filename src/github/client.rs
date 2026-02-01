@@ -141,8 +141,8 @@ impl GitHubClient {
                         title
                         fields(first: 50) {
                             nodes {
+                                __typename
                                 ... on ProjectV2SingleSelectField {
-                                    __typename
                                     id
                                     name
                                     options {
@@ -151,7 +151,6 @@ impl GitHubClient {
                                     }
                                 }
                                 ... on ProjectV2IterationField {
-                                    __typename
                                     id
                                     name
                                 }
@@ -203,8 +202,8 @@ impl GitHubClient {
                         title
                         fields(first: 50) {
                             nodes {
+                                __typename
                                 ... on ProjectV2SingleSelectField {
-                                    __typename
                                     id
                                     name
                                     options {
@@ -213,7 +212,6 @@ impl GitHubClient {
                                     }
                                 }
                                 ... on ProjectV2IterationField {
-                                    __typename
                                     id
                                     name
                                 }
