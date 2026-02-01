@@ -57,3 +57,7 @@ jobs:
               issue_number: context.issue.number,
               body: `⚠️ **Project Integration Failed**\n\nFailed to automatically link this issue to the project. This may be due to:\n- Missing \`PROJECT_TOKEN\` secret\n- Invalid project configuration in \`.github/project.yml\`\n- GitHub API errors\n\nPlease link the issue to the project manually or check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`
             });
+
+      - name: Fail job if link failed
+        if: steps.link.outcome == 'failure'
+        run: exit 1
