@@ -22,6 +22,7 @@ serde_yaml = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 dirs = "5"
+regex = "1"
 
 [dev-dependencies]
 assert_cmd = "2"

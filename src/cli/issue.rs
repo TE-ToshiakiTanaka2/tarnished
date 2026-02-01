@@ -81,15 +81,46 @@ pub enum IssueCommands {
         #[arg(value_name = "NUMBER")]
         number: u64,
     },
+
+    /// Link an existing issue to a project
+    Link {
+        /// Issue number
+        #[arg(value_name = "NUMBER")]
+        number: u64,
+
+        /// Override project number from config
+        #[arg(long)]
+        project_number: Option<u32>,
+
+        /// Override project owner from config
+        #[arg(long)]
+        project_owner: Option<String>,
+
+        /// Override Size field value (or parse from issue body)
+        #[arg(long)]
+        size: Option<String>,
+
+        /// Override Priority field value (or parse from issue body)
+        #[arg(long)]
+        priority: Option<String>,
+
+        /// Override Status field value
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Parse Size/Priority from issue body if not specified
+        #[arg(long, default_value = "true")]
+        parse_body: bool,
+    },
 }
 
 impl IssueCommands {
     /// Execute the issue subcommand (sync wrapper)
     pub fn execute(&self, _config: &Config) -> anyhow::Result<()> {
         match self {
-            Self::Create { .. } => {
-                // Create commands need async runtime
-                anyhow::bail!("Use execute_async for create command. This is an internal error.");
+            Self::Create { .. } | Self::Link { .. } => {
+                // These commands need async runtime
+                anyhow::bail!("Use execute_async for this command. This is an internal error.");
             }
             Self::List => {
                 println!("Issue list command (not implemented)");
@@ -136,6 +167,27 @@ impl IssueCommands {
                     size.as_deref(),
                     priority.as_deref(),
                     status.as_deref(),
+                )
+                .await
+            }
+            Self::Link {
+                number,
+                project_number,
+                project_owner,
+                size,
+                priority,
+                status,
+                parse_body,
+            } => {
+                self.execute_link(
+                    config,
+                    *number,
+                    *project_number,
+                    project_owner.as_deref(),
+                    size.as_deref(),
+                    priority.as_deref(),
+                    status.as_deref(),
+                    *parse_body,
                 )
                 .await
             }
@@ -212,6 +264,84 @@ impl IssueCommands {
             )
             .await?;
         }
+
+        Ok(())
+    }
+
+    /// Execute the link issue command
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_link(
+        &self,
+        config: &Config,
+        issue_number: u64,
+        project_number_override: Option<u32>,
+        project_owner_override: Option<&str>,
+        size_override: Option<&str>,
+        priority_override: Option<&str>,
+        status_override: Option<&str>,
+        parse_body: bool,
+    ) -> anyhow::Result<()> {
+        // Get repository from config
+        let repo = config.get_repo().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Repository not specified. Use --repo or set ERD_REPO environment variable."
+            )
+        })?;
+        let (owner, repo_name) = parse_repo(repo)?;
+
+        // Get token - prefer PROJECT_TOKEN for project operations, fall back to GITHUB_TOKEN
+        let token = std::env::var("PROJECT_TOKEN")
+            .or_else(|_| std::env::var("GITHUB_TOKEN"))
+            .or_else(|_| config.token.clone().ok_or(std::env::VarError::NotPresent))
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "No GitHub token found. Set PROJECT_TOKEN or GITHUB_TOKEN environment variable."
+                )
+            })?;
+
+        let client = GitHubClient::new(token)?;
+
+        // Get the issue to obtain node_id and optionally parse body
+        if config.verbose {
+            eprintln!("Fetching issue #{issue_number} from {owner}/{repo_name}...");
+        }
+
+        let issue = client.get_issue(owner, repo_name, issue_number).await?;
+
+        // Parse Size/Priority from issue body if requested and not overridden
+        let (parsed_size, parsed_priority) = if parse_body {
+            parse_size_priority_from_body(issue.body.as_deref())
+        } else {
+            (None, None)
+        };
+
+        // Use parsed values if CLI overrides not provided
+        let effective_size = size_override.or(parsed_size.as_deref());
+        let effective_priority = priority_override.or(parsed_priority.as_deref());
+
+        if config.verbose {
+            if let Some(s) = &parsed_size {
+                eprintln!("Parsed Size from body: {s}");
+            }
+            if let Some(p) = &parsed_priority {
+                eprintln!("Parsed Priority from body: {p}");
+            }
+        }
+
+        // Link to project
+        self.link_issue_to_project(
+            &client,
+            config,
+            &issue.node_id,
+            project_number_override,
+            project_owner_override,
+            effective_size,
+            effective_priority,
+            status_override,
+        )
+        .await?;
+
+        println!("Successfully linked issue #{issue_number} to project");
 
         Ok(())
     }
@@ -304,7 +434,7 @@ impl IssueCommands {
 
     /// Check if this command needs async execution
     pub const fn needs_async(&self) -> bool {
-        matches!(self, Self::Create { .. })
+        matches!(self, Self::Create { .. } | Self::Link { .. })
     }
 }
 
@@ -315,6 +445,39 @@ fn parse_repo(repo: &str) -> anyhow::Result<(&str, &str)> {
         anyhow::bail!("Invalid repository format: {repo}. Expected 'owner/repo'.");
     }
     Ok((parts[0], parts[1]))
+}
+
+/// Parse Size and Priority from issue body
+///
+/// Supports formats:
+/// - `**Size**: L`
+/// - `- **Size**: L`
+/// - `Size: L`
+/// - `**Priority**: High`
+/// - `- **Priority**: High`
+/// - `Priority: High`
+fn parse_size_priority_from_body(body: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(body) = body else {
+        return (None, None);
+    };
+
+    // Regex patterns for Size and Priority
+    // Match: optional "- ", optional "**", "Size"/"Priority", optional "**", ":", whitespace, value
+    let size_pattern = regex::Regex::new(r"(?i)(?:-\s*)?\*?\*?Size\*?\*?\s*:\s*(\w+)").unwrap();
+    let priority_pattern =
+        regex::Regex::new(r"(?i)(?:-\s*)?\*?\*?Priority\*?\*?\s*:\s*(\w+)").unwrap();
+
+    let size = size_pattern
+        .captures(body)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string());
+
+    let priority = priority_pattern
+        .captures(body)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string());
+
+    (size, priority)
 }
 
 #[cfg(test)]
@@ -333,5 +496,52 @@ mod tests {
         assert!(parse_repo("invalid").is_err());
         assert!(parse_repo("a/b/c").is_err());
         assert!(parse_repo("").is_err());
+    }
+
+    #[test]
+    fn test_parse_size_priority_markdown_bold() {
+        let body = "## Estimation\n- **Size**: L\n- **Priority**: High";
+        let (size, priority) = parse_size_priority_from_body(Some(body));
+        assert_eq!(size, Some("L".to_string()));
+        assert_eq!(priority, Some("High".to_string()));
+    }
+
+    #[test]
+    fn test_parse_size_priority_simple() {
+        let body = "Size: M\nPriority: Medium";
+        let (size, priority) = parse_size_priority_from_body(Some(body));
+        assert_eq!(size, Some("M".to_string()));
+        assert_eq!(priority, Some("Medium".to_string()));
+    }
+
+    #[test]
+    fn test_parse_size_priority_case_insensitive() {
+        let body = "SIZE: XL\nPRIORITY: LOW";
+        let (size, priority) = parse_size_priority_from_body(Some(body));
+        assert_eq!(size, Some("XL".to_string()));
+        assert_eq!(priority, Some("LOW".to_string()));
+    }
+
+    #[test]
+    fn test_parse_size_priority_partial() {
+        let body = "Only Size: S here";
+        let (size, priority) = parse_size_priority_from_body(Some(body));
+        assert_eq!(size, Some("S".to_string()));
+        assert_eq!(priority, None);
+    }
+
+    #[test]
+    fn test_parse_size_priority_none() {
+        let (size, priority) = parse_size_priority_from_body(None);
+        assert_eq!(size, None);
+        assert_eq!(priority, None);
+    }
+
+    #[test]
+    fn test_parse_size_priority_no_match() {
+        let body = "This body has no size or priority info";
+        let (size, priority) = parse_size_priority_from_body(Some(body));
+        assert_eq!(size, None);
+        assert_eq!(priority, None);
     }
 }
