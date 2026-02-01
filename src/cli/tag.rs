@@ -124,24 +124,29 @@ fn execute_auto(
     // Get current version (latest tag or initial)
     let current_version = git_ops::get_latest_version(TAG_PREFIX)?;
 
-    let Some(current_version) = current_version else {
+    // Display branch and bump type information
+    println!("Branch: {branch}");
+    println!("Bump type: {bump_type:?}");
+
+    let (new_version, new_tag) = if let Some(current_version) = current_version {
+        // Calculate new version from existing
+        let new_version = current_version.bump(bump_type);
+        let new_tag = new_version.to_tag(TAG_PREFIX);
+        println!("Current version: {current_version}");
+        println!("New version: {new_version}");
+        println!("New tag: {new_tag}");
+        (new_version, new_tag)
+    } else {
         // No existing tags, use initial version
         let initial = SemVer::parse(INITIAL_VERSION)?;
         eprintln!("No existing tags found. Starting from initial version: {initial}");
         let new_tag = initial.to_tag(TAG_PREFIX);
-        return create_and_push_tag(&new_tag, dry_run, push, remote);
+        println!("New tag: {new_tag}");
+        (initial, new_tag)
     };
 
-    // Calculate new version
-    let new_version = current_version.bump(bump_type);
-    let new_tag = new_version.to_tag(TAG_PREFIX);
-
-    // Display information
-    println!("Branch: {branch}");
-    println!("Bump type: {bump_type:?}");
-    println!("Current version: {current_version}");
-    println!("New version: {new_version}");
-    println!("New tag: {new_tag}");
+    // Suppress unused variable warning (new_version used for display)
+    let _ = new_version;
 
     create_and_push_tag(&new_tag, dry_run, push, remote)
 }
