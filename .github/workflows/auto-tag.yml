@@ -2,10 +2,11 @@ name: Auto Tag
 
 on:
   push:
-    branches: [main]
+    branches: [develop, main]
 
 permissions:
   contents: write
+  pull-requests: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,23 +21,45 @@ jobs:
         with:
           fetch-depth: 0 # Need full history for tags
 
-      - name: Get merged branch name
+      - name: Get branch name from PR
         id: branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Extract branch name from merge commit message
-          # Format: "Merge pull request #N from owner/branch-name"
           COMMIT_MSG=$(git log -1 --pretty=%s)
           echo "Commit message: $COMMIT_MSG"
 
-          # Try to extract branch from merge commit
+          BRANCH=""
+
+          # Method 1: Try to extract from merge commit message
+          # Format: "Merge pull request #N from owner/branch-name"
           if echo "$COMMIT_MSG" | grep -q "Merge pull request"; then
-            BRANCH=$(echo "$COMMIT_MSG" | grep -oP 'from [^/]+/\K[^ ]+' || echo "")
-          else
-            # For squash merges, try to get from the PR body or use empty
-            BRANCH=""
+            BRANCH=$(echo "$COMMIT_MSG" | sed -n 's/.*from [^/]*\/\([^ ]*\).*/\1/p')
+            echo "Detected from merge commit: $BRANCH"
           fi
 
-          echo "Detected branch: $BRANCH"
+          # Method 2: For squash merges, extract PR number and get branch via API
+          # Format: "feat: some message (#123)"
+          if [ -z "$BRANCH" ]; then
+            PR_NUMBER=$(echo "$COMMIT_MSG" | grep -o '(#[0-9]\+)' | head -1 | tr -d '(#)')
+            if [ -n "$PR_NUMBER" ]; then
+              echo "Found PR number: $PR_NUMBER"
+              # Get the head branch name from PR via GitHub API
+              BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName' 2>/dev/null || echo "")
+              echo "Detected from PR API: $BRANCH"
+            fi
+          fi
+
+          # Method 3: Check if this is a direct push with branch-like commit message
+          if [ -z "$BRANCH" ]; then
+            # Try to detect branch pattern from conventional commit prefix
+            # e.g., "feat:" might indicate a feature branch
+            if echo "$COMMIT_MSG" | grep -qE "^(feat|feature):"; then
+              echo "Conventional commit detected but no PR number found"
+            fi
+          fi
+
+          echo "Final detected branch: $BRANCH"
           echo "name=$BRANCH" >> $GITHUB_OUTPUT
 
       - name: Setup Rust
@@ -78,5 +101,5 @@ jobs:
         if: steps.branch.outputs.name == ''
         run: |
           echo "No branch name detected from commit message."
-          echo "This might be a direct push or squash merge."
+          echo "This might be a direct push without PR reference."
           echo "Skipping auto-tagging."
