@@ -1,0 +1,8 @@
+default_project:
+  owner: "TE-ToshiakiTanaka2"
+  number: 6  # ErdTree Project
+
+field_defaults:
+  Status: "Backlog"
+  Size: "M"
+  Priority: "P1"
