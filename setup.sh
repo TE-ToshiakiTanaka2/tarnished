@@ -402,6 +402,32 @@ generate_claude_commands() {
     done
 }
 
+generate_github_workflows() {
+    header "Generating GitHub Workflows"
+
+    mkdir -p .github/workflows
+
+    # project-integration.yml
+    if ! check_overwrite ".github/workflows/project-integration.yml"; then
+        warn "Skipped: .github/workflows/project-integration.yml"
+    else
+        template=$(read_template "plugins/github/project-integration.yml.template")
+        printf "%s" "$template" > .github/workflows/project-integration.yml
+        success "Created: .github/workflows/project-integration.yml"
+    fi
+
+    # pr-project-status.yml
+    if ! check_overwrite ".github/workflows/pr-project-status.yml"; then
+        warn "Skipped: .github/workflows/pr-project-status.yml"
+    else
+        template=$(read_template "plugins/github/pr-project-status.yml.template")
+        printf "%s" "$template" > .github/workflows/pr-project-status.yml
+        success "Created: .github/workflows/pr-project-status.yml"
+    fi
+
+    info "Note: Configure PROJECT_TOKEN secret and .github/project.yml for workflows to function"
+}
+
 # -----------------------------------------------------------------------------
 # Main Setup Flow
 # -----------------------------------------------------------------------------
@@ -504,6 +530,19 @@ collect_feature_selection() {
         info "uv: disabled"
         warn "SuperClaude will not be available without uv"
     fi
+
+    echo ""
+    echo "Select additional features:"
+    echo ""
+
+    # GitHub Project workflows
+    if confirm "Include GitHub Project workflows? (requires erd)" "n"; then
+        FEATURE_GITHUB_WORKFLOWS="y"
+        success "github-workflows: enabled"
+    else
+        FEATURE_GITHUB_WORKFLOWS="n"
+        info "github-workflows: disabled"
+    fi
 }
 
 generate_files() {
@@ -516,6 +555,11 @@ generate_files() {
     generate_claude_settings
     generate_deny_check_sh
     generate_claude_commands
+
+    # Optional: GitHub workflows
+    if [ "$FEATURE_GITHUB_WORKFLOWS" = "y" ]; then
+        generate_github_workflows
+    fi
 }
 
 show_summary() {
@@ -531,18 +575,29 @@ show_summary() {
     echo "  - .claude/commands/implement.md"
     echo "  - .claude/commands/issue.md"
     echo "  - .claude/commands/pr.md"
+    if [ "$FEATURE_GITHUB_WORKFLOWS" = "y" ]; then
+        echo "  - .github/workflows/project-integration.yml"
+        echo "  - .github/workflows/pr-project-status.yml"
+    fi
     echo ""
     echo "Features enabled:"
     [ "$FEATURE_GIT" = "y" ] && echo "  - git"
     [ "$FEATURE_GITHUB_CLI" = "y" ] && echo "  - github-cli"
     [ "$FEATURE_CLAUDE_CODE" = "y" ] && echo "  - claude-code"
     [ "$FEATURE_UV" = "y" ] && echo "  - uv (for SuperClaude)"
+    [ "$FEATURE_GITHUB_WORKFLOWS" = "y" ] && echo "  - github-workflows (erd integration)"
     echo ""
     echo "Next steps:"
     echo "  1. Open this folder in VS Code"
     echo "  2. Click 'Reopen in Container' when prompted"
     echo "  3. Wait for the container to build and start"
     echo "  4. Run 'claude' to start using Claude Code"
+    if [ "$FEATURE_GITHUB_WORKFLOWS" = "y" ]; then
+        echo ""
+        echo "GitHub Workflows setup:"
+        echo "  5. Create PROJECT_TOKEN secret in repository settings"
+        echo "  6. Create .github/project.yml with project configuration"
+    fi
     echo ""
 }
 
