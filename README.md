@@ -9,6 +9,20 @@ A GitHub Issue/Tag management CLI tool built in Rust.
 - **GitHub Actions Ready**: Works in CI/CD pipelines
 - **Cross-Platform**: Linux, macOS, and Windows support
 
+## Quick Start (DevContainer)
+
+Set up a DevContainer environment with Claude Code and SuperClaude support:
+
+```bash
+# Create a new project directory
+mkdir my-project && cd my-project
+
+# Run setup script
+curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash
+```
+
+Then open the folder in VS Code and click "Reopen in Container" when prompted.
+
 ## Installation
 
 ```bash

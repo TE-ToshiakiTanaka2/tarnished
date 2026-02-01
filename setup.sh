@@ -6,7 +6,7 @@
 # with Claude Code and SuperClaude support.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/<user>/<repo>/main/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/<user>/<repo>/develop/setup.sh | bash
 #   ./setup.sh
 #
 # POSIX sh compatible for maximum portability
@@ -18,7 +18,7 @@ set -e
 # Configuration
 # -----------------------------------------------------------------------------
 SCRIPT_VERSION="1.0.0"
-REPO_URL="https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/main"
+REPO_URL="https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop"
 
 # -----------------------------------------------------------------------------
 # Color Definitions (with fallback for non-TTY)
