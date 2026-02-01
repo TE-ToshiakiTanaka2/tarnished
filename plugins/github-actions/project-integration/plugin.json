@@ -1,0 +1,43 @@
+{
+  "name": "project-integration",
+  "version": "1.0.0",
+  "description": "GitHub Project integration workflows using erd CLI",
+  "category": "github-actions",
+  "author": "tarnished",
+  "dependencies": {
+    "features": ["github-cli"],
+    "plugins": []
+  },
+  "variables": {
+    "PROJECT_OWNER": {
+      "description": "GitHub username or organization owning the project",
+      "type": "string",
+      "default": ""
+    },
+    "PROJECT_NUMBER": {
+      "description": "GitHub Project number",
+      "type": "string",
+      "default": "1"
+    },
+    "DEFAULT_STATUS": {
+      "description": "Default status for new issues",
+      "type": "select",
+      "default": "Backlog",
+      "options": ["Backlog", "Todo", "In Progress", "In Review", "Done"]
+    },
+    "PR_OPEN_STATUS": {
+      "description": "Status when PR is opened",
+      "type": "select",
+      "default": "In Review",
+      "options": ["In Progress", "In Review", "Ready for Review"]
+    }
+  },
+  "provides": {
+    "features": [],
+    "extensions": [],
+    "hooks": false,
+    "dockerfile": false,
+    "post_setup": true,
+    "workflows": true
+  }
+}

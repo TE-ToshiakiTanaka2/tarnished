@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Plugin Configuration",
+  "description": "Schema for DevContainer setup plugin configuration",
+  "type": "object",
+  "required": ["name", "version", "description", "category"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Plugin identifier (lowercase, alphanumeric with hyphens)",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version of the plugin",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this plugin provides"
+    },
+    "category": {
+      "type": "string",
+      "description": "Plugin category",
+      "enum": ["languages", "tools", "github-actions"]
+    },
+    "author": {
+      "type": "string",
+      "description": "Plugin author (optional)"
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Plugin dependencies",
+      "properties": {
+        "features": {
+          "type": "array",
+          "description": "Required DevContainer features (git, github-cli, uv, claude-code)",
+          "items": {
+            "type": "string",
+            "enum": ["git", "github-cli", "uv", "claude-code"]
+          }
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Required plugins (format: category/name)",
+          "items": {
+            "type": "string",
+            "pattern": "^(languages|tools|github-actions)/[a-z][a-z0-9-]*$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "variables": {
+      "type": "object",
+      "description": "Configurable variables for this plugin",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description", "type", "default"],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Human-readable description of this variable"
+          },
+          "type": {
+            "type": "string",
+            "description": "Variable type",
+            "enum": ["string", "select", "multiselect", "boolean"]
+          },
+          "default": {
+            "description": "Default value (string, boolean, or array for multiselect)"
+          },
+          "options": {
+            "type": "array",
+            "description": "Available options for select/multiselect types",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "provides": {
+      "type": "object",
+      "description": "What this plugin provides",
+      "properties": {
+        "features": {
+          "type": "array",
+          "description": "DevContainer features this plugin adds",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extensions": {
+          "type": "array",
+          "description": "VSCode extensions this plugin adds",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hooks": {
+          "type": "boolean",
+          "description": "Whether this plugin provides Claude Code hooks"
+        },
+        "dockerfile": {
+          "type": "boolean",
+          "description": "Whether this plugin adds Dockerfile commands"
+        },
+        "post_setup": {
+          "type": "boolean",
+          "description": "Whether this plugin adds post-setup scripts"
+        },
+        "workflows": {
+          "type": "boolean",
+          "description": "Whether this plugin provides GitHub Actions workflows"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
