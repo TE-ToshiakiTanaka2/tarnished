@@ -1,0 +1,22 @@
+{
+  "name": "{{PROJECT_NAME}}",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "{{PROJECT_NAME_LOWER}}",
+  "runServices": ["{{PROJECT_NAME_LOWER}}"],
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "features": {
+{{FEATURES}}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+{{EXTENSIONS}}
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/scripts/post.sh"
+}
