@@ -1,0 +1,52 @@
+name: PR Project Status
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  update-status:
+    name: Update Project Status
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-
+
+      - name: Build erd
+        run: cargo build --release
+
+      - name: Update linked issues status
+        id: update-status
+        run: |
+          ./target/release/erd pr status ${{ github.event.pull_request.number }} --verbose
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ERD_REPO: ${{ github.repository }}
+        continue-on-error: true
+
+      - name: Log result
+        if: steps.update-status.outcome == 'failure'
+        run: |
+          echo "::warning::Failed to update project status for linked issues. This may be due to missing PROJECT_TOKEN secret or no linked issues."
