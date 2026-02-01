@@ -6,8 +6,8 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT}
 use serde_json::json;
 
 use super::types::{
-    AddProjectItemData, CreateIssueRequest, CreateIssueResponse, GraphQLResponse, ProjectField,
-    ProjectQueryData, ProjectV2, UpdateProjectItemFieldData,
+    AddProjectItemData, CreateIssueRequest, CreateIssueResponse, GetIssueResponse, GraphQLResponse,
+    ProjectField, ProjectQueryData, ProjectV2, UpdateProjectItemFieldData,
 };
 use crate::project_config::ProjectConfig;
 
@@ -103,6 +103,25 @@ impl GitHubClient {
         let response = self.client.post(&url).json(request).send().await?;
 
         let issue: CreateIssueResponse = response.error_for_status()?.json().await?;
+
+        Ok(issue)
+    }
+
+    /// Get an issue via REST API.
+    pub async fn get_issue(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+    ) -> Result<GetIssueResponse, GitHubClientError> {
+        let url = format!(
+            "{}/repos/{owner}/{repo}/issues/{issue_number}",
+            self.rest_base_url
+        );
+
+        let response = self.client.get(&url).send().await?;
+
+        let issue: GetIssueResponse = response.error_for_status()?.json().await?;
 
         Ok(issue)
     }

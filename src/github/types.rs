@@ -13,6 +13,22 @@ pub struct CreateIssueResponse {
     pub html_url: String,
 }
 
+/// Response from getting an issue via REST API
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct GetIssueResponse {
+    /// Issue ID (`node_id` for GraphQL)
+    pub node_id: String,
+    /// Issue number
+    pub number: u64,
+    /// Issue title
+    pub title: String,
+    /// Issue body
+    pub body: Option<String>,
+    /// Issue URL
+    pub html_url: String,
+}
+
 /// Response from GraphQL query to get project info
 #[derive(Debug, Deserialize)]
 pub struct GraphQLResponse<T> {
