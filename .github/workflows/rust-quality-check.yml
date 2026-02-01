@@ -102,6 +102,8 @@ jobs:
     needs: [check, clippy, fmt, unit-test]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
