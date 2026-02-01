@@ -264,7 +264,7 @@ impl GitHubClient {
     ) -> Result<String, GitHubClientError> {
         let mutation = r"
             mutation($projectId: ID!, $contentId: ID!) {
-                addProjectV2ItemByContentId(input: {projectId: $projectId, contentId: $contentId}) {
+                addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
                     item {
                         id
                     }
