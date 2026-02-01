@@ -7,7 +7,8 @@ use serde_json::json;
 
 use super::types::{
     AddProjectItemData, CreateIssueRequest, CreateIssueResponse, GetIssueResponse, GraphQLResponse,
-    ProjectField, ProjectQueryData, ProjectV2, UpdateProjectItemFieldData,
+    IssueProjectItemsData, LinkedIssue, PrLinkedIssuesData, ProjectField, ProjectQueryData,
+    ProjectV2, UpdateProjectItemFieldData,
 };
 use crate::project_config::ProjectConfig;
 
@@ -372,6 +373,130 @@ impl GitHubClient {
         let result: GraphQLResponse<T> = response.error_for_status()?.json().await?;
 
         Ok(result)
+    }
+
+    /// Get linked issues for a pull request.
+    ///
+    /// Uses the `closingIssuesReferences` field to find issues that will be
+    /// closed when the PR is merged.
+    pub async fn get_pr_linked_issues(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+    ) -> Result<Vec<LinkedIssue>, GitHubClientError> {
+        let query = r"
+            query($owner: String!, $repo: String!, $prNumber: Int!) {
+                repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $prNumber) {
+                        id
+                        number
+                        title
+                        closingIssuesReferences(first: 50) {
+                            totalCount
+                            nodes {
+                                id
+                                number
+                                title
+                            }
+                        }
+                    }
+                }
+            }
+        ";
+
+        let variables = json!({
+            "owner": owner,
+            "repo": repo,
+            "prNumber": pr_number
+        });
+
+        let response: GraphQLResponse<PrLinkedIssuesData> =
+            self.graphql_query(query, variables).await?;
+
+        if let Some(errors) = response.errors {
+            if !errors.is_empty() {
+                return Err(GitHubClientError::GraphQLError(
+                    errors
+                        .into_iter()
+                        .map(|e| e.message)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+        }
+
+        if let Some(data) = response.data {
+            if let Some(repo_data) = data.repository {
+                if let Some(pr) = repo_data.pull_request {
+                    if let Some(closing_refs) = pr.closing_issues_references {
+                        return Ok(closing_refs.nodes);
+                    }
+                }
+            }
+        }
+
+        Ok(vec![])
+    }
+
+    /// Get the project item ID for an issue in a specific project.
+    ///
+    /// Returns the item ID if the issue is in the project, None otherwise.
+    pub async fn get_issue_project_item_id(
+        &self,
+        issue_node_id: &str,
+        project_number: u32,
+    ) -> Result<Option<String>, GitHubClientError> {
+        let query = r"
+            query($nodeId: ID!) {
+                node(id: $nodeId) {
+                    ... on Issue {
+                        projectItems(first: 20) {
+                            nodes {
+                                id
+                                project {
+                                    id
+                                    number
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ";
+
+        let variables = json!({
+            "nodeId": issue_node_id
+        });
+
+        let response: GraphQLResponse<IssueProjectItemsData> =
+            self.graphql_query(query, variables).await?;
+
+        if let Some(errors) = response.errors {
+            if !errors.is_empty() {
+                return Err(GitHubClientError::GraphQLError(
+                    errors
+                        .into_iter()
+                        .map(|e| e.message)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+        }
+
+        if let Some(data) = response.data {
+            if let Some(node) = data.node {
+                if let Some(project_items) = node.project_items {
+                    for item in project_items.nodes {
+                        if item.project.number == project_number {
+                            return Ok(Some(item.id));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Add an issue to a project and set field defaults from config.

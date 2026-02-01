@@ -192,3 +192,104 @@ pub struct CreateIssueRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignees: Option<Vec<String>>,
 }
+
+// =============================================================================
+// PR Linked Issues Types
+// =============================================================================
+
+/// Response data for PR linked issues query
+#[derive(Debug, Deserialize)]
+pub struct PrLinkedIssuesData {
+    /// Repository data
+    pub repository: Option<RepositoryPrData>,
+}
+
+/// Repository data containing pull request
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryPrData {
+    /// Pull request data
+    pub pull_request: Option<PullRequestData>,
+}
+
+/// Pull request data with closing issues references
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+pub struct PullRequestData {
+    /// PR node ID
+    pub id: String,
+    /// PR number
+    pub number: u64,
+    /// PR title
+    pub title: String,
+    /// Issues that will be closed when this PR is merged
+    pub closing_issues_references: Option<ClosingIssuesConnection>,
+}
+
+/// Connection for closing issues
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct ClosingIssuesConnection {
+    /// Total count of linked issues
+    #[serde(rename = "totalCount")]
+    pub total_count: u32,
+    /// Linked issue nodes
+    pub nodes: Vec<LinkedIssue>,
+}
+
+/// A linked issue from a PR
+#[derive(Debug, Deserialize)]
+pub struct LinkedIssue {
+    /// Issue node ID
+    pub id: String,
+    /// Issue number
+    pub number: u64,
+    /// Issue title
+    pub title: String,
+}
+
+// =============================================================================
+// Project Item Query Types
+// =============================================================================
+
+/// Response data for finding an issue's project items
+#[derive(Debug, Deserialize)]
+pub struct IssueProjectItemsData {
+    /// Node (issue) data
+    pub node: Option<IssueWithProjectItems>,
+}
+
+/// Issue with its project items
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueWithProjectItems {
+    /// Project items connection
+    pub project_items: Option<ProjectItemsConnection>,
+}
+
+/// Connection for project items
+#[derive(Debug, Deserialize)]
+pub struct ProjectItemsConnection {
+    /// Project item nodes
+    pub nodes: Vec<ProjectItemWithProject>,
+}
+
+/// Project item with its project info
+#[derive(Debug, Deserialize)]
+pub struct ProjectItemWithProject {
+    /// Project item ID
+    pub id: String,
+    /// The project this item belongs to
+    pub project: ProjectItemProject,
+}
+
+/// Project info from a project item
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct ProjectItemProject {
+    /// Project ID
+    pub id: String,
+    /// Project number
+    pub number: u32,
+}

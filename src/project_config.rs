@@ -21,6 +21,18 @@ pub struct ProjectConfig {
     /// Default field values to set when adding items to the project
     #[serde(default)]
     pub field_defaults: HashMap<String, String>,
+
+    /// PR event status configuration
+    #[serde(default)]
+    pub pr_status: Option<PrStatusConfig>,
+}
+
+/// PR event status configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PrStatusConfig {
+    /// Status to set when a PR is opened
+    #[serde(default)]
+    pub on_open: Option<String>,
 }
 
 /// Reference to a GitHub Project v2
@@ -85,6 +97,11 @@ impl ProjectConfig {
     pub fn get_field_default(&self, field_name: &str) -> Option<&String> {
         self.field_defaults.get(field_name)
     }
+
+    /// Get the status to set when a PR is opened.
+    pub fn get_pr_open_status(&self) -> Option<&String> {
+        self.pr_status.as_ref().and_then(|ps| ps.on_open.as_ref())
+    }
 }
 
 #[cfg(test)]
@@ -119,6 +136,36 @@ field_defaults:
     }
 
     #[test]
+    fn test_project_config_with_pr_status() {
+        let yaml = r#"
+default_project:
+  owner: "test-owner"
+  number: 1
+
+field_defaults:
+  Status: "Todo"
+
+pr_status:
+  on_open: "In Review"
+"#;
+
+        let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.get_pr_open_status(), Some(&"In Review".to_string()));
+    }
+
+    #[test]
+    fn test_project_config_without_pr_status() {
+        let yaml = r#"
+default_project:
+  owner: "test-owner"
+  number: 1
+"#;
+
+        let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.get_pr_open_status(), None);
+    }
+
+    #[test]
     fn test_project_config_empty_field_defaults() {
         let yaml = r#"
 default_project:
@@ -138,6 +185,7 @@ default_project:
                 number: 1,
             },
             field_defaults: HashMap::from([("Status".to_string(), "Todo".to_string())]),
+            pr_status: None,
         };
 
         let yaml = serde_yaml::to_string(&config).unwrap();

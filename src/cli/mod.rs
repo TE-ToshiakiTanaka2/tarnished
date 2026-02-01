@@ -1,10 +1,12 @@
 pub mod issue;
+pub mod pr;
 pub mod tag;
 
 use clap::{Parser, Subcommand};
 
 use crate::config::Config;
 use issue::IssueCommands;
+use pr::PrCommands;
 use tag::TagCommands;
 
 /// erd - GitHub Issue/Tag management CLI
@@ -41,6 +43,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: IssueCommands,
     },
+    /// Manage pull requests
+    Pr {
+        #[command(subcommand)]
+        command: PrCommands,
+    },
     /// Manage git tags
     Tag {
         #[command(subcommand)]
@@ -76,6 +83,14 @@ impl Cli {
                 }
                 command.execute(&config)
             }
+            Commands::Pr { command } => {
+                if command.needs_async() {
+                    anyhow::bail!(
+                        "This command requires async execution. Use execute_async instead."
+                    );
+                }
+                command.execute(&config)
+            }
             Commands::Tag { command } => command.execute(),
         }
     }
@@ -90,6 +105,7 @@ impl Cli {
 
         match &self.command {
             Commands::Issue { command } => command.execute_async(&config).await,
+            Commands::Pr { command } => command.execute_async(&config).await,
             Commands::Tag { command } => command.execute(),
         }
     }
@@ -99,6 +115,7 @@ impl Cli {
     pub fn needs_async(&self) -> bool {
         match &self.command {
             Commands::Issue { command } => command.needs_async(),
+            Commands::Pr { command } => command.needs_async(),
             Commands::Tag { .. } => false,
         }
     }
