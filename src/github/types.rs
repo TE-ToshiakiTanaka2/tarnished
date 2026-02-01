@@ -139,7 +139,7 @@ pub struct IterationField {
 #[serde(rename_all = "camelCase")]
 pub struct AddProjectItemData {
     /// Add item mutation response
-    pub add_project_v2_item_by_content_id: Option<AddProjectItemPayload>,
+    pub add_project_v2_item_by_id: Option<AddProjectItemPayload>,
 }
 
 /// Add project item payload

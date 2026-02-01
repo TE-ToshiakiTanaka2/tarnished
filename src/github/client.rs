@@ -293,7 +293,7 @@ impl GitHubClient {
         }
 
         if let Some(data) = response.data {
-            if let Some(payload) = data.add_project_v2_item_by_content_id {
+            if let Some(payload) = data.add_project_v2_item_by_id {
                 if let Some(item) = payload.item {
                     return Ok(item.id);
                 }
