@@ -102,14 +102,36 @@ jobs:
             echo "path=.github/project.yml" >> $GITHUB_OUTPUT
           fi
 
-      - name: Determine token
-        id: token
+      - name: Extract target status from config
+        id: status-info
         run: |
-          if [ "${{ github.event_name }}" = "workflow_call" ]; then
-            echo "value=${{ secrets.PROJECT_TOKEN }}" >> $GITHUB_OUTPUT
+          CONFIG_PATH="${{ steps.config.outputs.path }}"
+          if [ -f "$CONFIG_PATH" ]; then
+            # Extract pr_status.on_open from project.yml
+            STATUS=$(grep -A1 'pr_status:' "$CONFIG_PATH" | grep 'on_open:' | sed 's/.*on_open:\s*["'\'']\?\([^"'\''#]*\)["'\'']\?.*/\1/' | tr -d ' ')
+            if [ -z "$STATUS" ]; then
+              STATUS="In Review"
+            fi
+            echo "target=$STATUS" >> $GITHUB_OUTPUT
           else
-            echo "value=${{ secrets.PROJECT_TOKEN }}" >> $GITHUB_OUTPUT
+            echo "target=In Review" >> $GITHUB_OUTPUT
           fi
+
+      - name: Extract linked issues from PR
+        id: linked-issues
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
+          # Get PR body and extract issue references
+          PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body' 2>/dev/null || echo "")
+          # Extract issue numbers from Fixes #N, Closes #N, Resolves #N patterns
+          ISSUES=$(echo "$PR_BODY" | grep -oE '(Fixes|Closes|Resolves|Fix|Close|Resolve)\s*#[0-9]+' | grep -oE '#[0-9]+' | tr '\n' ', ' | sed 's/, $//')
+          if [ -z "$ISSUES" ]; then
+            ISSUES="none"
+          fi
+          echo "list=$ISSUES" >> $GITHUB_OUTPUT
 
       - name: Update linked issues status
         id: update-status
@@ -127,11 +149,27 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const prNumber = context.payload.pull_request.number;
+            const linkedIssues = '${{ steps.linked-issues.outputs.list }}' || 'none';
+            const targetStatus = '${{ steps.status-info.outputs.target }}';
+            const lines = [
+              '## 📋 Project Status Updated',
+              '',
+              '| Item | Value |',
+              '|------|-------|',
+              `| **PR** | #${prNumber} |`,
+              `| **Linked Issues** | ${linkedIssues} |`,
+              `| **New Status** | ${targetStatus} |`,
+              '',
+              'Linked issues have been updated.',
+              '',
+              `[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+            ];
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: `📋 **Project Status Updated**\n\nLinked issues have been automatically moved to "In Review" status in the project.\n\n[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+              issue_number: prNumber,
+              body: lines.join('\n')
             });
 
       - name: Comment on PR (failure)

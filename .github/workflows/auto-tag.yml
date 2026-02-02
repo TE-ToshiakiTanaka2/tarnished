@@ -141,6 +141,29 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
+      - name: Get previous tag
+        id: prev-tag
+        if: steps.branch.outputs.name != '' && steps.create-tag.outcome == 'success' && steps.create-tag.outputs.tag != ''
+        run: |
+          # Get the previous tag before the current one
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "none")
+          echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
+
+      - name: Determine tag type
+        id: tag-type
+        if: steps.branch.outputs.name != '' && steps.create-tag.outcome == 'success' && steps.create-tag.outputs.tag != ''
+        run: |
+          TAG_NAME="${{ steps.create-tag.outputs.tag }}"
+          if echo "$TAG_NAME" | grep -qE '\-rc\.[0-9]+$'; then
+            echo "type=rc" >> $GITHUB_OUTPUT
+          elif echo "$TAG_NAME" | grep -qE '\-beta\.[0-9]+$'; then
+            echo "type=beta" >> $GITHUB_OUTPUT
+          elif echo "$TAG_NAME" | grep -qE '\-alpha\.[0-9]+$'; then
+            echo "type=alpha" >> $GITHUB_OUTPUT
+          else
+            echo "type=release" >> $GITHUB_OUTPUT
+          fi
+
       - name: Find PR number from commit
         id: find-pr
         if: steps.branch.outputs.name != ''
@@ -164,12 +187,29 @@ jobs:
           script: |
             const prNumber = parseInt('${{ steps.find-pr.outputs.number }}');
             const tagName = '${{ steps.create-tag.outputs.tag }}';
+            const prevTag = '${{ steps.prev-tag.outputs.tag }}';
+            const tagType = '${{ steps.tag-type.outputs.type }}';
+            const branchName = '${{ steps.branch.outputs.name }}';
             if (prNumber && tagName) {
+              const lines = [
+                '## 🏷️ Auto Tag Created',
+                '',
+                '| Item | Value |',
+                '|------|-------|',
+                `| **Version** | \`${tagName}\` |`,
+                `| **Previous** | \`${prevTag}\` |`,
+                `| **Type** | ${tagType} |`,
+                `| **Branch** | \`${branchName}\` |`,
+                '',
+                'Tag created successfully!',
+                '',
+                `[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+              ];
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: `🏷️ **Auto Tag Created**\n\nTag \`${tagName}\` has been automatically created for this merge.\n\n[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+                body: lines.join('\n')
               });
             }
 
