@@ -9,11 +9,6 @@ on:
         description: "Issue number"
         required: true
         type: number
-      config-path:
-        description: "Path to project.yml config file"
-        required: false
-        default: ".github/project.yml"
-        type: string
       erd-version:
         description: "Version of erd to download (e.g., v1.0.0, latest)"
         required: false
@@ -93,21 +88,10 @@ jobs:
             echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Determine config path
-        id: config
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_call" ]; then
-            echo "path=${{ inputs.config-path }}" >> $GITHUB_OUTPUT
-          else
-            echo "path=.github/project.yml" >> $GITHUB_OUTPUT
-          fi
-
       - name: Link issue to project
         id: link
         run: |
-          ./target/release/erd issue link ${{ steps.issue.outputs.number }} \
-            --config "${{ steps.config.outputs.path }}" \
-            --verbose
+          ./target/release/erd --verbose issue link ${{ steps.issue.outputs.number }}
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ERD_REPO: ${{ github.repository }}
