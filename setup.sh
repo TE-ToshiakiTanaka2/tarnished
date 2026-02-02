@@ -470,14 +470,15 @@ execute_plugin_post_copies() {
         # Source plugin
         source "$plugin_path"
 
-        # Execute plugin_post_copy if it exists
-        if declare -f plugin_post_copy > /dev/null; then
-            plugin_post_copy "$target_dir"
-        fi
-
-        # Execute plugin_interactive_setup if it exists and we're in interactive mode
+        # Execute plugin_interactive_setup FIRST if it exists and we're in interactive mode
+        # This ensures variables are set before plugin_post_copy runs
         if declare -f plugin_interactive_setup > /dev/null && check_tty_available; then
             plugin_interactive_setup
+        fi
+
+        # Execute plugin_post_copy if it exists (after interactive setup)
+        if declare -f plugin_post_copy > /dev/null; then
+            plugin_post_copy "$target_dir"
         fi
     done
 
