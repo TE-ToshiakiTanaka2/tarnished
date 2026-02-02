@@ -82,6 +82,7 @@ get_project_fields() {
 # Get detailed project fields using GraphQL API
 # Returns complete field information including dataType, options, and iterations
 # Falls back to gh project field-list if GraphQL fails
+# shellcheck disable=SC2016  # Single quotes are intentional for GraphQL query
 get_project_fields_detailed() {
     local owner="$1"
     local number="$2"
@@ -257,7 +258,7 @@ prompt_select_fields_to_configure() {
         for idx in "${indices[@]}"; do
             idx=$(echo "$idx" | tr -d ' ')
             if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "$field_count" ]]; then
-                SELECTED_SINGLE_SELECT_FIELDS+=("$(echo "$fields_json" | jq -r ".[$(($idx-1))].name")")
+                SELECTED_SINGLE_SELECT_FIELDS+=("$(echo "$fields_json" | jq -r ".[$(( idx - 1 ))].name")")
             fi
         done
     fi
@@ -269,6 +270,7 @@ prompt_select_fields_to_configure() {
 prompt_single_select_field_value() {
     local field_name="$1"
     local options_json="$2"
+    # shellcheck disable=SC2016  # Single quotes intentional in default string
     local prompt_text="${3:-Select default value for '$field_name':}"
 
     local options_count
@@ -494,10 +496,15 @@ init_field_config_vars() {
     FIELD_DEFAULTS=()
 
     # Schedule-related configuration
+    # Note: Field name variables are stored for future use in advanced config schema
+    # (e.g., schedule_defaults.iteration.field: "Iteration")
+    # shellcheck disable=SC2034  # Reserved for future field name mapping feature
     ITERATION_FIELD_NAME=""
     ITERATION_CONFIG_VALUE=""
+    # shellcheck disable=SC2034  # Reserved for future field name mapping feature
     START_DATE_FIELD_NAME=""
     START_DATE_VALUE=""
+    # shellcheck disable=SC2034  # Reserved for future field name mapping feature
     END_DATE_FIELD_NAME=""
     END_DATE_VALUE=""
 
@@ -733,12 +740,14 @@ plugin_interactive_setup() {
 
                     # Configure Start date
                     if [[ -n "$start_field_name" ]]; then
+                        # shellcheck disable=SC2034  # Reserved for future field name mapping
                         START_DATE_FIELD_NAME="$start_field_name"
                         START_DATE_VALUE=$(prompt_date_field "$start_field_name" "false" "$has_iteration")
                     fi
 
                     # Configure End date
                     if [[ -n "$end_field_name" ]]; then
+                        # shellcheck disable=SC2034  # Reserved for future field name mapping
                         END_DATE_FIELD_NAME="$end_field_name"
                         END_DATE_VALUE=$(prompt_date_field "$end_field_name" "true" "$has_iteration")
                     fi
