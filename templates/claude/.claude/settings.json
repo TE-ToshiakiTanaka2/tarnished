@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "Bash(apt :*)",
+      "Bash(brew install :*)",
+      "Bash(chmod 777 :*)",
+      "Bash(gh repo delete:*)",
+      "Bash(git config :*)",
+      "Bash(rm -rf /*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/scripts/deny-check.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
