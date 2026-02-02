@@ -3,7 +3,7 @@
 # Template Plugin: github-actions/project-integration
 # This file is meant to be sourced by setup.sh, not executed directly.
 # =============================================================================
-# This plugin provides GitHub Project integration using erd CLI:
+# This plugin provides GitHub Project integration using gh CLI:
 # - Automatic issue linking to GitHub Projects
 # - PR status updates for linked issues
 # - Project configuration file generation
@@ -26,21 +26,21 @@ plugin_name() {
 
 # Return plugin description
 plugin_description() {
-    echo "GitHub Project integration workflows using erd CLI (reusable workflows)"
+    echo "GitHub Project integration workflows using gh CLI (reusable workflows)"
 }
 
 # =============================================================================
-# Helper Functions for erd Integration
+# Helper Functions for gh CLI Integration
 # =============================================================================
 
-# Check if erd command is available
-check_erd_available() {
-    command -v erd &> /dev/null
+# Check if gh CLI is available
+check_gh_available() {
+    command -v gh &> /dev/null
 }
 
 # Get repository in owner/repo format
 get_current_repo() {
-    if command -v gh &> /dev/null; then
+    if check_gh_available; then
         gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null
     else
         # Try to extract from git remote
@@ -53,20 +53,29 @@ get_current_repo() {
     fi
 }
 
-# Get projects linked to the repository using erd
-get_repo_projects() {
-    local repo="$1"
-    if check_erd_available && [[ -n "$repo" ]]; then
-        erd --repo "$repo" repo projects --json 2>/dev/null
+# Get current user's login
+get_current_user() {
+    if check_gh_available; then
+        gh api user --jq '.login' 2>/dev/null
     fi
 }
 
-# Get project details using erd
-get_project_details() {
+# Get projects for owner using gh CLI
+# Returns JSON: {"projects": [...]}
+get_owner_projects() {
+    local owner="$1"
+    if check_gh_available && [[ -n "$owner" ]]; then
+        gh project list --owner "$owner" --format json 2>/dev/null
+    fi
+}
+
+# Get project field details using gh CLI
+# Returns JSON: {"fields": [...]}
+get_project_fields() {
     local owner="$1"
     local number="$2"
-    if check_erd_available; then
-        erd project get --owner "$owner" --number "$number" --json 2>/dev/null
+    if check_gh_available && [[ -n "$owner" ]] && [[ -n "$number" ]]; then
+        gh project field-list "$number" --owner "$owner" --format json 2>/dev/null
     fi
 }
 
@@ -119,7 +128,7 @@ select_from_json_array() {
 # Interactive Setup Functions
 # =============================================================================
 
-# Prompt for GitHub Project configuration with erd integration
+# Prompt for GitHub Project configuration with gh CLI integration
 plugin_interactive_setup() {
     print_section "GitHub Project Integration Setup"
 
@@ -150,52 +159,58 @@ plugin_interactive_setup() {
     read -r ERD_REF < /dev/tty
     ERD_REF="${ERD_REF:-develop}"
 
-    # Try to detect linked projects using erd
-    local use_erd_detection=false
-    local repo_projects=""
-    local current_repo=""
+    # Try to detect projects using gh CLI
+    local use_gh_detection=false
+    local owner_projects=""
+    local current_user=""
 
-    if check_erd_available; then
-        print_info "Detected erd CLI, attempting to fetch linked projects..."
-        current_repo=$(get_current_repo)
+    if check_gh_available; then
+        print_info "Detected gh CLI, attempting to fetch projects..."
+        current_user=$(get_current_user)
 
-        if [[ -n "$current_repo" ]]; then
-            repo_projects=$(get_repo_projects "$current_repo")
-            if [[ -n "$repo_projects" ]] && [[ "$repo_projects" != "[]" ]]; then
-                use_erd_detection=true
-                print_success "Found linked projects for $current_repo"
+        if [[ -n "$current_user" ]]; then
+            owner_projects=$(get_owner_projects "$current_user")
+            if [[ -n "$owner_projects" ]]; then
+                local project_count
+                project_count=$(echo "$owner_projects" | jq '.projects | length')
+                if [[ "$project_count" -gt 0 ]]; then
+                    use_gh_detection=true
+                    print_success "Found $project_count projects for $current_user"
+                else
+                    print_warning "No projects found for $current_user"
+                fi
             else
-                print_warning "No linked projects found for $current_repo"
+                print_warning "Could not fetch projects for $current_user"
             fi
         else
-            print_warning "Could not determine current repository"
+            print_warning "Could not determine current user"
         fi
     else
-        print_info "erd CLI not found, using manual configuration"
+        print_info "gh CLI not found, using manual configuration"
     fi
 
-    # Project selection: erd auto-detection or manual input
-    if [[ "$use_erd_detection" == true ]]; then
+    # Project selection: gh auto-detection or manual input
+    if [[ "$use_gh_detection" == true ]]; then
         echo "" > /dev/tty
         local project_count
-        project_count=$(echo "$repo_projects" | jq 'length')
+        project_count=$(echo "$owner_projects" | jq '.projects | length')
 
         if [[ "$project_count" -eq 1 ]]; then
             # Single project: auto-select
-            PROJECT_OWNER=$(echo "$repo_projects" | jq -r '.[0].owner')
-            PROJECT_NUMBER=$(echo "$repo_projects" | jq -r '.[0].number')
+            PROJECT_OWNER=$(echo "$owner_projects" | jq -r '.projects[0].owner.login')
+            PROJECT_NUMBER=$(echo "$owner_projects" | jq -r '.projects[0].number')
             local project_title
-            project_title=$(echo "$repo_projects" | jq -r '.[0].title')
+            project_title=$(echo "$owner_projects" | jq -r '.projects[0].title')
             print_success "Auto-selected project: $project_title (#$PROJECT_NUMBER) @$PROJECT_OWNER"
         else
             # Multiple projects: let user choose
-            echo "Found $project_count linked projects:" > /dev/tty
+            echo "Found $project_count projects:" > /dev/tty
             local i
             for ((i=0; i<project_count; i++)); do
                 local title owner number
-                title=$(echo "$repo_projects" | jq -r ".[$i].title")
-                owner=$(echo "$repo_projects" | jq -r ".[$i].owner")
-                number=$(echo "$repo_projects" | jq -r ".[$i].number")
+                title=$(echo "$owner_projects" | jq -r ".projects[$i].title")
+                owner=$(echo "$owner_projects" | jq -r ".projects[$i].owner.login")
+                number=$(echo "$owner_projects" | jq -r ".projects[$i].number")
                 echo "  $((i+1))) $title (#$number) @$owner" > /dev/tty
             done
 
@@ -206,32 +221,32 @@ plugin_interactive_setup() {
 
             local idx=$((selection - 1))
             if [[ "$idx" -ge 0 ]] && [[ "$idx" -lt "$project_count" ]]; then
-                PROJECT_OWNER=$(echo "$repo_projects" | jq -r ".[$idx].owner")
-                PROJECT_NUMBER=$(echo "$repo_projects" | jq -r ".[$idx].number")
+                PROJECT_OWNER=$(echo "$owner_projects" | jq -r ".projects[$idx].owner.login")
+                PROJECT_NUMBER=$(echo "$owner_projects" | jq -r ".projects[$idx].number")
             else
-                PROJECT_OWNER=$(echo "$repo_projects" | jq -r '.[0].owner')
-                PROJECT_NUMBER=$(echo "$repo_projects" | jq -r '.[0].number')
+                PROJECT_OWNER=$(echo "$owner_projects" | jq -r '.projects[0].owner.login')
+                PROJECT_NUMBER=$(echo "$owner_projects" | jq -r '.projects[0].number')
             fi
         fi
 
         # Fetch project field details
         echo "" > /dev/tty
         print_info "Fetching project field information..."
-        local project_details
-        project_details=$(get_project_details "$PROJECT_OWNER" "$PROJECT_NUMBER")
+        local project_fields
+        project_fields=$(get_project_fields "$PROJECT_OWNER" "$PROJECT_NUMBER")
 
-        if [[ -n "$project_details" ]]; then
-            # Extract Status field options
+        if [[ -n "$project_fields" ]]; then
+            # Extract Status field options (gh CLI returns options as array of objects with name key)
             local status_options
-            status_options=$(echo "$project_details" | jq -r '.fields[] | select(.name == "Status") | .options // []')
+            status_options=$(echo "$project_fields" | jq -r '[.fields[] | select(.name == "Status") | .options[]?.name] // []')
 
             # Extract Size field options
             local size_options
-            size_options=$(echo "$project_details" | jq -r '.fields[] | select(.name == "Size") | .options // []')
+            size_options=$(echo "$project_fields" | jq -r '[.fields[] | select(.name == "Size") | .options[]?.name] // []')
 
             # Extract Priority field options
             local priority_options
-            priority_options=$(echo "$project_details" | jq -r '.fields[] | select(.name == "Priority") | .options // []')
+            priority_options=$(echo "$project_fields" | jq -r '[.fields[] | select(.name == "Priority") | .options[]?.name] // []')
 
             # Interactive field selection: Status
             if [[ -n "$status_options" ]] && [[ "$status_options" != "[]" ]] && [[ "$status_options" != "null" ]]; then

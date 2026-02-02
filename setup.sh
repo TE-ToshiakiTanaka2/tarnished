@@ -490,13 +490,14 @@ execute_plugin_post_copies() {
 
 prompt_language_selection() {
     if ! check_tty_available; then
-        print_warning "Non-interactive mode: using rust as default language"
-        SELECTED_LANGUAGES=("rust")
+        print_warning "Non-interactive mode: skipping language plugins"
+        SELECTED_LANGUAGES=()
         return
     fi
 
     echo ""
     print_info "Select language template:"
+    echo "  0. None (skip language plugins)" > /dev/tty
 
     local i=1
     for lang in "${AVAILABLE_LANGUAGES[@]}"; do
@@ -505,20 +506,23 @@ prompt_language_selection() {
         ((i++))
     done
 
-    echo -n "Enter selection [1]: " > /dev/tty
+    echo -n "Enter selection [0]: " > /dev/tty
     local response
     IFS='' read -r response < /dev/tty
 
     if [[ -z "$response" ]]; then
-        response=1
+        response=0
     fi
 
-    if [[ "$response" =~ ^[0-9]+$ ]] && [[ "$response" -ge 1 ]] && [[ "$response" -le ${#AVAILABLE_LANGUAGES[@]} ]]; then
+    if [[ "$response" == "0" ]]; then
+        SELECTED_LANGUAGES=()
+        print_success "Selected: None (skipping language plugins)"
+    elif [[ "$response" =~ ^[0-9]+$ ]] && [[ "$response" -ge 1 ]] && [[ "$response" -le ${#AVAILABLE_LANGUAGES[@]} ]]; then
         SELECTED_LANGUAGES=("${AVAILABLE_LANGUAGES[$((response-1))]}")
         print_success "Selected: ${SELECTED_LANGUAGES[*]}"
     else
-        print_warning "Invalid selection, using rust"
-        SELECTED_LANGUAGES=("rust")
+        print_warning "Invalid selection, skipping language plugins"
+        SELECTED_LANGUAGES=()
     fi
 }
 
@@ -638,6 +642,7 @@ main() {
 
         # Ask about auto-tag (independent from project-integration)
         if [[ "$AUTO_TAG_ENABLED" != true ]]; then
+            echo "" > /dev/tty
             echo -n "Enable auto-tag workflow? (y/n) [n]: " > /dev/tty
             local autotag_response
             read -r autotag_response < /dev/tty
