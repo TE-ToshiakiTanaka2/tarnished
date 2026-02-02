@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write(*.rs)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo fmt -- $CLAUDE_FILE_PATH && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.rs)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo fmt -- $CLAUDE_FILE_PATH && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
+          }
+        ]
+      }
+    ]
+  }
+}

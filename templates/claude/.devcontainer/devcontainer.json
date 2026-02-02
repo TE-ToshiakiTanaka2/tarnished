@@ -1,0 +1,17 @@
+{
+    "features": {
+        "ghcr.io/devcontainers-contrib/features/uv:latest": {}
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "files.exclude": {
+                    "**/.serena": true,
+                    "**/playwright-report": true,
+                    "**/playwright/.cache": true,
+                    "**/test-results": true
+                }
+            }
+        }
+    }
+}
