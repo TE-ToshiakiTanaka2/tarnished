@@ -4,6 +4,8 @@ pub mod project;
 pub mod repo;
 pub mod tag;
 
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::config::Config;
@@ -26,6 +28,10 @@ pub struct Cli {
     /// GitHub API token
     #[arg(short, long, global = true, env = "GITHUB_TOKEN")]
     pub token: Option<String>,
+
+    /// Path to project configuration file (default: .github/project.yml)
+    #[arg(short, long, global = true, env = "ERD_CONFIG")]
+    pub config: Option<PathBuf>,
 
     /// Enable verbose output
     #[arg(short, long, global = true, default_value = "false")]
@@ -75,6 +81,7 @@ impl Cli {
         Config::new(
             self.repo.clone(),
             self.token.clone(),
+            self.config.clone(),
             self.verbose,
             self.quiet,
         )
@@ -232,5 +239,34 @@ mod tests {
             Cli::try_parse_from(["erd", "project", "get", "--owner", "test", "--number", "1"])
                 .unwrap();
         assert!(matches!(cli.command, Commands::Project { .. }));
+    }
+
+    #[test]
+    fn test_cli_parse_with_config() {
+        let cli = Cli::try_parse_from(["erd", "--config", ".github/project.yml", "issue", "list"])
+            .unwrap();
+        assert_eq!(cli.config, Some(PathBuf::from(".github/project.yml")));
+    }
+
+    #[test]
+    fn test_cli_to_config_with_config_path() {
+        let cli = Cli::try_parse_from([
+            "erd",
+            "--config",
+            "custom/path.yml",
+            "--repo",
+            "owner/repo",
+            "pr",
+            "status",
+            "1",
+        ])
+        .unwrap();
+        let config = cli.to_config();
+
+        assert_eq!(config.repo, Some("owner/repo".to_string()));
+        assert_eq!(
+            config.project_config_path,
+            Some(PathBuf::from("custom/path.yml"))
+        );
     }
 }
