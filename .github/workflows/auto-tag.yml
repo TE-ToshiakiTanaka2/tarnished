@@ -3,6 +3,21 @@ name: Auto Tag
 on:
   push:
     branches: [develop, main]
+  workflow_call:
+    inputs:
+      config-path:
+        description: "Path to versioning.yml config file"
+        required: false
+        default: ".github/versioning.yml"
+        type: string
+      erd-version:
+        description: "Version of erd to download (e.g., v1.0.0, latest)"
+        required: false
+        default: "latest"
+        type: string
+    secrets:
+      GITHUB_TOKEN:
+        required: true
 
 permissions:
   contents: write
@@ -10,6 +25,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  ERD_REPO: TE-ToshiakiTanaka2/tarnished
 
 jobs:
   auto-tag:
@@ -62,12 +78,13 @@ jobs:
           echo "Final detected branch: $BRANCH"
           echo "name=$BRANCH" >> $GITHUB_OUTPUT
 
-      - name: Setup Rust
-        if: steps.branch.outputs.name != ''
+      # === Local invocation: Build erd from source ===
+      - name: Setup Rust (local)
+        if: github.event_name == 'push' && steps.branch.outputs.name != ''
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
-        if: steps.branch.outputs.name != ''
+      - name: Cache cargo registry (local)
+        if: github.event_name == 'push' && steps.branch.outputs.name != ''
         uses: actions/cache@v4
         with:
           path: |
@@ -79,10 +96,33 @@ jobs:
             ${{ runner.os }}-cargo-release-
             ${{ runner.os }}-cargo-
 
-      - name: Build erd
-        if: steps.branch.outputs.name != ''
+      - name: Build erd (local)
+        if: github.event_name == 'push' && steps.branch.outputs.name != ''
         run: cargo build --release
 
+      # === External invocation: Download erd from Releases ===
+      - name: Download erd (external)
+        if: github.event_name == 'workflow_call' && steps.branch.outputs.name != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ inputs.erd-version }}"
+
+          if [ "$VERSION" = "latest" ]; then
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/latest/download/erd-linux-x86_64"
+          else
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/download/${VERSION}/erd-linux-x86_64"
+          fi
+
+          echo "Downloading erd from: $DOWNLOAD_URL"
+          mkdir -p target/release
+          curl -fsSL -o target/release/erd "$DOWNLOAD_URL"
+          chmod +x target/release/erd
+
+          echo "erd version:"
+          ./target/release/erd --version || echo "Version check failed (binary may not support --version)"
+
+      # === Common steps ===
       - name: Configure git
         if: steps.branch.outputs.name != ''
         run: |
@@ -92,8 +132,8 @@ jobs:
       - name: Create and push tag
         if: steps.branch.outputs.name != ''
         run: |
-          # Config file is at .github/versioning.yml
-          ./target/release/erd tag auto --branch "${{ steps.branch.outputs.name }}"
+          CONFIG_PATH="${{ inputs.config-path || '.github/versioning.yml' }}"
+          ./target/release/erd tag auto --branch "${{ steps.branch.outputs.name }}" --config "$CONFIG_PATH"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
