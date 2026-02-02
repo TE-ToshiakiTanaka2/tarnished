@@ -33,5 +33,4 @@ jobs:
     uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/auto-tag.yml@__ERD_REF__
     with:
       config-path: ".github/versioning.yml"
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    secrets: inherit
