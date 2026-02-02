@@ -8,6 +8,53 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// Schedule-related field defaults for GitHub Projects v2.
+///
+/// This section configures automatic values for Iteration and Date fields
+/// when adding items to a project.
+///
+/// # Example
+///
+/// ```yaml
+/// schedule_defaults:
+///   iteration: "current"    # "current", "next", or iteration name
+///   start: "today"          # ISO date or relative ("today", "+7d")
+///   end: "+14d"             # ISO date or relative
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ScheduleDefaults {
+    /// Default iteration value.
+    ///
+    /// Supports:
+    /// - `"current"` - The iteration containing today's date
+    /// - `"next"` - The first iteration after the current one
+    /// - Iteration name (e.g., `"Sprint 5"`) - Exact match
+    #[serde(default)]
+    pub iteration: Option<String>,
+
+    /// Default start date value.
+    ///
+    /// Supports:
+    /// - ISO 8601 date (e.g., `"2024-01-15"`)
+    /// - `"today"` - Current date
+    /// - Relative format (e.g., `"+7d"` for 7 days, `"+2w"` for 2 weeks)
+    ///
+    /// If not specified and iteration is set, will use the iteration's start date.
+    #[serde(default)]
+    pub start: Option<String>,
+
+    /// Default end date value.
+    ///
+    /// Supports:
+    /// - ISO 8601 date (e.g., `"2024-01-30"`)
+    /// - `"today"` - Current date
+    /// - Relative format (e.g., `"+14d"` for 14 days, `"+2w"` for 2 weeks)
+    ///
+    /// If not specified and iteration is set, will use the iteration's end date.
+    #[serde(default)]
+    pub end: Option<String>,
+}
+
 /// Project configuration loaded from a YAML file.
 ///
 /// Configuration file locations (in priority order):
@@ -21,6 +68,10 @@ pub struct ProjectConfig {
     /// Default field values to set when adding items to the project
     #[serde(default)]
     pub field_defaults: HashMap<String, String>,
+
+    /// Schedule-related field defaults (Iteration, Start, End)
+    #[serde(default)]
+    pub schedule_defaults: Option<ScheduleDefaults>,
 
     /// PR event status configuration
     #[serde(default)]
@@ -119,6 +170,12 @@ impl ProjectConfig {
     pub fn get_pr_open_status(&self) -> Option<&String> {
         self.pr_status.as_ref().and_then(|ps| ps.on_open.as_ref())
     }
+
+    /// Get the schedule defaults, if configured.
+    #[allow(dead_code)]
+    pub const fn get_schedule_defaults(&self) -> Option<&ScheduleDefaults> {
+        self.schedule_defaults.as_ref()
+    }
 }
 
 #[cfg(test)]
@@ -202,6 +259,7 @@ default_project:
                 number: 1,
             },
             field_defaults: HashMap::from([("Status".to_string(), "Todo".to_string())]),
+            schedule_defaults: None,
             pr_status: None,
         };
 
@@ -209,6 +267,44 @@ default_project:
         assert!(yaml.contains("owner: test-owner"));
         assert!(yaml.contains("number: 1"));
         assert!(yaml.contains("Status: Todo"));
+    }
+
+    #[test]
+    fn test_project_config_with_schedule_defaults() {
+        let yaml = r#"
+default_project:
+  owner: "test-owner"
+  number: 1
+
+schedule_defaults:
+  iteration: "current"
+  start: "today"
+  end: "+14d"
+"#;
+
+        let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+        let schedule = config.get_schedule_defaults().unwrap();
+        assert_eq!(schedule.iteration, Some("current".to_string()));
+        assert_eq!(schedule.start, Some("today".to_string()));
+        assert_eq!(schedule.end, Some("+14d".to_string()));
+    }
+
+    #[test]
+    fn test_project_config_with_partial_schedule_defaults() {
+        let yaml = r#"
+default_project:
+  owner: "test-owner"
+  number: 1
+
+schedule_defaults:
+  iteration: "Sprint 5"
+"#;
+
+        let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+        let schedule = config.get_schedule_defaults().unwrap();
+        assert_eq!(schedule.iteration, Some("Sprint 5".to_string()));
+        assert_eq!(schedule.start, None);
+        assert_eq!(schedule.end, None);
     }
 
     #[test]

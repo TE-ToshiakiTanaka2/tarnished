@@ -88,10 +88,9 @@ pub struct ProjectFieldConnection {
     pub nodes: Vec<ProjectField>,
 }
 
-/// Project field (can be single select, iteration, etc.)
+/// Project field (can be single select, iteration, date, etc.)
 #[derive(Debug, Deserialize)]
 #[serde(tag = "__typename")]
-#[allow(dead_code)]
 pub enum ProjectField {
     /// Single select field (Status, Size, Priority, etc.)
     #[serde(rename = "ProjectV2SingleSelectField")]
@@ -99,9 +98,25 @@ pub enum ProjectField {
     /// Iteration field
     #[serde(rename = "ProjectV2IterationField")]
     Iteration(IterationField),
+    /// Standard field (includes Date fields)
+    #[serde(rename = "ProjectV2Field")]
+    Field(StandardField),
     /// Other field types we don't need to handle specially
     #[serde(other)]
     Other,
+}
+
+/// Standard project field (used for Date, Number, Text, etc.)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+pub struct StandardField {
+    /// Field node ID
+    pub id: String,
+    /// Field name
+    pub name: String,
+    /// Data type (DATE, NUMBER, TEXT, etc.)
+    pub data_type: Option<String>,
 }
 
 /// Single select field definition
@@ -124,7 +139,7 @@ pub struct SingleSelectOption {
     pub name: String,
 }
 
-/// Iteration field definition
+/// Iteration field definition with configuration
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct IterationField {
@@ -132,6 +147,73 @@ pub struct IterationField {
     pub id: String,
     /// Field name
     pub name: String,
+    /// Iteration configuration (includes available iterations)
+    pub configuration: Option<IterationConfiguration>,
+}
+
+/// Iteration field configuration
+#[derive(Debug, Clone, Deserialize)]
+pub struct IterationConfiguration {
+    /// List of available iterations
+    pub iterations: Vec<Iteration>,
+}
+
+/// A single iteration in a project
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Iteration {
+    /// Iteration ID (used for mutations)
+    pub id: String,
+    /// Iteration title (e.g., "Sprint 5")
+    pub title: String,
+    /// Start date in ISO 8601 format (YYYY-MM-DD)
+    pub start_date: String,
+    /// Duration in days
+    pub duration: u32,
+}
+
+#[allow(dead_code)]
+impl Iteration {
+    /// Calculate the end date of this iteration.
+    ///
+    /// Returns the end date in ISO 8601 format (YYYY-MM-DD).
+    pub fn end_date(&self) -> Option<String> {
+        use chrono::{Days, NaiveDate};
+        let start = NaiveDate::parse_from_str(&self.start_date, "%Y-%m-%d").ok()?;
+        let end = start.checked_add_days(Days::new(u64::from(self.duration) - 1))?;
+        Some(end.format("%Y-%m-%d").to_string())
+    }
+
+    /// Check if this iteration contains the given date.
+    pub fn contains_date(&self, date: &str) -> bool {
+        use chrono::NaiveDate;
+        let Some(start) = NaiveDate::parse_from_str(&self.start_date, "%Y-%m-%d").ok() else {
+            return false;
+        };
+        let Some(check_date) = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok() else {
+            return false;
+        };
+        let Some(end_str) = self.end_date() else {
+            return false;
+        };
+        let Some(end) = NaiveDate::parse_from_str(&end_str, "%Y-%m-%d").ok() else {
+            return false;
+        };
+        check_date >= start && check_date <= end
+    }
+}
+
+/// Date field definition (standard field with DATE dataType)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+pub struct DateField {
+    /// Field node ID
+    pub id: String,
+    /// Field name
+    pub name: String,
+    /// Data type (should be "DATE")
+    pub data_type: String,
 }
 
 /// Response from adding an item to a project
@@ -374,4 +456,61 @@ pub struct FieldDetails {
     /// Options (for `SingleSelect` fields)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<String>>,
+    /// Iterations (for `Iteration` fields)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<Vec<String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_iteration(id: &str, title: &str, start: &str, duration: u32) -> Iteration {
+        Iteration {
+            id: id.to_string(),
+            title: title.to_string(),
+            start_date: start.to_string(),
+            duration,
+        }
+    }
+
+    #[test]
+    fn test_iteration_end_date() {
+        let iteration = make_iteration("1", "Sprint 1", "2024-01-01", 14);
+        assert_eq!(iteration.end_date(), Some("2024-01-14".to_string()));
+    }
+
+    #[test]
+    fn test_iteration_end_date_single_day() {
+        let iteration = make_iteration("1", "Sprint 1", "2024-01-01", 1);
+        assert_eq!(iteration.end_date(), Some("2024-01-01".to_string()));
+    }
+
+    #[test]
+    fn test_iteration_contains_date() {
+        let iteration = make_iteration("1", "Sprint 1", "2024-01-01", 14);
+
+        // Start date
+        assert!(iteration.contains_date("2024-01-01"));
+        // Middle date
+        assert!(iteration.contains_date("2024-01-07"));
+        // End date
+        assert!(iteration.contains_date("2024-01-14"));
+        // Before start
+        assert!(!iteration.contains_date("2023-12-31"));
+        // After end
+        assert!(!iteration.contains_date("2024-01-15"));
+    }
+
+    #[test]
+    fn test_iteration_contains_date_invalid() {
+        let iteration = make_iteration("1", "Sprint 1", "2024-01-01", 14);
+        assert!(!iteration.contains_date("invalid"));
+    }
+
+    #[test]
+    fn test_iteration_end_date_invalid_start() {
+        let iteration = make_iteration("1", "Sprint 1", "invalid", 14);
+        assert_eq!(iteration.end_date(), None);
+    }
 }

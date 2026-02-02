@@ -413,7 +413,12 @@ impl IssueCommands {
 
         // Add issue to project with defaults
         let item_id = client
-            .add_issue_to_project_with_defaults(&project, issue_node_id, &project_config)
+            .add_issue_to_project_with_defaults(
+                &project,
+                issue_node_id,
+                &project_config,
+                config.verbose,
+            )
             .await?;
 
         println!(

@@ -80,12 +80,28 @@ impl ProjectCommands {
                             name: sf.name.clone(),
                             field_type: "SingleSelect".to_string(),
                             options: Some(sf.options.iter().map(|o| o.name.clone()).collect()),
+                            iterations: None,
                         }),
-                        ProjectField::Iteration(it) => Some(FieldDetails {
-                            name: it.name.clone(),
-                            field_type: "Iteration".to_string(),
-                            options: None,
-                        }),
+                        ProjectField::Iteration(it) => {
+                            let iterations = it.configuration.as_ref().map(|cfg| {
+                                cfg.iterations.iter().map(|i| i.title.clone()).collect()
+                            });
+                            Some(FieldDetails {
+                                name: it.name.clone(),
+                                field_type: "Iteration".to_string(),
+                                options: None,
+                                iterations,
+                            })
+                        }
+                        ProjectField::Field(f) => {
+                            let data_type = f.data_type.as_deref().unwrap_or("Unknown");
+                            Some(FieldDetails {
+                                name: f.name.clone(),
+                                field_type: data_type.to_string(),
+                                options: None,
+                                iterations: None,
+                            })
+                        }
                         ProjectField::Other => None,
                     })
                     .collect()
