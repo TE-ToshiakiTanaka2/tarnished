@@ -75,10 +75,8 @@ plugin_interactive_setup() {
 plugin_copy() {
     local target_dir="$1"
 
-    # Skip if not enabled
-    if [[ "${ENABLE_AUTO_TAG:-n}" != "y" ]]; then
-        return 0
-    fi
+    # Note: This plugin is only loaded when AUTO_TAG_ENABLED=true in setup.sh
+    # So we don't need to check ENABLE_AUTO_TAG here - if this function runs, it's enabled
 
     print_info "Copying auto-tag workflow..."
 
@@ -116,15 +114,8 @@ plugin_copy() {
 plugin_post_copy() {
     local target_dir="$1"
 
-    # Skip if not enabled
-    if [[ "${ENABLE_AUTO_TAG:-n}" != "y" ]]; then
-        return 0
-    fi
-
-    # Run interactive setup if not already done
-    if [[ -z "${ENABLE_AUTO_TAG:-}" ]]; then
-        plugin_interactive_setup
-    fi
+    # Note: This plugin is only loaded when AUTO_TAG_ENABLED=true in setup.sh
+    # So we don't need to check ENABLE_AUTO_TAG here - if this function runs, it's enabled
 
     # Create .github/versioning.yml
     local versioning_config="${target_dir}/.github/versioning.yml"
