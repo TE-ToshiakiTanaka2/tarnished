@@ -360,16 +360,17 @@ impl IssueCommands {
         status_override: Option<&str>,
     ) -> anyhow::Result<()> {
         // Load project config
-        let mut project_config = match ProjectConfig::load() {
-            Ok(c) => c,
-            Err(e) => {
-                if config.verbose {
-                    eprintln!("Warning: Could not load project config: {e}");
-                    eprintln!("Skipping project linking.");
+        let mut project_config =
+            match ProjectConfig::load_with_path(config.project_config_path.as_ref()) {
+                Ok(c) => c,
+                Err(e) => {
+                    if config.verbose {
+                        eprintln!("Warning: Could not load project config: {e}");
+                        eprintln!("Skipping project linking.");
+                    }
+                    return Ok(());
                 }
-                return Ok(());
-            }
-        };
+            };
 
         // Apply CLI overrides
         if let Some(owner) = project_owner_override {

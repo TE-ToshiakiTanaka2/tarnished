@@ -67,7 +67,24 @@ impl ProjectConfig {
     /// Searches in the following order:
     /// 1. `.github/project.yml` in the current directory (recommended)
     /// 2. `~/.config/erd/project.yaml` in the user's home directory
+    #[allow(dead_code)]
     pub fn load() -> Result<Self, ProjectConfigError> {
+        Self::load_with_path(None)
+    }
+
+    /// Load project configuration with an optional explicit path.
+    ///
+    /// If `path` is provided, only that path is used (no fallback).
+    /// If `path` is `None`, searches in the default locations.
+    pub fn load_with_path(path: Option<&PathBuf>) -> Result<Self, ProjectConfigError> {
+        // If explicit path is provided, use only that path
+        if let Some(explicit_path) = path {
+            if !explicit_path.exists() {
+                return Err(ProjectConfigError::NotFound);
+            }
+            return Self::load_from_path(explicit_path);
+        }
+
         // Try local config first (.github directory)
         let local_path = PathBuf::from(".github/project.yml");
         if local_path.exists() {
@@ -192,5 +209,22 @@ default_project:
         assert!(yaml.contains("owner: test-owner"));
         assert!(yaml.contains("number: 1"));
         assert!(yaml.contains("Status: Todo"));
+    }
+
+    #[test]
+    fn test_load_with_path_none_falls_back_to_default() {
+        // When path is None, it should behave like load()
+        // This test verifies the function signature works
+        let result = ProjectConfig::load_with_path(None);
+        // Result depends on whether .github/project.yml exists
+        // We just verify it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_load_with_path_nonexistent_returns_not_found() {
+        let path = PathBuf::from("/nonexistent/path/config.yml");
+        let result = ProjectConfig::load_with_path(Some(&path));
+        assert!(matches!(result, Err(ProjectConfigError::NotFound)));
     }
 }

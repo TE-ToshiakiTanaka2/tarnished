@@ -92,17 +92,18 @@ impl PrCommands {
         let client = GitHubClient::new(token)?;
 
         // Load project config
-        let project_config = match ProjectConfig::load() {
-            Ok(c) => c,
-            Err(e) => {
-                if config.verbose {
-                    eprintln!("Warning: Could not load project config: {e}");
-                }
-                return Err(anyhow::anyhow!(
-                    "Project configuration required. Create .github/project.yml"
+        let project_config =
+            match ProjectConfig::load_with_path(config.project_config_path.as_ref()) {
+                Ok(c) => c,
+                Err(e) => {
+                    if config.verbose {
+                        eprintln!("Warning: Could not load project config: {e}");
+                    }
+                    return Err(anyhow::anyhow!(
+                    "Project configuration required. Create .github/project.yml or specify --config"
                 ));
-            }
-        };
+                }
+            };
 
         // Determine project settings
         let project_owner = project_owner_override.map_or_else(
