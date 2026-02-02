@@ -32,7 +32,7 @@ on:
 
 jobs:
   call-project-integration:
-    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/project-integration.yml@__ERD_VERSION__
+    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/project-integration.yml@__ERD_REF__
     with:
       issue-number: ${{ github.event.issue.number }}
       config-path: ".github/project.yml"

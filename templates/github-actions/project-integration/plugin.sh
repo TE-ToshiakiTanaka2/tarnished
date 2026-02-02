@@ -51,18 +51,18 @@ plugin_interactive_setup() {
         PROJECT_NUMBER="1"
         DEFAULT_STATUS="Backlog"
         PR_OPEN_STATUS="In Review"
-        ERD_VERSION="main"
+        ERD_REF="develop"
         ENABLE_AUTO_TAG="n"
         return 0
     fi
 
-    # Get erd version/tag to use
-    echo "Which version of erd workflows should be used?" > /dev/tty
-    echo "  - Use 'main' for latest stable version" > /dev/tty
+    # Get erd branch/tag to use
+    echo "Which branch/tag of erd workflows should be used?" > /dev/tty
+    echo "  - Use 'develop' for latest version (recommended)" > /dev/tty
     echo "  - Use a specific tag (e.g., v1.0.0) for pinned version" > /dev/tty
-    echo -n "Enter erd workflow version [main]: " > /dev/tty
-    read -r ERD_VERSION < /dev/tty
-    ERD_VERSION="${ERD_VERSION:-main}"
+    echo -n "Enter erd workflow ref [develop]: " > /dev/tty
+    read -r ERD_REF < /dev/tty
+    ERD_REF="${ERD_REF:-develop}"
 
     # Get project owner
     local default_owner=""
@@ -144,9 +144,9 @@ plugin_copy() {
                     fi
                 fi
 
-                # Replace __ERD_VERSION__ placeholder with actual version
-                sed "s/__ERD_VERSION__/${ERD_VERSION:-main}/g" "$workflow" > "$target_file"
-                print_success "Created $workflow_name (using @${ERD_VERSION:-main})"
+                # Replace __ERD_REF__ placeholder with actual ref
+                sed "s/__ERD_REF__/${ERD_REF:-develop}/g" "$workflow" > "$target_file"
+                print_success "Created $workflow_name (using @${ERD_REF:-develop})"
             fi
         done
     fi
@@ -235,6 +235,6 @@ EOF
     echo "  Name: PROJECT_TOKEN"
     echo "  Value: Your GitHub Personal Access Token with 'repo' and 'project' scopes"
     echo ""
-    echo "Workflows are configured to use erd @${ERD_VERSION:-main}"
+    echo "Workflows are configured to use erd @${ERD_REF:-develop}"
     echo ""
 }

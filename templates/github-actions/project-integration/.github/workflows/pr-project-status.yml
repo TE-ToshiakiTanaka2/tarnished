@@ -30,7 +30,7 @@ on:
 
 jobs:
   call-pr-project-status:
-    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/pr-project-status.yml@__ERD_VERSION__
+    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/pr-project-status.yml@__ERD_REF__
     with:
       pr-number: ${{ github.event.pull_request.number }}
       config-path: ".github/project.yml"

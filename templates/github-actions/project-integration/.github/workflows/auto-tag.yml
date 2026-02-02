@@ -30,7 +30,7 @@ on:
 
 jobs:
   call-auto-tag:
-    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/auto-tag.yml@__ERD_VERSION__
+    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/auto-tag.yml@__ERD_REF__
     with:
       config-path: ".github/versioning.yml"
     secrets:
