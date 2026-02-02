@@ -3,6 +3,25 @@ name: PR Project Status
 on:
   pull_request:
     types: [opened, reopened]
+  workflow_call:
+    inputs:
+      pr-number:
+        description: "Pull request number"
+        required: true
+        type: number
+      config-path:
+        description: "Path to project.yml config file"
+        required: false
+        default: ".github/project.yml"
+        type: string
+      erd-version:
+        description: "Version of erd to download (e.g., v1.0.0, latest)"
+        required: false
+        default: "latest"
+        type: string
+    secrets:
+      PROJECT_TOKEN:
+        required: true
 
 permissions:
   contents: read
@@ -10,6 +29,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  ERD_REPO: TE-ToshiakiTanaka2/tarnished
 
 jobs:
   update-status:
@@ -19,10 +39,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Rust
+      # === Local invocation: Build erd from source ===
+      - name: Setup Rust (local)
+        if: github.event_name == 'pull_request'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
+      - name: Cache cargo registry (local)
+        if: github.event_name == 'pull_request'
         uses: actions/cache@v4
         with:
           path: |
@@ -34,13 +57,66 @@ jobs:
             ${{ runner.os }}-cargo-release-
             ${{ runner.os }}-cargo-
 
-      - name: Build erd
+      - name: Build erd (local)
+        if: github.event_name == 'pull_request'
         run: cargo build --release
+
+      # === External invocation: Download erd from Releases ===
+      - name: Download erd (external)
+        if: github.event_name == 'workflow_call'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          VERSION="${{ inputs.erd-version }}"
+
+          if [ "$VERSION" = "latest" ]; then
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/latest/download/erd-linux-x86_64"
+          else
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/download/${VERSION}/erd-linux-x86_64"
+          fi
+
+          echo "Downloading erd from: $DOWNLOAD_URL"
+          mkdir -p target/release
+          curl -fsSL -o target/release/erd "$DOWNLOAD_URL"
+          chmod +x target/release/erd
+
+          echo "erd version:"
+          ./target/release/erd --version || echo "Version check failed (binary may not support --version)"
+
+      # === Common steps ===
+      - name: Determine PR number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_call" ]; then
+            echo "number=${{ inputs.pr-number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine config path
+        id: config
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_call" ]; then
+            echo "path=${{ inputs.config-path }}" >> $GITHUB_OUTPUT
+          else
+            echo "path=.github/project.yml" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine token
+        id: token
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_call" ]; then
+            echo "value=${{ secrets.PROJECT_TOKEN }}" >> $GITHUB_OUTPUT
+          else
+            echo "value=${{ secrets.PROJECT_TOKEN }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Update linked issues status
         id: update-status
         run: |
-          ./target/release/erd pr status ${{ github.event.pull_request.number }} --verbose
+          ./target/release/erd pr status ${{ steps.pr.outputs.number }} \
+            --config "${{ steps.config.outputs.path }}" \
+            --verbose
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ERD_REPO: ${{ github.repository }}

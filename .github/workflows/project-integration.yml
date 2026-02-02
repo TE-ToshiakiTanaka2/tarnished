@@ -3,6 +3,25 @@ name: Project Integration
 on:
   issues:
     types: [opened, reopened]
+  workflow_call:
+    inputs:
+      issue-number:
+        description: "Issue number"
+        required: true
+        type: number
+      config-path:
+        description: "Path to project.yml config file"
+        required: false
+        default: ".github/project.yml"
+        type: string
+      erd-version:
+        description: "Version of erd to download (e.g., v1.0.0, latest)"
+        required: false
+        default: "latest"
+        type: string
+    secrets:
+      PROJECT_TOKEN:
+        required: true
 
 permissions:
   contents: read
@@ -10,6 +29,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  ERD_REPO: TE-ToshiakiTanaka2/tarnished
 
 jobs:
   add-to-project:
@@ -19,10 +39,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Rust
+      # === Local invocation: Build erd from source ===
+      - name: Setup Rust (local)
+        if: github.event_name == 'issues'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
+      - name: Cache cargo registry (local)
+        if: github.event_name == 'issues'
         uses: actions/cache@v4
         with:
           path: |
@@ -34,20 +57,64 @@ jobs:
             ${{ runner.os }}-cargo-release-
             ${{ runner.os }}-cargo-
 
-      - name: Build erd
+      - name: Build erd (local)
+        if: github.event_name == 'issues'
         run: cargo build --release
+
+      # === External invocation: Download erd from Releases ===
+      - name: Download erd (external)
+        if: github.event_name == 'workflow_call'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          VERSION="${{ inputs.erd-version }}"
+
+          if [ "$VERSION" = "latest" ]; then
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/latest/download/erd-linux-x86_64"
+          else
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/download/${VERSION}/erd-linux-x86_64"
+          fi
+
+          echo "Downloading erd from: $DOWNLOAD_URL"
+          mkdir -p target/release
+          curl -fsSL -o target/release/erd "$DOWNLOAD_URL"
+          chmod +x target/release/erd
+
+          echo "erd version:"
+          ./target/release/erd --version || echo "Version check failed (binary may not support --version)"
+
+      # === Common steps ===
+      - name: Determine issue number
+        id: issue
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_call" ]; then
+            echo "number=${{ inputs.issue-number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine config path
+        id: config
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_call" ]; then
+            echo "path=${{ inputs.config-path }}" >> $GITHUB_OUTPUT
+          else
+            echo "path=.github/project.yml" >> $GITHUB_OUTPUT
+          fi
 
       - name: Link issue to project
         id: link
         run: |
-          ./target/release/erd issue link ${{ github.event.issue.number }} --verbose
+          ./target/release/erd issue link ${{ steps.issue.outputs.number }} \
+            --config "${{ steps.config.outputs.path }}" \
+            --verbose
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ERD_REPO: ${{ github.repository }}
         continue-on-error: true
 
       - name: Comment on failure
-        if: steps.link.outcome == 'failure'
+        if: steps.link.outcome == 'failure' && github.event_name == 'issues'
         uses: actions/github-script@v7
         with:
           script: |
@@ -57,6 +124,11 @@ jobs:
               issue_number: context.issue.number,
               body: `⚠️ **Project Integration Failed**\n\nFailed to automatically link this issue to the project. This may be due to:\n- Missing \`PROJECT_TOKEN\` secret\n- Invalid project configuration in \`.github/project.yml\`\n- GitHub API errors\n\nPlease link the issue to the project manually or check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`
             });
+
+      - name: Log failure (external)
+        if: steps.link.outcome == 'failure' && github.event_name == 'workflow_call'
+        run: |
+          echo "::error::Failed to link issue to project. Check PROJECT_TOKEN secret and project.yml configuration."
 
       - name: Fail job if link failed
         if: steps.link.outcome == 'failure'
