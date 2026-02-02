@@ -293,3 +293,85 @@ pub struct ProjectItemProject {
     /// Project number
     pub number: u32,
 }
+
+// =============================================================================
+// Repository Projects Types
+// =============================================================================
+
+/// Response data for repository linked projects query
+#[derive(Debug, Deserialize)]
+pub struct RepositoryProjectsData {
+    /// Repository data
+    pub repository: Option<RepositoryWithProjects>,
+}
+
+/// Repository with linked projects
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryWithProjects {
+    /// Projects V2 connection
+    pub projects_v2: Option<ProjectsV2Connection>,
+}
+
+/// Projects V2 connection
+#[derive(Debug, Deserialize)]
+pub struct ProjectsV2Connection {
+    /// Project nodes
+    pub nodes: Vec<ProjectV2Summary>,
+}
+
+/// Project V2 summary (for listing)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProjectV2Summary {
+    /// Project node ID
+    pub id: String,
+    /// Project number
+    pub number: u32,
+    /// Project title
+    pub title: String,
+    /// Project URL
+    pub url: String,
+    /// Whether the project is closed
+    pub closed: bool,
+    /// Project owner
+    pub owner: ProjectOwner,
+}
+
+/// Project owner (can be User or Organization)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProjectOwner {
+    /// Owner login name
+    pub login: String,
+}
+
+// =============================================================================
+// Project Details Types (for JSON output)
+// =============================================================================
+
+/// Project details for JSON output
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectDetails {
+    /// Project node ID
+    pub id: String,
+    /// Project number
+    pub number: u32,
+    /// Project title
+    pub title: String,
+    /// Project owner
+    pub owner: String,
+    /// Project fields
+    pub fields: Vec<FieldDetails>,
+}
+
+/// Field details for JSON output
+#[derive(Debug, Clone, Serialize)]
+pub struct FieldDetails {
+    /// Field name
+    pub name: String,
+    /// Field type
+    #[serde(rename = "type")]
+    pub field_type: String,
+    /// Options (for `SingleSelect` fields)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<String>>,
+}

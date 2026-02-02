@@ -542,6 +542,63 @@ impl GitHubClient {
 
         Ok(item_id)
     }
+
+    /// Get projects linked to a repository.
+    pub async fn get_repository_projects(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<super::types::ProjectV2Summary>, GitHubClientError> {
+        let query = r"
+            query($owner: String!, $repo: String!) {
+                repository(owner: $owner, name: $repo) {
+                    projectsV2(first: 20) {
+                        nodes {
+                            id
+                            number
+                            title
+                            url
+                            closed
+                            owner {
+                                ... on User { login }
+                                ... on Organization { login }
+                            }
+                        }
+                    }
+                }
+            }
+        ";
+
+        let variables = json!({
+            "owner": owner,
+            "repo": repo
+        });
+
+        let response: GraphQLResponse<super::types::RepositoryProjectsData> =
+            self.graphql_query(query, variables).await?;
+
+        if let Some(errors) = response.errors {
+            if !errors.is_empty() {
+                return Err(GitHubClientError::GraphQLError(
+                    errors
+                        .into_iter()
+                        .map(|e| e.message)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+        }
+
+        if let Some(data) = response.data {
+            if let Some(repo_data) = data.repository {
+                if let Some(projects) = repo_data.projects_v2 {
+                    return Ok(projects.nodes);
+                }
+            }
+        }
+
+        Ok(vec![])
+    }
 }
 
 #[cfg(test)]

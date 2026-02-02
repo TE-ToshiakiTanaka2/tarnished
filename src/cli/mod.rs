@@ -1,5 +1,7 @@
 pub mod issue;
 pub mod pr;
+pub mod project;
+pub mod repo;
 pub mod tag;
 
 use clap::{Parser, Subcommand};
@@ -7,6 +9,8 @@ use clap::{Parser, Subcommand};
 use crate::config::Config;
 use issue::IssueCommands;
 use pr::PrCommands;
+use project::ProjectCommands;
+use repo::RepoCommands;
 use tag::TagCommands;
 
 /// erd - GitHub Issue/Tag management CLI
@@ -47,6 +51,16 @@ pub enum Commands {
     Pr {
         #[command(subcommand)]
         command: PrCommands,
+    },
+    /// Manage GitHub Projects
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommands,
+    },
+    /// Repository operations
+    Repo {
+        #[command(subcommand)]
+        command: RepoCommands,
     },
     /// Manage git tags
     Tag {
@@ -91,6 +105,22 @@ impl Cli {
                 }
                 command.execute(&config)
             }
+            Commands::Project { command } => {
+                if command.needs_async() {
+                    anyhow::bail!(
+                        "This command requires async execution. Use execute_async instead."
+                    );
+                }
+                command.execute(&config)
+            }
+            Commands::Repo { command } => {
+                if command.needs_async() {
+                    anyhow::bail!(
+                        "This command requires async execution. Use execute_async instead."
+                    );
+                }
+                command.execute(&config)
+            }
             Commands::Tag { command } => command.execute(),
         }
     }
@@ -106,6 +136,8 @@ impl Cli {
         match &self.command {
             Commands::Issue { command } => command.execute_async(&config).await,
             Commands::Pr { command } => command.execute_async(&config).await,
+            Commands::Project { command } => command.execute_async(&config).await,
+            Commands::Repo { command } => command.execute_async(&config).await,
             Commands::Tag { command } => command.execute(),
         }
     }
@@ -116,6 +148,8 @@ impl Cli {
         match &self.command {
             Commands::Issue { command } => command.needs_async(),
             Commands::Pr { command } => command.needs_async(),
+            Commands::Project { command } => command.needs_async(),
+            Commands::Repo { command } => command.needs_async(),
             Commands::Tag { .. } => false,
         }
     }
@@ -184,5 +218,19 @@ mod tests {
     fn test_cli_parse_invalid_command() {
         let result = Cli::try_parse_from(["erd", "invalid"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_parse_repo_projects() {
+        let cli = Cli::try_parse_from(["erd", "repo", "projects"]).unwrap();
+        assert!(matches!(cli.command, Commands::Repo { .. }));
+    }
+
+    #[test]
+    fn test_cli_parse_project_get() {
+        let cli =
+            Cli::try_parse_from(["erd", "project", "get", "--owner", "test", "--number", "1"])
+                .unwrap();
+        assert!(matches!(cli.command, Commands::Project { .. }));
     }
 }
