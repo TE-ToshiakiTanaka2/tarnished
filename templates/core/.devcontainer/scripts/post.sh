@@ -77,6 +77,21 @@ setup_sudo_path
 # -----------------------------------------------------------------------------
 echo "Setting up Git configuration..."
 
+# Ensure .gitconfig includes .gitconfig.local
+setup_git_include() {
+    local include_path
+    include_path=$(git config --global --get include.path 2>/dev/null || echo "")
+
+    if [ "$include_path" != ".gitconfig.local" ]; then
+        git config --global include.path ".gitconfig.local"
+        echo "  - Configured git to include .gitconfig.local"
+    else
+        echo "  - Git already configured to include .gitconfig.local"
+    fi
+}
+
+setup_git_include
+
 setup_gitconfig_local() {
     if [ -f "$HOME/.gitconfig.local" ]; then
         echo "  - .gitconfig.local already exists, skipping"
@@ -138,6 +153,39 @@ echo "Setting up SSH configuration..."
 
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
+
+# Ensure ~/.ssh/config includes host_config
+setup_ssh_include() {
+    local ssh_config="$HOME/.ssh/config"
+
+    if [ ! -f "$ssh_config" ]; then
+        # Create minimal SSH config with include directive
+        cat > "$ssh_config" << 'EOF'
+# Include host-specific configuration
+Include host_config
+EOF
+        chmod 600 "$ssh_config"
+        echo "  - Created SSH config with host_config include"
+    elif ! grep -q "^Include host_config" "$ssh_config" 2>/dev/null; then
+        # Add include directive at the beginning of existing config
+        # (SSH Include must be at the top to work correctly)
+        local temp_config
+        temp_config=$(mktemp)
+        {
+            echo "# Include host-specific configuration"
+            echo "Include host_config"
+            echo ""
+            cat "$ssh_config"
+        } > "$temp_config"
+        mv "$temp_config" "$ssh_config"
+        chmod 600 "$ssh_config"
+        echo "  - Added host_config include to existing SSH config"
+    else
+        echo "  - SSH config already includes host_config"
+    fi
+}
+
+setup_ssh_include
 
 setup_ssh_host_config() {
     if [ -f "$HOME/.ssh/host_config" ]; then
