@@ -181,10 +181,10 @@ check_gh_auth() {
         return 1
     fi
 
-    if ! gh auth status &>/dev/null; then
+    if ! gh auth status </dev/null &>/dev/null; then
         print_warning "GitHub CLI is not authenticated"
         print_info "Starting authentication flow..."
-        if ! gh auth login; then
+        if ! gh auth login </dev/tty; then
             print_error "GitHub authentication failed"
             return 1
         fi
@@ -228,7 +228,7 @@ setup_develop_branch() {
 set_default_branch() {
     print_info "Setting develop as default branch on GitHub..."
 
-    if gh repo edit --default-branch develop 2>/dev/null; then
+    if gh repo edit --default-branch develop </dev/null 2>/dev/null; then
         print_success "Default branch set to develop"
     else
         print_warning "Could not set default branch (insufficient permissions or not a GitHub repo)"
@@ -259,7 +259,7 @@ setup_github_labels() {
     for label_def in "${labels[@]}"; do
         IFS='|' read -r name color description <<< "$label_def"
 
-        if gh label create "$name" --color "$color" --description "$description" 2>/dev/null; then
+        if gh label create "$name" --color "$color" --description "$description" </dev/null 2>/dev/null; then
             print_success "  Created label: $name"
             ((created++))
         else
