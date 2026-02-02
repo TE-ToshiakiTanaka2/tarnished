@@ -30,6 +30,10 @@ on:
   issues:
     types: [opened, reopened]
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   call-project-integration:
     uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/project-integration.yml@__ERD_REF__
