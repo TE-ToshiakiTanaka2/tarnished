@@ -12,6 +12,7 @@
 
 mod cli;
 mod config;
+pub mod date_parser;
 mod error;
 mod git_ops;
 mod github;

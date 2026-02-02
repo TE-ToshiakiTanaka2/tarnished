@@ -7,6 +7,12 @@ field_defaults:
   Size: "M"
   Priority: "P1"
 
+# Schedule-related field defaults
+schedule_defaults:
+  iteration: "current"  # "current", "next", or iteration name (e.g., "Iteration 13")
+  start: "today"        # ISO date or relative ("today", "+7d", "+2w")
+  end: "+14d"           # ISO date or relative
+
 # PR event status configuration
 pr_status:
   on_open: "In review"  # Status when PR is opened/reopened

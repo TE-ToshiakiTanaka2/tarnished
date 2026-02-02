@@ -7,8 +7,8 @@ use serde_json::json;
 
 use super::types::{
     AddProjectItemData, CreateIssueRequest, CreateIssueResponse, GetIssueResponse, GraphQLResponse,
-    IssueProjectItemsData, LinkedIssue, PrLinkedIssuesData, ProjectField, ProjectQueryData,
-    ProjectV2, UpdateProjectItemFieldData,
+    IssueProjectItemsData, Iteration, LinkedIssue, PrLinkedIssuesData, ProjectField,
+    ProjectQueryData, ProjectV2, StandardField, UpdateProjectItemFieldData,
 };
 use crate::project_config::ProjectConfig;
 
@@ -49,6 +49,10 @@ pub enum GitHubClientError {
     #[error("Option '{option}' not found for field '{field}'")]
     OptionNotFound { field: String, option: String },
 
+    /// Iteration not found
+    #[error("Iteration '{iteration}' not found in field '{field}'")]
+    IterationNotFound { field: String, iteration: String },
+
     /// Failed to add item to project
     #[error("Failed to add item to project")]
     AddItemFailed,
@@ -56,6 +60,10 @@ pub enum GitHubClientError {
     /// Failed to update field
     #[error("Failed to update field '{field}'")]
     UpdateFieldFailed { field: String },
+
+    /// Date parse error
+    #[error("Failed to parse date: {0}")]
+    DateParseError(String),
 }
 
 impl GitHubClient {
@@ -154,6 +162,19 @@ impl GitHubClient {
                                 ... on ProjectV2IterationField {
                                     id
                                     name
+                                    configuration {
+                                        iterations {
+                                            id
+                                            title
+                                            startDate
+                                            duration
+                                        }
+                                    }
+                                }
+                                ... on ProjectV2Field {
+                                    id
+                                    name
+                                    dataType
                                 }
                             }
                         }
@@ -215,6 +236,19 @@ impl GitHubClient {
                                 ... on ProjectV2IterationField {
                                     id
                                     name
+                                    configuration {
+                                        iterations {
+                                            id
+                                            title
+                                            startDate
+                                            duration
+                                        }
+                                    }
+                                }
+                                ... on ProjectV2Field {
+                                    id
+                                    name
+                                    dataType
                                 }
                             }
                         }
@@ -350,6 +384,167 @@ impl GitHubClient {
         }
 
         Ok(())
+    }
+
+    /// Update an iteration field on a project item.
+    pub async fn update_project_item_iteration(
+        &self,
+        project_id: &str,
+        item_id: &str,
+        field_id: &str,
+        iteration_id: &str,
+    ) -> Result<(), GitHubClientError> {
+        let mutation = r"
+            mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId,
+                    itemId: $itemId,
+                    fieldId: $fieldId,
+                    value: { iterationId: $iterationId }
+                }) {
+                    projectV2Item {
+                        id
+                    }
+                }
+            }
+        ";
+
+        let variables = json!({
+            "projectId": project_id,
+            "itemId": item_id,
+            "fieldId": field_id,
+            "iterationId": iteration_id
+        });
+
+        let response: GraphQLResponse<UpdateProjectItemFieldData> =
+            self.graphql_query(mutation, variables).await?;
+
+        if let Some(errors) = response.errors {
+            if !errors.is_empty() {
+                return Err(GitHubClientError::GraphQLError(
+                    errors
+                        .into_iter()
+                        .map(|e| e.message)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Update a date field on a project item.
+    pub async fn update_project_item_date(
+        &self,
+        project_id: &str,
+        item_id: &str,
+        field_id: &str,
+        date: &str,
+    ) -> Result<(), GitHubClientError> {
+        let mutation = r"
+            mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $date: Date!) {
+                updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId,
+                    itemId: $itemId,
+                    fieldId: $fieldId,
+                    value: { date: $date }
+                }) {
+                    projectV2Item {
+                        id
+                    }
+                }
+            }
+        ";
+
+        let variables = json!({
+            "projectId": project_id,
+            "itemId": item_id,
+            "fieldId": field_id,
+            "date": date
+        });
+
+        let response: GraphQLResponse<UpdateProjectItemFieldData> =
+            self.graphql_query(mutation, variables).await?;
+
+        if let Some(errors) = response.errors {
+            if !errors.is_empty() {
+                return Err(GitHubClientError::GraphQLError(
+                    errors
+                        .into_iter()
+                        .map(|e| e.message)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Find an iteration by name or resolve "current"/"next".
+    ///
+    /// Returns the iteration if found, None otherwise.
+    pub fn resolve_iteration(iterations: &[Iteration], value: &str) -> Option<Iteration> {
+        let value_lower = value.to_lowercase();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+        match value_lower.as_str() {
+            "current" => {
+                // Find iteration containing today's date
+                iterations.iter().find(|i| i.contains_date(&today)).cloned()
+            }
+            "next" => {
+                // Find first iteration after current
+                let current_idx = iterations.iter().position(|i| i.contains_date(&today));
+
+                match current_idx {
+                    Some(idx) if idx + 1 < iterations.len() => Some(iterations[idx + 1].clone()),
+                    None => {
+                        // No current iteration, find first future iteration
+                        iterations.iter().find(|i| i.start_date > today).cloned()
+                    }
+                    _ => None,
+                }
+            }
+            _ => {
+                // Find by exact name match (case-insensitive)
+                iterations
+                    .iter()
+                    .find(|i| i.title.to_lowercase() == value_lower)
+                    .cloned()
+            }
+        }
+    }
+
+    /// Find a date field by name in the project fields.
+    pub fn find_date_field<'a>(
+        fields: &'a [ProjectField],
+        name: &str,
+    ) -> Option<&'a StandardField> {
+        let name_lower = name.to_lowercase();
+        fields.iter().find_map(|f| match f {
+            ProjectField::Field(sf)
+                if sf.name.to_lowercase() == name_lower
+                    && sf.data_type.as_deref() == Some("DATE") =>
+            {
+                Some(sf)
+            }
+            _ => None,
+        })
+    }
+
+    /// Find an iteration field by name in the project fields.
+    #[allow(dead_code)]
+    pub fn find_iteration_field<'a>(
+        fields: &'a [ProjectField],
+        name: &str,
+    ) -> Option<&'a super::types::IterationField> {
+        let name_lower = name.to_lowercase();
+        fields.iter().find_map(|f| match f {
+            ProjectField::Iteration(it) if it.name.to_lowercase() == name_lower => Some(it),
+            _ => None,
+        })
     }
 
     /// Execute a GraphQL query.
@@ -500,47 +695,201 @@ impl GitHubClient {
     }
 
     /// Add an issue to a project and set field defaults from config.
+    ///
+    /// This method:
+    /// 1. Adds the issue to the project
+    /// 2. Sets single-select field defaults (Status, Size, Priority, etc.)
+    /// 3. Sets schedule defaults (Iteration, Start, End) if configured
+    #[allow(clippy::too_many_lines)]
     pub async fn add_issue_to_project_with_defaults(
         &self,
         project: &ProjectV2,
         issue_node_id: &str,
         config: &ProjectConfig,
+        verbose: bool,
     ) -> Result<String, GitHubClientError> {
         // Add issue to project
         let item_id = self
             .add_issue_to_project(&project.id, issue_node_id)
             .await?;
 
-        // Set field defaults
-        if let Some(fields) = &project.fields {
-            for (field_name, default_value) in &config.field_defaults {
-                // Find the field
-                let field = fields.nodes.iter().find(|f| match f {
-                    ProjectField::SingleSelect(sf) => sf.name == *field_name,
-                    _ => false,
+        let Some(fields) = &project.fields else {
+            return Ok(item_id);
+        };
+
+        // Set single-select field defaults
+        for (field_name, default_value) in &config.field_defaults {
+            let field = fields.nodes.iter().find(|f| match f {
+                ProjectField::SingleSelect(sf) => sf.name == *field_name,
+                _ => false,
+            });
+
+            if let Some(ProjectField::SingleSelect(single_select)) = field {
+                let option = single_select
+                    .options
+                    .iter()
+                    .find(|o| o.name == *default_value);
+
+                if let Some(opt) = option {
+                    self.update_project_item_field(
+                        &project.id,
+                        &item_id,
+                        &single_select.id,
+                        &opt.id,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        // Set schedule defaults if configured
+        if let Some(schedule) = &config.schedule_defaults {
+            // Track resolved iteration for date derivation
+            let mut resolved_iteration: Option<Iteration> = None;
+
+            // Handle Iteration field
+            if let Some(iteration_value) = &schedule.iteration {
+                // Find the first Iteration field in the project
+                let iteration_field = fields.nodes.iter().find_map(|f| match f {
+                    ProjectField::Iteration(it) => Some(it),
+                    _ => None,
                 });
 
-                if let Some(ProjectField::SingleSelect(single_select)) = field {
-                    // Find the option
-                    let option = single_select
-                        .options
-                        .iter()
-                        .find(|o| o.name == *default_value);
-
-                    if let Some(opt) = option {
-                        self.update_project_item_field(
-                            &project.id,
-                            &item_id,
-                            &single_select.id,
-                            &opt.id,
-                        )
-                        .await?;
+                if let Some(it_field) = iteration_field {
+                    if let Some(config) = &it_field.configuration {
+                        if let Some(iteration) =
+                            Self::resolve_iteration(&config.iterations, iteration_value)
+                        {
+                            if verbose {
+                                eprintln!(
+                                    "  Setting Iteration to '{}' ({})",
+                                    iteration.title, iteration.id
+                                );
+                            }
+                            self.update_project_item_iteration(
+                                &project.id,
+                                &item_id,
+                                &it_field.id,
+                                &iteration.id,
+                            )
+                            .await?;
+                            resolved_iteration = Some(iteration);
+                        } else if verbose {
+                            eprintln!(
+                                "  Warning: Iteration '{}' not found in field '{}'",
+                                iteration_value, it_field.name
+                            );
+                        }
                     }
+                }
+            }
+
+            // Handle Start date field
+            if let Some(start_value) = &schedule.start {
+                self.set_date_field(
+                    &project.id,
+                    &item_id,
+                    &fields.nodes,
+                    "Start",
+                    start_value,
+                    resolved_iteration.as_ref().map(|i| i.start_date.as_str()),
+                    verbose,
+                )
+                .await?;
+            } else if let Some(ref iteration) = resolved_iteration {
+                // Derive from iteration if no explicit start
+                self.set_date_field(
+                    &project.id,
+                    &item_id,
+                    &fields.nodes,
+                    "Start",
+                    &iteration.start_date,
+                    None,
+                    verbose,
+                )
+                .await?;
+            }
+
+            // Handle End date field
+            if let Some(end_value) = &schedule.end {
+                self.set_date_field(
+                    &project.id,
+                    &item_id,
+                    &fields.nodes,
+                    "End",
+                    end_value,
+                    resolved_iteration
+                        .as_ref()
+                        .and_then(Iteration::end_date)
+                        .as_deref(),
+                    verbose,
+                )
+                .await?;
+            } else if let Some(ref iteration) = resolved_iteration {
+                // Derive from iteration if no explicit end
+                if let Some(end_date) = iteration.end_date() {
+                    self.set_date_field(
+                        &project.id,
+                        &item_id,
+                        &fields.nodes,
+                        "End",
+                        &end_date,
+                        None,
+                        verbose,
+                    )
+                    .await?;
                 }
             }
         }
 
         Ok(item_id)
+    }
+
+    /// Helper to set a date field with flexible field name matching.
+    ///
+    /// Tries to find a DATE field with the given name (case-insensitive).
+    /// If not found, tries common alternatives (e.g., "Start" -> "Start date").
+    #[allow(clippy::too_many_arguments)]
+    async fn set_date_field(
+        &self,
+        project_id: &str,
+        item_id: &str,
+        fields: &[ProjectField],
+        field_name: &str,
+        value: &str,
+        _fallback: Option<&str>,
+        verbose: bool,
+    ) -> Result<(), GitHubClientError> {
+        use crate::date_parser::parse_date_expression;
+
+        // Try to find the field with exact name or common alternatives
+        let field_names = [
+            field_name.to_string(),
+            format!("{field_name} date"),
+            format!("{field_name}_date"),
+        ];
+
+        let date_field = field_names
+            .iter()
+            .find_map(|name| Self::find_date_field(fields, name));
+
+        let Some(date_field) = date_field else {
+            if verbose {
+                eprintln!("  Note: No DATE field matching '{field_name}' found");
+            }
+            return Ok(());
+        };
+
+        // Parse the date expression
+        let date = parse_date_expression(value)
+            .map_err(|e| GitHubClientError::DateParseError(e.to_string()))?;
+
+        if verbose {
+            eprintln!("  Setting {} to '{}'", date_field.name, date);
+        }
+
+        self.update_project_item_date(project_id, item_id, &date_field.id, &date)
+            .await
     }
 
     /// Get projects linked to a repository.
@@ -622,5 +971,88 @@ mod tests {
         // milestone and assignees should not be present
         assert!(!json.contains("milestone"));
         assert!(!json.contains("assignees"));
+    }
+
+    fn make_iteration(id: &str, title: &str, start: &str, duration: u32) -> Iteration {
+        Iteration {
+            id: id.to_string(),
+            title: title.to_string(),
+            start_date: start.to_string(),
+            duration,
+        }
+    }
+
+    #[test]
+    fn test_resolve_iteration_by_name() {
+        let iterations = vec![
+            make_iteration("1", "Sprint 1", "2024-01-01", 14),
+            make_iteration("2", "Sprint 2", "2024-01-15", 14),
+            make_iteration("3", "Sprint 3", "2024-01-29", 14),
+        ];
+
+        let result = GitHubClient::resolve_iteration(&iterations, "Sprint 2");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "2");
+    }
+
+    #[test]
+    fn test_resolve_iteration_by_name_case_insensitive() {
+        let iterations = vec![make_iteration("1", "Sprint 1", "2024-01-01", 14)];
+
+        let result = GitHubClient::resolve_iteration(&iterations, "sprint 1");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "1");
+    }
+
+    #[test]
+    fn test_resolve_iteration_not_found() {
+        let iterations = vec![make_iteration("1", "Sprint 1", "2024-01-01", 14)];
+
+        let result = GitHubClient::resolve_iteration(&iterations, "Sprint 99");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_date_field() {
+        let fields = vec![
+            ProjectField::Field(StandardField {
+                id: "f1".to_string(),
+                name: "Start".to_string(),
+                data_type: Some("DATE".to_string()),
+            }),
+            ProjectField::Field(StandardField {
+                id: "f2".to_string(),
+                name: "End".to_string(),
+                data_type: Some("DATE".to_string()),
+            }),
+            ProjectField::Field(StandardField {
+                id: "f3".to_string(),
+                name: "Title".to_string(),
+                data_type: Some("TITLE".to_string()),
+            }),
+        ];
+
+        let result = GitHubClient::find_date_field(&fields, "Start");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "f1");
+
+        let result = GitHubClient::find_date_field(&fields, "end");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "f2");
+
+        let result = GitHubClient::find_date_field(&fields, "Title");
+        assert!(result.is_none()); // Not a DATE field
+    }
+
+    #[test]
+    fn test_find_date_field_not_found() {
+        let fields = vec![ProjectField::Field(StandardField {
+            id: "f1".to_string(),
+            name: "Start".to_string(),
+            data_type: Some("DATE".to_string()),
+        })];
+
+        let result = GitHubClient::find_date_field(&fields, "Due Date");
+        assert!(result.is_none());
     }
 }
