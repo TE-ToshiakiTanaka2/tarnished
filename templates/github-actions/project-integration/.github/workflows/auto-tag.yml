@@ -1,0 +1,37 @@
+# =============================================================================
+# Auto Tag Workflow (Caller)
+# =============================================================================
+# Calls the reusable workflow from TE-ToshiakiTanaka2/tarnished to automatically
+# create semantic version tags when commits are merged to develop or main.
+#
+# Prerequisites:
+#   1. Create .github/versioning.yml with your version configuration:
+#      ```yaml
+#      branches:
+#        - prefix: "major/"
+#          bump: major
+#        - prefix: "release/"
+#          bump: minor
+#        - prefix: "feature/"
+#          bump: patch
+#        - prefix: "fix/"
+#          bump: patch
+#      default_bump: rc
+#      ```
+#
+# For more information about erd: https://github.com/TE-ToshiakiTanaka2/tarnished
+# =============================================================================
+
+name: Auto Tag
+
+on:
+  push:
+    branches: [develop, main]
+
+jobs:
+  call-auto-tag:
+    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/auto-tag.yml@__ERD_VERSION__
+    with:
+      config-path: ".github/versioning.yml"
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

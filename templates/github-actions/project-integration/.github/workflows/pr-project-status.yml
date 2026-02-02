@@ -1,7 +1,8 @@
 # =============================================================================
-# PR Project Status Workflow
+# PR Project Status Workflow (Caller)
 # =============================================================================
-# Automatically updates linked Issue status in GitHub Projects when PR is opened.
+# Calls the reusable workflow from TE-ToshiakiTanaka2/tarnished to automatically
+# update linked Issue status in GitHub Projects when PR is opened.
 #
 # Prerequisites:
 #   1. Create a GitHub Personal Access Token (classic) with these scopes:
@@ -27,59 +28,11 @@ on:
   pull_request:
     types: [opened, reopened]
 
-permissions:
-  contents: read
-  pull-requests: read
-
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  update-status:
-    name: Update Project Status
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout erd repository
-        uses: actions/checkout@v4
-        with:
-          repository: TE-ToshiakiTanaka2/tarnished
-          ref: develop
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-erd-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-erd-
-            ${{ runner.os }}-cargo-
-
-      - name: Build erd
-        run: cargo build --release
-
-      - name: Checkout target repository for config
-        uses: actions/checkout@v4
-        with:
-          path: target-repo
-
-      - name: Update linked issues status
-        id: update-status
-        run: |
-          ./target/release/erd pr status ${{ github.event.pull_request.number }} \
-            --config target-repo/.github/project.yml \
-            --verbose
-        env:
-          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          ERD_REPO: ${{ github.repository }}
-        continue-on-error: true
-
-      - name: Log result
-        if: steps.update-status.outcome == 'failure'
-        run: |
-          echo "::warning::Failed to update project status for linked issues. This may be due to missing PROJECT_TOKEN secret or no linked issues."
+  call-pr-project-status:
+    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/pr-project-status.yml@__ERD_VERSION__
+    with:
+      pr-number: ${{ github.event.pull_request.number }}
+      config-path: ".github/project.yml"
+    secrets:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}

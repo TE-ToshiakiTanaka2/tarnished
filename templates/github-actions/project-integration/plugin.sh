@@ -6,8 +6,11 @@
 # This plugin provides GitHub Project integration using erd CLI:
 # - Automatic issue linking to GitHub Projects
 # - PR status updates for linked issues
+# - Auto-tagging based on branch naming conventions
 # - Project configuration file generation
 #
+# Workflows are implemented as caller workflows that invoke reusable workflows
+# from the TE-ToshiakiTanaka2/tarnished repository.
 # =============================================================================
 
 # Get the directory where this plugin is located
@@ -24,7 +27,7 @@ plugin_name() {
 
 # Return plugin description
 plugin_description() {
-    echo "GitHub Project integration workflows using erd CLI"
+    echo "GitHub Project integration workflows using erd CLI (reusable workflows)"
 }
 
 # =============================================================================
@@ -36,6 +39,8 @@ plugin_interactive_setup() {
     print_section "GitHub Project Integration Setup"
 
     echo "This will configure GitHub Project integration for your repository."
+    echo "Workflows will call reusable workflows from TE-ToshiakiTanaka2/tarnished."
+    echo ""
     echo "You need a GitHub Personal Access Token with 'repo' and 'project' scopes."
     echo ""
 
@@ -46,8 +51,18 @@ plugin_interactive_setup() {
         PROJECT_NUMBER="1"
         DEFAULT_STATUS="Backlog"
         PR_OPEN_STATUS="In Review"
+        ERD_VERSION="main"
+        ENABLE_AUTO_TAG="n"
         return 0
     fi
+
+    # Get erd version/tag to use
+    echo "Which version of erd workflows should be used?" > /dev/tty
+    echo "  - Use 'main' for latest stable version" > /dev/tty
+    echo "  - Use a specific tag (e.g., v1.0.0) for pinned version" > /dev/tty
+    echo -n "Enter erd workflow version [main]: " > /dev/tty
+    read -r ERD_VERSION < /dev/tty
+    ERD_VERSION="${ERD_VERSION:-main}"
 
     # Get project owner
     local default_owner=""
@@ -78,6 +93,12 @@ plugin_interactive_setup() {
     read -r PR_OPEN_STATUS < /dev/tty
     PR_OPEN_STATUS="${PR_OPEN_STATUS:-In Review}"
 
+    # Ask about auto-tag
+    echo "" > /dev/tty
+    echo -n "Enable auto-tagging workflow? (y/n) [n]: " > /dev/tty
+    read -r ENABLE_AUTO_TAG < /dev/tty
+    ENABLE_AUTO_TAG="${ENABLE_AUTO_TAG:-n}"
+
     echo ""
     print_success "Project configuration collected"
 }
@@ -95,13 +116,37 @@ plugin_copy() {
     # Create .github/workflows directory
     mkdir -p "${target_dir}/.github/workflows"
 
-    # Copy workflow files
+    # Copy workflow files with version replacement
     if [[ -d "${PLUGIN_DIR}/.github/workflows" ]]; then
         for workflow in "${PLUGIN_DIR}/.github/workflows"/*.yml; do
             if [[ -f "$workflow" ]]; then
                 local workflow_name
                 workflow_name=$(basename "$workflow")
-                copy_with_confirm "$workflow" "${target_dir}/.github/workflows/${workflow_name}"
+
+                # Skip auto-tag if not enabled
+                if [[ "$workflow_name" == "auto-tag.yml" && "${ENABLE_AUTO_TAG:-n}" != "y" ]]; then
+                    print_info "Skipping auto-tag.yml (not enabled)"
+                    continue
+                fi
+
+                # Read, replace version placeholder, and write
+                local target_file="${target_dir}/.github/workflows/${workflow_name}"
+                if [[ -f "$target_file" ]]; then
+                    echo -n "  $workflow_name already exists. Overwrite? (y/n) [n]: "
+                    if check_tty_available; then
+                        read -r overwrite < /dev/tty
+                    else
+                        overwrite="n"
+                    fi
+                    if [[ "$overwrite" != "y" ]]; then
+                        print_info "Skipping $workflow_name"
+                        continue
+                    fi
+                fi
+
+                # Replace __ERD_VERSION__ placeholder with actual version
+                sed "s/__ERD_VERSION__/${ERD_VERSION:-main}/g" "$workflow" > "$target_file"
+                print_success "Created $workflow_name (using @${ERD_VERSION:-main})"
             fi
         done
     fi
@@ -109,7 +154,7 @@ plugin_copy() {
     print_success "GitHub Actions workflows copied"
 }
 
-# Post-copy processing - create project.yml config
+# Post-copy processing - create config files
 plugin_post_copy() {
     local target_dir="$1"
 
@@ -148,11 +193,48 @@ EOF
         print_success "Created .github/project.yml"
     fi
 
+    # Create .github/versioning.yml if auto-tag is enabled
+    if [[ "${ENABLE_AUTO_TAG:-n}" == "y" ]]; then
+        local versioning_config="${target_dir}/.github/versioning.yml"
+
+        if [[ -f "$versioning_config" ]]; then
+            print_warning "versioning.yml already exists, skipping"
+        else
+            print_info "Creating .github/versioning.yml..."
+
+            cat > "$versioning_config" << 'EOF'
+# Auto-Tag Version Configuration
+# For use with erd CLI: https://github.com/TE-ToshiakiTanaka2/tarnished
+
+branches:
+  - prefix: "major/"
+    bump: major
+  - prefix: "release/"
+    bump: minor
+  - prefix: "feature/"
+    bump: patch
+  - prefix: "fix/"
+    bump: patch
+  - prefix: "bugfix/"
+    bump: patch
+  - prefix: "hotfix/"
+    bump: patch
+
+# Default bump type when branch doesn't match any prefix
+default_bump: rc
+EOF
+
+            print_success "Created .github/versioning.yml"
+        fi
+    fi
+
     # Remind about PROJECT_TOKEN secret
     echo ""
     print_warning "Remember to add PROJECT_TOKEN secret to your repository:"
     echo "  Settings > Secrets and variables > Actions > New repository secret"
     echo "  Name: PROJECT_TOKEN"
     echo "  Value: Your GitHub Personal Access Token with 'repo' and 'project' scopes"
+    echo ""
+    echo "Workflows are configured to use erd @${ERD_VERSION:-main}"
     echo ""
 }

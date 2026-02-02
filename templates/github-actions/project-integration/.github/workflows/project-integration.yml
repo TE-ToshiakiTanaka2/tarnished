@@ -1,7 +1,8 @@
 # =============================================================================
-# Project Integration Workflow
+# Project Integration Workflow (Caller)
 # =============================================================================
-# Automatically links new Issues to GitHub Projects using erd CLI.
+# Calls the reusable workflow from TE-ToshiakiTanaka2/tarnished to automatically
+# link new Issues to GitHub Projects using erd CLI.
 #
 # Prerequisites:
 #   1. Create a GitHub Personal Access Token (classic) with these scopes:
@@ -29,70 +30,11 @@ on:
   issues:
     types: [opened, reopened]
 
-permissions:
-  contents: read
-  issues: write
-
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  add-to-project:
-    name: Add Issue to Project
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout erd repository
-        uses: actions/checkout@v4
-        with:
-          repository: TE-ToshiakiTanaka2/tarnished
-          ref: develop
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-erd-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-erd-
-            ${{ runner.os }}-cargo-
-
-      - name: Build erd
-        run: cargo build --release
-
-      - name: Checkout target repository for config
-        uses: actions/checkout@v4
-        with:
-          path: target-repo
-
-      - name: Link issue to project
-        id: link
-        run: |
-          ./target/release/erd issue link ${{ github.event.issue.number }} \
-            --config target-repo/.github/project.yml \
-            --verbose
-        env:
-          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          ERD_REPO: ${{ github.repository }}
-        continue-on-error: true
-
-      - name: Comment on failure
-        if: steps.link.outcome == 'failure'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `**Project Integration Failed**\n\nFailed to automatically link this issue to the project. This may be due to:\n- Missing \`PROJECT_TOKEN\` secret\n- Invalid project configuration in \`.github/project.yml\`\n- GitHub API errors\n\nPlease link the issue to the project manually or check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`
-            });
-
-      - name: Fail job if link failed
-        if: steps.link.outcome == 'failure'
-        run: exit 1
+  call-project-integration:
+    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/project-integration.yml@__ERD_VERSION__
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      config-path: ".github/project.yml"
+    secrets:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
