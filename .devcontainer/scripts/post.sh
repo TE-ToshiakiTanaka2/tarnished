@@ -231,6 +231,34 @@ setup_rust() {
 setup_rust
 
 # -----------------------------------------------------------------------------
+# Code Quality Tools Setup
+# -----------------------------------------------------------------------------
+setup_code_quality_tools() {
+    echo "Setting up code quality tools..."
+
+    # Install codespell for code spell checking
+    if command -v uv &> /dev/null; then
+        echo "  - Installing codespell..."
+        uv tool install codespell 2>/dev/null || true
+        echo "  - codespell installed"
+    else
+        echo "  - Warning: uv not found, skipping codespell installation"
+    fi
+
+    # Verify shellcheck (should be installed via Dockerfile)
+    if command -v shellcheck &> /dev/null; then
+        echo "  - shellcheck $(shellcheck --version | head -2 | tail -1) detected"
+    else
+        echo "  - Warning: shellcheck not found"
+        echo "  - Install via: sudo apt-get install shellcheck"
+    fi
+
+    echo "  - Code quality tools setup complete"
+}
+
+setup_code_quality_tools
+
+# -----------------------------------------------------------------------------
 # SuperClaude Framework Setup
 # -----------------------------------------------------------------------------
 setup_superclaude() {

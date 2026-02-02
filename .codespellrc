@@ -1,0 +1,20 @@
+[codespell]
+# Skip certain directories and files
+skip = .git,target,node_modules,*.lock,Cargo.lock,*.min.js,*.min.css
+
+# Ignore certain words (add words that are intentionally spelled differently)
+# Format: word1,word2,word3
+# - crate: Rust package term
+# - erd: project name (Entity Relationship Diagram)
+# - tarnished: project name
+# - nd: used in "+Nd" format for N days (e.g., "+7d")
+# - nw: used in "+Nw" format for N weeks
+# - ue: appears in "Due" field patterns
+ignore-words-list = crate,erd,tarnished,nd,nw,ue
+
+# Only check certain file types (optional)
+# check-filenames = true
+# check-hidden = false
+
+# Quiet mode for CI (less verbose output)
+# quiet-level = 2
