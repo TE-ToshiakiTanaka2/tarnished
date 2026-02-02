@@ -15,9 +15,7 @@ on:
         required: false
         default: "latest"
         type: string
-    secrets:
-      GITHUB_TOKEN:
-        required: true
+    # Note: GITHUB_TOKEN is automatically available, no need to declare it
 
 permissions:
   contents: write
