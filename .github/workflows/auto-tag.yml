@@ -77,12 +77,14 @@ jobs:
           echo "name=$BRANCH" >> $GITHUB_OUTPUT
 
       # === Local invocation: Build erd from source ===
+      # Use repository check instead of event_name because workflow_call
+      # preserves the caller's event context (e.g., push)
       - name: Setup Rust (local)
-        if: github.event_name == 'push' && steps.branch.outputs.name != ''
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished' && steps.branch.outputs.name != ''
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry (local)
-        if: github.event_name == 'push' && steps.branch.outputs.name != ''
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished' && steps.branch.outputs.name != ''
         uses: actions/cache@v4
         with:
           path: |
@@ -95,12 +97,14 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build erd (local)
-        if: github.event_name == 'push' && steps.branch.outputs.name != ''
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished' && steps.branch.outputs.name != ''
         run: cargo build --release
 
       # === External invocation: Download erd from Releases ===
+      # Use repository check instead of event_name because workflow_call
+      # preserves the caller's event context (e.g., push)
       - name: Download erd (external)
-        if: github.event_name == 'workflow_call' && steps.branch.outputs.name != ''
+        if: github.repository != 'TE-ToshiakiTanaka2/tarnished' && steps.branch.outputs.name != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
