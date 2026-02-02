@@ -28,6 +28,10 @@ on:
   push:
     branches: [develop, main]
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   call-auto-tag:
     uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/auto-tag.yml@__ERD_REF__
