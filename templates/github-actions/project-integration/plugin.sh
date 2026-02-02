@@ -6,7 +6,6 @@
 # This plugin provides GitHub Project integration using erd CLI:
 # - Automatic issue linking to GitHub Projects
 # - PR status updates for linked issues
-# - Auto-tagging based on branch naming conventions
 # - Project configuration file generation
 #
 # Workflows are implemented as caller workflows that invoke reusable workflows
@@ -140,7 +139,6 @@ plugin_interactive_setup() {
         DEFAULT_PRIORITY="P1"
         PR_OPEN_STATUS="In Review"
         ERD_REF="develop"
-        ENABLE_AUTO_TAG="n"
         return 0
     fi
 
@@ -335,12 +333,6 @@ plugin_interactive_setup() {
         prompt_manual_field_defaults
     fi
 
-    # Ask about auto-tag
-    echo "" > /dev/tty
-    echo -n "Enable auto-tagging workflow? (y/n) [n]: " > /dev/tty
-    read -r ENABLE_AUTO_TAG < /dev/tty
-    ENABLE_AUTO_TAG="${ENABLE_AUTO_TAG:-n}"
-
     echo ""
     print_success "Project configuration collected"
 }
@@ -404,12 +396,6 @@ plugin_copy() {
                 local workflow_name
                 workflow_name=$(basename "$workflow")
 
-                # Skip auto-tag if not enabled
-                if [[ "$workflow_name" == "auto-tag.yml" && "${ENABLE_AUTO_TAG:-n}" != "y" ]]; then
-                    print_info "Skipping auto-tag.yml (not enabled)"
-                    continue
-                fi
-
                 # Read, replace version placeholder, and write
                 local target_file="${target_dir}/.github/workflows/${workflow_name}"
                 if [[ -f "$target_file" ]]; then
@@ -472,41 +458,6 @@ pr_status:
 EOF
 
         print_success "Created .github/project.yml"
-    fi
-
-    # Create .github/versioning.yml if auto-tag is enabled
-    if [[ "${ENABLE_AUTO_TAG:-n}" == "y" ]]; then
-        local versioning_config="${target_dir}/.github/versioning.yml"
-
-        if [[ -f "$versioning_config" ]]; then
-            print_warning "versioning.yml already exists, skipping"
-        else
-            print_info "Creating .github/versioning.yml..."
-
-            cat > "$versioning_config" << 'EOF'
-# Auto-Tag Version Configuration
-# For use with erd CLI: https://github.com/TE-ToshiakiTanaka2/tarnished
-
-branches:
-  - prefix: "major/"
-    bump: major
-  - prefix: "release/"
-    bump: minor
-  - prefix: "feature/"
-    bump: patch
-  - prefix: "fix/"
-    bump: patch
-  - prefix: "bugfix/"
-    bump: patch
-  - prefix: "hotfix/"
-    bump: patch
-
-# Default bump type when branch doesn't match any prefix
-default_bump: rc
-EOF
-
-            print_success "Created .github/versioning.yml"
-        fi
     fi
 
     # Remind about PROJECT_TOKEN secret

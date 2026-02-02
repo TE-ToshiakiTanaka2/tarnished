@@ -95,6 +95,7 @@ declare -A LANGUAGE_DISPLAY_NAMES=(
 
 # Feature flags
 GITHUB_ACTIONS_ENABLED=false
+AUTO_TAG_ENABLED=false
 DRY_RUN=false
 SKIP_CONFIRM=false
 
@@ -399,13 +400,23 @@ load_selected_plugins() {
         load_order+=("${TEMPLATES_DIR}/claude/plugin.sh")
     fi
 
-    # 4. GitHub Actions plugin (if enabled)
+    # 4. GitHub Actions plugins (if enabled)
     if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
         local github_actions_path="${TEMPLATES_DIR}/github-actions/project-integration/plugin.sh"
         if [[ -f "$github_actions_path" ]]; then
             load_order+=("$github_actions_path")
         else
-            print_warning "GitHub Actions plugin not found, skipping"
+            print_warning "GitHub Actions project-integration plugin not found, skipping"
+        fi
+    fi
+
+    # 5. Auto-tag plugin (independent from project-integration)
+    if [[ "$AUTO_TAG_ENABLED" == true ]]; then
+        local auto_tag_path="${TEMPLATES_DIR}/github-actions/auto-tag/plugin.sh"
+        if [[ -f "$auto_tag_path" ]]; then
+            load_order+=("$auto_tag_path")
+        else
+            print_warning "Auto-tag plugin not found, skipping"
         fi
     fi
 
@@ -612,12 +623,37 @@ main() {
         prompt_language_selection
     fi
 
+    # Prompt for GitHub Actions features if in interactive mode
+    if check_tty_available; then
+        # Ask about project-integration
+        if [[ "$GITHUB_ACTIONS_ENABLED" != true ]]; then
+            echo "" > /dev/tty
+            echo -n "Enable GitHub Project integration workflows? (y/n) [n]: " > /dev/tty
+            local github_response
+            read -r github_response < /dev/tty
+            if [[ "$github_response" == "y" || "$github_response" == "Y" ]]; then
+                GITHUB_ACTIONS_ENABLED=true
+            fi
+        fi
+
+        # Ask about auto-tag (independent from project-integration)
+        if [[ "$AUTO_TAG_ENABLED" != true ]]; then
+            echo -n "Enable auto-tag workflow? (y/n) [n]: " > /dev/tty
+            local autotag_response
+            read -r autotag_response < /dev/tty
+            if [[ "$autotag_response" == "y" || "$autotag_response" == "Y" ]]; then
+                AUTO_TAG_ENABLED=true
+            fi
+        fi
+    fi
+
     # Confirm settings
     print_section "Setup Configuration"
-    echo "Project name:    $PROJECT_NAME"
-    echo "Language:        ${SELECTED_LANGUAGES[*]}"
-    echo "GitHub Actions:  $GITHUB_ACTIONS_ENABLED"
-    echo "Overwrite:       $OVERWRITE_ALL"
+    echo "Project name:         $PROJECT_NAME"
+    echo "Language:             ${SELECTED_LANGUAGES[*]}"
+    echo "Project Integration:  $GITHUB_ACTIONS_ENABLED"
+    echo "Auto-Tag:             $AUTO_TAG_ENABLED"
+    echo "Overwrite:            $OVERWRITE_ALL"
     echo ""
 
     if [[ "$SKIP_CONFIRM" != true ]] && check_tty_available; then
