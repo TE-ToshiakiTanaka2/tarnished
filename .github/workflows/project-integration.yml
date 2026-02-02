@@ -8,7 +8,7 @@ on:
       issue-number:
         description: "Issue number"
         required: true
-        type: number
+        type: string
       config-path:
         description: "Path to project.yml config file"
         required: false
