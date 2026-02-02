@@ -25,7 +25,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -122,7 +122,35 @@ jobs:
           ERD_REPO: ${{ github.repository }}
         continue-on-error: true
 
-      - name: Log result
-        if: steps.update-status.outcome == 'failure'
+      - name: Comment on PR (success)
+        if: steps.update-status.outcome == 'success' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `📋 **Project Status Updated**\n\nLinked issues have been automatically moved to "In Review" status in the project.\n\n[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+            });
+
+      - name: Comment on PR (failure)
+        if: steps.update-status.outcome == 'failure' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `⚠️ **Project Status Update Failed**\n\nFailed to update linked issues status. This may be due to:\n- Missing \`PROJECT_TOKEN\` secret\n- No linked issues found (use "Fixes #N" or "Closes #N" in PR description)\n- Invalid project configuration\n\n[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`
+            });
+
+      - name: Log failure (external)
+        if: steps.update-status.outcome == 'failure' && github.event_name == 'workflow_call'
         run: |
           echo "::warning::Failed to update project status for linked issues. This may be due to missing PROJECT_TOKEN secret or no linked issues."
+
+      - name: Fail job if update failed
+        if: steps.update-status.outcome == 'failure'
+        run: exit 1
