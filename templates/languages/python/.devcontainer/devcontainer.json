@@ -3,7 +3,7 @@
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.12"
     },
-    "ghcr.io/astral-sh/uv:1": {}
+    "ghcr.io/va-h/devcontainers-features/uv:1": {}
   },
   "customizations": {
     "vscode": {
