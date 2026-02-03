@@ -10,6 +10,7 @@
 # - rustfmt formatter configuration
 # - clippy linter configuration
 # - Claude Code hooks for automatic formatting/linting
+# - GitHub Actions workflow for quality checks (type check, clippy, fmt, tests)
 #
 # =============================================================================
 
@@ -33,6 +34,38 @@ plugin_description() {
 # =============================================================================
 # Hook Functions
 # =============================================================================
+
+# Copy GitHub Actions workflow files
+plugin_copy() {
+    local target_dir="$1"
+
+    print_info "Copying Rust quality check workflow..."
+
+    # Create .github/workflows directory
+    mkdir -p "${target_dir}/.github/workflows"
+
+    # Copy workflow file
+    local workflow="${PLUGIN_DIR}/.github/workflows/rust-quality-check.yml"
+    if [[ -f "$workflow" ]]; then
+        local target_file="${target_dir}/.github/workflows/rust-quality-check.yml"
+
+        if [[ -f "$target_file" ]]; then
+            echo -n "  rust-quality-check.yml already exists. Overwrite? (y/n) [n]: "
+            if check_tty_available; then
+                read -r overwrite < /dev/tty
+            else
+                overwrite="n"
+            fi
+            if [[ "$overwrite" != "y" ]]; then
+                print_info "Skipping rust-quality-check.yml"
+                return 0
+            fi
+        fi
+
+        cp "$workflow" "$target_file"
+        print_success "Created rust-quality-check.yml"
+    fi
+}
 
 # Post-copy processing - merge devcontainer.json, settings.json, and copy tool configs
 plugin_post_copy() {
