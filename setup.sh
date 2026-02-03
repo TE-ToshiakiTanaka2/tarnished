@@ -261,9 +261,9 @@ setup_github_labels() {
 
         if gh label create "$name" --color "$color" --description "$description" </dev/null 2>/dev/null; then
             print_success "  Created label: $name"
-            ((created++))
+            ((created++)) || true
         else
-            ((skipped++))
+            ((skipped++)) || true
         fi
     done
 
