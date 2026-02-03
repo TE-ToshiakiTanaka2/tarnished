@@ -41,7 +41,7 @@ check_gh_available() {
 # Get repository in owner/repo format
 get_current_repo() {
     if check_gh_available; then
-        gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null
+        gh repo view --json nameWithOwner --jq '.nameWithOwner' </dev/null 2>/dev/null
     else
         # Try to extract from git remote
         local remote_url
@@ -56,7 +56,7 @@ get_current_repo() {
 # Get current user's login
 get_current_user() {
     if check_gh_available; then
-        gh api user --jq '.login' 2>/dev/null
+        gh api user --jq '.login' </dev/null 2>/dev/null
     fi
 }
 
@@ -65,7 +65,7 @@ get_current_user() {
 get_owner_projects() {
     local owner="$1"
     if check_gh_available && [[ -n "$owner" ]]; then
-        gh project list --owner "$owner" --format json 2>/dev/null
+        gh project list --owner "$owner" --format json </dev/null 2>/dev/null
     fi
 }
 
@@ -75,7 +75,7 @@ get_project_fields() {
     local owner="$1"
     local number="$2"
     if check_gh_available && [[ -n "$owner" ]] && [[ -n "$number" ]]; then
-        gh project field-list "$number" --owner "$owner" --format json 2>/dev/null
+        gh project field-list "$number" --owner "$owner" --format json </dev/null 2>/dev/null
     fi
 }
 
@@ -128,7 +128,7 @@ query($owner: String!, $number: Int!) {
       }
     }
   }
-}' -f owner="$owner" -F number="$number" 2>/dev/null)
+}' -f owner="$owner" -F number="$number" </dev/null 2>/dev/null)
 
     # Check if user query returned valid data
     if [[ -n "$result" ]] && echo "$result" | jq -e '.data.user.projectV2.fields.nodes' &>/dev/null; then
@@ -172,7 +172,7 @@ query($owner: String!, $number: Int!) {
       }
     }
   }
-}' -f owner="$owner" -F number="$number" 2>/dev/null)
+}' -f owner="$owner" -F number="$number" </dev/null 2>/dev/null)
 
     if [[ -n "$result" ]] && echo "$result" | jq -e '.data.organization.projectV2.fields.nodes' &>/dev/null; then
         echo "$result"
@@ -895,7 +895,7 @@ configure_fields_from_basic_list() {
 prompt_manual_project_config() {
     local default_owner=""
     if command -v gh &> /dev/null; then
-        default_owner=$(gh api user --jq '.login' 2>/dev/null || echo "")
+        default_owner=$(gh api user --jq '.login' </dev/null 2>/dev/null || echo "")
     fi
 
     echo -n "Enter GitHub Project owner (username or org)" > /dev/tty
