@@ -88,9 +88,10 @@ declare -a PLUGIN_NAMES=()
 
 # Language selection
 declare -a SELECTED_LANGUAGES=()
-declare -a AVAILABLE_LANGUAGES=("rust")
+declare -a AVAILABLE_LANGUAGES=("rust" "python")
 declare -A LANGUAGE_DISPLAY_NAMES=(
     ["rust"]="Rust"
+    ["python"]="Python"
 )
 
 # Feature flags
@@ -122,7 +123,7 @@ Options:
     -h, --help          Show this help message
     -d, --dry-run       Preview files without creating them
     -y, --yes           Skip confirmation prompts
-    --lang <language>   Select language template (rust)
+    --lang <language>   Select language template (rust, python)
     --github-actions    Include GitHub Project integration (requires erd CLI)
     --overwrite         Overwrite existing files without confirmation
 
@@ -131,12 +132,14 @@ Arguments:
 
 Available Languages:
     rust                Rust
+    python              Python (uv, ruff, mypy, pytest)
 
 Examples:
     ./setup.sh                              # Interactive mode
     ./setup.sh my-project                   # Create project named 'my-project'
     ./setup.sh --dry-run my-app             # Preview what would be created
     ./setup.sh --lang rust                  # Rust only
+    ./setup.sh --lang python                # Python only
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
     ./setup.sh --overwrite                  # Overwrite existing files
