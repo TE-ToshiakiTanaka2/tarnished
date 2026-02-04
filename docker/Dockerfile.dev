@@ -1,38 +1,27 @@
-FROM mcr.microsoft.com/vscode/devcontainers/base:bookworm
+FROM debian:bookworm-slim
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-# ENV UV_HOME="/opt/uv"
-# ENV PATH="$UV_HOME/bin:$PATH"
-# ENV UV_COMPILE_BYTECODE=1
-# ENV UV_LINK_MODE=copy
-# ENV UV_CACHE_DIR=/home/vscode/.cache/uv
-# ENV POETRY_VIRTUALENVS_IN_PROJECT=true
-
-# Install system dependencies
+# Minimal dependencies for DevContainer Features + dev tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl vim git ssh sudo bash \
-    ripgrep \
     ca-certificates \
+    procps \
+    openssh-client \
+    sudo \
+    vim \
+    ripgrep \
     wget \
     shellcheck \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user 'vscode'
-# RUN useradd -m vscode \
-#     && groupadd docker \
-#     && usermod -aG docker vscode
+# Create non-root user 'vscode' for DevContainer compatibility
+ARG USERNAME=vscode
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
 
-# RUN echo "vscode ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
+    && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/$USERNAME \
+    && chmod 0440 /etc/sudoers.d/$USERNAME
 
-# Switch to the non-root user
-# USER vscode
-
-# Copy project files (optional, can be mounted by docker-compose)
-# COPY --chown=vscode:vscode . /workspace
 SHELL ["/bin/bash", "-c"]
 
-# Keep the container running
 CMD ["sleep", "infinity"]
