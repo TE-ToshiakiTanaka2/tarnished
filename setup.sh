@@ -124,7 +124,7 @@ Options:
     -h, --help          Show this help message
     -d, --dry-run       Preview files without creating them
     -y, --yes           Skip confirmation prompts
-    --lang <language>   Select language template (rust, python)
+    --lang <language>   Select language template (can be specified multiple times)
     --github-actions    Include GitHub Project integration (requires erd CLI)
     --overwrite         Overwrite existing files without confirmation
 
@@ -134,6 +134,7 @@ Arguments:
 Available Languages:
     rust                Rust
     python              Python (uv, ruff, mypy, pytest)
+    node                Node.js/TypeScript (pnpm, Biome, Vitest)
 
 Examples:
     ./setup.sh                              # Interactive mode
@@ -141,6 +142,7 @@ Examples:
     ./setup.sh --dry-run my-app             # Preview what would be created
     ./setup.sh --lang rust                  # Rust only
     ./setup.sh --lang python                # Python only
+    ./setup.sh --lang rust --lang python    # Rust + Python
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
     ./setup.sh --overwrite                  # Overwrite existing files
@@ -500,34 +502,63 @@ prompt_language_selection() {
         return
     fi
 
-    echo ""
-    print_info "Select language template:"
-    echo "  0. None (skip language plugins)" > /dev/tty
-
-    local i=1
-    for lang in "${AVAILABLE_LANGUAGES[@]}"; do
-        local display_name="${LANGUAGE_DISPLAY_NAMES[$lang]:-$lang}"
-        echo "  $i. $display_name" > /dev/tty
-        ((i++))
+    local lang_count=${#AVAILABLE_LANGUAGES[@]}
+    # Track toggle state for each language (0=off, 1=on)
+    local -a toggle_state=()
+    for ((i=0; i<lang_count; i++)); do
+        toggle_state+=(0)
     done
 
-    echo -n "Enter selection [0]: " > /dev/tty
-    local response
-    IFS='' read -r response < /dev/tty
+    while true; do
+        echo "" > /dev/tty
+        print_info "Select language templates (toggle with number, Enter to confirm):"
 
-    if [[ -z "$response" ]]; then
-        response=0
-    fi
+        local i=1
+        for lang in "${AVAILABLE_LANGUAGES[@]}"; do
+            local display_name="${LANGUAGE_DISPLAY_NAMES[$lang]:-$lang}"
+            local marker="[ ]"
+            if [[ "${toggle_state[$((i-1))]}" == "1" ]]; then
+                marker="[x]"
+            fi
+            echo "  $i. $marker $display_name" > /dev/tty
+            ((i++))
+        done
 
-    if [[ "$response" == "0" ]]; then
-        SELECTED_LANGUAGES=()
-        print_success "Selected: None (skipping language plugins)"
-    elif [[ "$response" =~ ^[0-9]+$ ]] && [[ "$response" -ge 1 ]] && [[ "$response" -le ${#AVAILABLE_LANGUAGES[@]} ]]; then
-        SELECTED_LANGUAGES=("${AVAILABLE_LANGUAGES[$((response-1))]}")
-        print_success "Selected: ${SELECTED_LANGUAGES[*]}"
+        echo "" > /dev/tty
+        echo -n "Enter number to toggle (Enter to confirm) [none]: " > /dev/tty
+        local response
+        IFS='' read -r response < /dev/tty
+
+        # Empty input = confirm selection
+        if [[ -z "$response" ]]; then
+            break
+        fi
+
+        # Validate and toggle
+        if [[ "$response" =~ ^[0-9]+$ ]] && [[ "$response" -ge 1 ]] && [[ "$response" -le "$lang_count" ]]; then
+            local idx=$((response-1))
+            if [[ "${toggle_state[$idx]}" == "0" ]]; then
+                toggle_state[$idx]=1
+            else
+                toggle_state[$idx]=0
+            fi
+        else
+            print_warning "Invalid selection: $response"
+        fi
+    done
+
+    # Build SELECTED_LANGUAGES from toggle state
+    SELECTED_LANGUAGES=()
+    for ((i=0; i<lang_count; i++)); do
+        if [[ "${toggle_state[$i]}" == "1" ]]; then
+            SELECTED_LANGUAGES+=("${AVAILABLE_LANGUAGES[$i]}")
+        fi
+    done
+
+    if [[ ${#SELECTED_LANGUAGES[@]} -eq 0 ]]; then
+        print_success "Selected: none (skipping language plugins)"
     else
-        print_warning "Invalid selection, skipping language plugins"
-        SELECTED_LANGUAGES=()
+        print_success "Selected: ${SELECTED_LANGUAGES[*]}"
     fi
 }
 
@@ -555,7 +586,7 @@ parse_arguments() {
                 ;;
             --lang)
                 if [[ -n "$2" ]]; then
-                    SELECTED_LANGUAGES=("$2")
+                    SELECTED_LANGUAGES+=("$2")
                     shift 2
                 else
                     print_error "--lang requires a value"
@@ -660,7 +691,7 @@ main() {
     # Confirm settings
     print_section "Setup Configuration"
     echo "Project name:         $PROJECT_NAME"
-    echo "Language:             ${SELECTED_LANGUAGES[*]}"
+    echo "Language:             ${SELECTED_LANGUAGES[*]:-none}"
     echo "Project Integration:  $GITHUB_ACTIONS_ENABLED"
     echo "Auto-Tag:             $AUTO_TAG_ENABLED"
     echo "Overwrite:            $OVERWRITE_ALL"
