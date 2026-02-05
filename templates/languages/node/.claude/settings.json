@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write(*.ts)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm biome check --write $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.ts)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm biome check --write $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Write(*.tsx)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm biome check --write $CLAUDE_FILE_PATH"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.tsx)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm biome check --write $CLAUDE_FILE_PATH"
+          }
+        ]
+      }
+    ]
+  }
+}
