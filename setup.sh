@@ -88,11 +88,12 @@ declare -a PLUGIN_NAMES=()
 
 # Language selection
 declare -a SELECTED_LANGUAGES=()
-declare -a AVAILABLE_LANGUAGES=("rust" "python" "node")
+declare -a AVAILABLE_LANGUAGES=("rust" "python" "node" "deno")
 declare -A LANGUAGE_DISPLAY_NAMES=(
     ["rust"]="Rust"
     ["python"]="Python"
     ["node"]="Node.js/TypeScript"
+    ["deno"]="Deno"
 )
 
 # Feature flags
@@ -135,6 +136,7 @@ Available Languages:
     rust                Rust
     python              Python (uv, ruff, mypy, pytest)
     node                Node.js/TypeScript (pnpm, Biome, Vitest)
+    deno                Deno (built-in fmt, lint, test)
 
 Examples:
     ./setup.sh                              # Interactive mode

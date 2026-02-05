@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true
+  },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "include": [
+        "ban-untagged-todo",
+        "no-console",
+        "no-eval",
+        "eqeqeq"
+      ]
+    }
+  },
+  "tasks": {
+    "dev": "deno run --watch src/main.ts",
+    "start": "deno run src/main.ts",
+    "check": "deno check src/**/*.ts tests/**/*.ts",
+    "lint": "deno lint src/ tests/",
+    "fmt": "deno fmt src/ tests/",
+    "fmt:check": "deno fmt --check src/ tests/",
+    "test": "deno test tests/",
+    "test:unit": "deno test tests/unit/",
+    "test:integration": "deno test tests/integration/",
+    "test:coverage": "deno test --coverage=coverage tests/ && deno coverage coverage/"
+  },
+  "imports": {}
+}

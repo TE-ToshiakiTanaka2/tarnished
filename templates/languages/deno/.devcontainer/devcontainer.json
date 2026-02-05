@@ -1,0 +1,38 @@
+{
+  "features": {
+    "ghcr.io/nicklasxyz/devcontainer-features/deno:1": {
+      "version": "latest"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "deno.enable": true,
+        "deno.lint": true,
+        "deno.unstable": [],
+        "[typescript]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "denoland.vscode-deno"
+        },
+        "[typescriptreact]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "denoland.vscode-deno"
+        },
+        "[json]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "denoland.vscode-deno"
+        },
+        "[jsonc]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "denoland.vscode-deno"
+        },
+        "files.exclude": {
+          "**/coverage": true
+        }
+      },
+      "extensions": [
+        "denoland.vscode-deno"
+      ]
+    }
+  }
+}
