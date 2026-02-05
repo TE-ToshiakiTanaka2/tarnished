@@ -88,10 +88,11 @@ declare -a PLUGIN_NAMES=()
 
 # Language selection
 declare -a SELECTED_LANGUAGES=()
-declare -a AVAILABLE_LANGUAGES=("rust" "python")
+declare -a AVAILABLE_LANGUAGES=("rust" "python" "node")
 declare -A LANGUAGE_DISPLAY_NAMES=(
     ["rust"]="Rust"
     ["python"]="Python"
+    ["node"]="Node.js/TypeScript"
 )
 
 # Feature flags

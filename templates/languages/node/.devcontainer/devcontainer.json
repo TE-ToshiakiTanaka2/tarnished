@@ -1,0 +1,42 @@
+{
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "[typescript]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "biomejs.biome",
+          "editor.codeActionsOnSave": {
+            "source.organizeImports.biome": "explicit",
+            "quickfix.biome": "explicit"
+          }
+        },
+        "[typescriptreact]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "biomejs.biome",
+          "editor.codeActionsOnSave": {
+            "source.organizeImports.biome": "explicit",
+            "quickfix.biome": "explicit"
+          }
+        },
+        "[json]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "biomejs.biome"
+        },
+        "files.exclude": {
+          "**/node_modules": true,
+          "**/dist": true,
+          "**/coverage": true
+        }
+      },
+      "extensions": [
+        "biomejs.biome",
+        "ms-vscode.vscode-typescript-next"
+      ]
+    }
+  }
+}
