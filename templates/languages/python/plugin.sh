@@ -68,6 +68,42 @@ plugin_copy() {
     fi
 }
 
+# Append Python/uv ENV variables to Dockerfile.dev
+plugin_dockerfile() {
+    local target_dir="$1"
+    local dockerfile="${target_dir}/docker/Dockerfile.dev"
+
+    if [[ ! -f "$dockerfile" ]]; then
+        print_warning "Dockerfile.dev not found, skipping Python Dockerfile configuration"
+        return
+    fi
+
+    print_info "Adding Python/uv environment variables to Dockerfile..."
+
+    local temp_file="${dockerfile}.tmp"
+
+    # Insert ENV block before SHELL line (or CMD if no SHELL, or append)
+    awk '
+    /^SHELL / && !inserted {
+        print ""
+        print "# Python/uv environment configuration"
+        print "ENV PYTHONDONTWRITEBYTECODE=1"
+        print "ENV PYTHONUNBUFFERED=1"
+        print "ENV UV_HOME=\"/opt/uv\""
+        print "ENV PATH=\"$UV_HOME/bin:$PATH\""
+        print "ENV UV_COMPILE_BYTECODE=1"
+        print "ENV UV_LINK_MODE=copy"
+        print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
+        print ""
+        inserted=1
+    }
+    { print }
+    ' "$dockerfile" > "$temp_file"
+
+    mv "$temp_file" "$dockerfile"
+    print_success "Python/uv environment variables added to Dockerfile"
+}
+
 # Post-copy processing - merge devcontainer.json, settings.json, and copy tool configs
 plugin_post_copy() {
     local target_dir="$1"
@@ -182,7 +218,7 @@ if command -v uv &> /dev/null; then
     # Create virtual environment if it doesn't exist
     if [[ ! -d ".venv" ]]; then
         echo "  - Creating virtual environment with uv..."
-        uv venv
+        uv venv --prompt {{PROJECT_NAME}}
     fi
 
     # Install dependencies if pyproject.toml exists
