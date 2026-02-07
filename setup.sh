@@ -532,57 +532,42 @@ prompt_language_selection() {
     fi
 
     local lang_count=${#AVAILABLE_LANGUAGES[@]}
-    # Track toggle state for each language (0=off, 1=on)
-    local -a toggle_state=()
-    for ((i=0; i<lang_count; i++)); do
-        toggle_state+=(0)
+
+    echo "" > /dev/tty
+    print_info "Select language templates (comma-separated numbers, or 'all'/'none'):"
+
+    local i=1
+    for lang in "${AVAILABLE_LANGUAGES[@]}"; do
+        local display_name="${LANGUAGE_DISPLAY_NAMES[$lang]:-$lang}"
+        echo "  $i. $display_name" > /dev/tty
+        ((i++))
     done
 
-    while true; do
-        echo "" > /dev/tty
-        print_info "Select language templates (toggle with number, Enter to confirm):"
+    echo "" > /dev/tty
+    echo -n "Enter selection [none]: " > /dev/tty
+    local response
+    IFS='' read -r response < /dev/tty
 
-        local i=1
-        for lang in "${AVAILABLE_LANGUAGES[@]}"; do
-            local display_name="${LANGUAGE_DISPLAY_NAMES[$lang]:-$lang}"
-            local marker="[ ]"
-            if [[ "${toggle_state[$((i-1))]}" == "1" ]]; then
-                marker="[x]"
-            fi
-            echo "  $i. $marker $display_name" > /dev/tty
-            ((i++))
-        done
-
-        echo "" > /dev/tty
-        echo -n "Enter number to toggle (Enter to confirm) [none]: " > /dev/tty
-        local response
-        IFS='' read -r response < /dev/tty
-
-        # Empty input = confirm selection
-        if [[ -z "$response" ]]; then
-            break
-        fi
-
-        # Validate and toggle
-        if [[ "$response" =~ ^[0-9]+$ ]] && [[ "$response" -ge 1 ]] && [[ "$response" -le "$lang_count" ]]; then
-            local idx=$((response-1))
-            if [[ "${toggle_state[$idx]}" == "0" ]]; then
-                toggle_state[$idx]=1
-            else
-                toggle_state[$idx]=0
-            fi
-        else
-            print_warning "Invalid selection: $response"
-        fi
-    done
-
-    # Build SELECTED_LANGUAGES from toggle state
+    # Build SELECTED_LANGUAGES from input
     SELECTED_LANGUAGES=()
-    for ((i=0; i<lang_count; i++)); do
-        if [[ "${toggle_state[$i]}" == "1" ]]; then
-            SELECTED_LANGUAGES+=("${AVAILABLE_LANGUAGES[$i]}")
-        fi
-    done
+
+    if [[ -z "$response" ]] || [[ "$response" == "none" ]]; then
+        # Empty or 'none' = no languages
+        :
+    elif [[ "$response" == "all" ]]; then
+        SELECTED_LANGUAGES=("${AVAILABLE_LANGUAGES[@]}")
+    else
+        # Parse comma-separated numbers
+        IFS=',' read -ra nums <<< "$response"
+        for num in "${nums[@]}"; do
+            num=$(echo "$num" | tr -d ' ')
+            if [[ "$num" =~ ^[0-9]+$ ]] && [[ "$num" -ge 1 ]] && [[ "$num" -le "$lang_count" ]]; then
+                SELECTED_LANGUAGES+=("${AVAILABLE_LANGUAGES[$((num-1))]}")
+            else
+                print_warning "Invalid selection: $num"
+            fi
+        done
+    fi
 
     if [[ ${#SELECTED_LANGUAGES[@]} -eq 0 ]]; then
         print_success "Selected: none (skipping language plugins)"
