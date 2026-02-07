@@ -444,7 +444,7 @@ load_selected_plugins() {
 
 # Unset plugin functions to prevent carryover between plugins
 unset_plugin_functions() {
-    unset -f plugin_name plugin_description plugin_copy plugin_post_copy plugin_interactive_setup 2>/dev/null || true
+    unset -f plugin_name plugin_description plugin_copy plugin_post_copy plugin_interactive_setup plugin_dockerfile 2>/dev/null || true
 }
 
 # Execute plugin_copy for all loaded plugins
@@ -461,6 +461,33 @@ execute_plugin_copies() {
         # Execute plugin_copy if it exists
         if declare -f plugin_copy > /dev/null; then
             plugin_copy "$target_dir"
+        fi
+    done
+
+    unset_plugin_functions
+}
+
+# Execute plugin_dockerfile for all loaded plugins
+# Appends language-specific ENV/RUN directives to Dockerfile.dev
+execute_plugin_dockerfiles() {
+    local target_dir="$1"
+    local dockerfile="${target_dir}/docker/Dockerfile.dev"
+
+    if [[ ! -f "$dockerfile" ]]; then
+        print_warning "Dockerfile.dev not found, skipping plugin_dockerfile hooks"
+        return
+    fi
+
+    for plugin_path in "${LOADED_PLUGINS[@]}"; do
+        # Unset previous plugin functions
+        unset_plugin_functions
+
+        # Source plugin
+        source "$plugin_path"
+
+        # Execute plugin_dockerfile if it exists
+        if declare -f plugin_dockerfile > /dev/null; then
+            plugin_dockerfile "$target_dir"
         fi
     done
 
@@ -722,6 +749,9 @@ main() {
     # Execute plugin copies
     print_section "Copying Template Files"
     execute_plugin_copies "$TARGET_DIR"
+
+    # Execute Dockerfile customizations
+    execute_plugin_dockerfiles "$TARGET_DIR"
 
     # Execute post-copy processing
     print_section "Post-Processing"
