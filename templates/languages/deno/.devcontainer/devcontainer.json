@@ -1,6 +1,6 @@
 {
   "features": {
-    "ghcr.io/nicklasxyz/devcontainer-features/deno:1": {
+    "ghcr.io/devcontainers-community/features/deno:1": {
       "version": "latest"
     }
   },
