@@ -379,6 +379,8 @@ replace_placeholders() {
     # Files to process
     local files=(
         "${target_dir}/.devcontainer/devcontainer.json"
+        "${target_dir}/.devcontainer/scripts/post.sh"
+        "${target_dir}/docker/Dockerfile.dev"
         "${target_dir}/docker-compose.yml"
         "${target_dir}/CLAUDE.md"
     )
