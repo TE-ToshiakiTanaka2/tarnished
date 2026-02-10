@@ -382,6 +382,7 @@ replace_placeholders() {
         "${target_dir}/.devcontainer/scripts/post.sh"
         "${target_dir}/docker/Dockerfile.dev"
         "${target_dir}/docker-compose.yml"
+        "${target_dir}/docker-compose.postgresql.yml"
         "${target_dir}/CLAUDE.md"
         "${target_dir}/AGENTS.md"
     )

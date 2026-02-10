@@ -96,10 +96,18 @@ declare -A LANGUAGE_DISPLAY_NAMES=(
     ["deno"]="Deno"
 )
 
+# Service selection
+declare -a SELECTED_SERVICES=()
+declare -a AVAILABLE_SERVICES=("postgresql")
+declare -A SERVICE_DISPLAY_NAMES=(
+    ["postgresql"]="PostgreSQL 16"
+)
+
 # Feature flags
 GITHUB_ACTIONS_ENABLED=false
 AUTO_TAG_ENABLED=false
 CODEX_ENABLED=false
+POSTGRESQL_ENABLED=false
 DRY_RUN=false
 SKIP_CONFIRM=false
 
@@ -128,6 +136,7 @@ Options:
     -y, --yes           Skip confirmation prompts
     --lang <language>   Select language template (can be specified multiple times)
     --codex             Include OpenAI Codex CLI integration (code review)
+    --postgresql        Include PostgreSQL database service
     --github-actions    Include GitHub Project integration (requires erd CLI)
     --overwrite         Overwrite existing files without confirmation
 
@@ -140,6 +149,9 @@ Available Languages:
     node                Node.js/TypeScript (pnpm, Biome, Vitest)
     deno                Deno (built-in fmt, lint, test)
 
+Available Services:
+    postgresql          PostgreSQL 16 database with psql client
+
 Examples:
     ./setup.sh                              # Interactive mode
     ./setup.sh my-project                   # Create project named 'my-project'
@@ -148,6 +160,7 @@ Examples:
     ./setup.sh --lang python                # Python only
     ./setup.sh --lang rust --lang python    # Rust + Python
     ./setup.sh --lang rust --codex          # Rust with Codex CLI code review
+    ./setup.sh --lang rust --postgresql     # Rust with PostgreSQL
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
     ./setup.sh --overwrite                  # Overwrite existing files
@@ -406,12 +419,20 @@ load_selected_plugins() {
         fi
     done
 
-    # 3. Claude plugin
+    # 3. Selected service plugins
+    for svc in "${SELECTED_SERVICES[@]}"; do
+        local plugin_path="${TEMPLATES_DIR}/services/${svc}/plugin.sh"
+        if [[ -f "$plugin_path" ]]; then
+            load_order+=("$plugin_path")
+        fi
+    done
+
+    # 4. Claude plugin
     if [[ -f "${TEMPLATES_DIR}/claude/plugin.sh" ]]; then
         load_order+=("${TEMPLATES_DIR}/claude/plugin.sh")
     fi
 
-    # 4. Codex plugin (if enabled)
+    # 5. Codex plugin (if enabled)
     if [[ "$CODEX_ENABLED" == true ]]; then
         local codex_path="${TEMPLATES_DIR}/codex/plugin.sh"
         if [[ -f "$codex_path" ]]; then
@@ -421,7 +442,7 @@ load_selected_plugins() {
         fi
     fi
 
-    # 5. GitHub Actions plugins (if enabled)
+    # 6. GitHub Actions plugins (if enabled)
     if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
         local github_actions_path="${TEMPLATES_DIR}/github-actions/project-integration/plugin.sh"
         if [[ -f "$github_actions_path" ]]; then
@@ -431,7 +452,7 @@ load_selected_plugins() {
         fi
     fi
 
-    # 5. Auto-tag plugin (independent from project-integration)
+    # 7. Auto-tag plugin (independent from project-integration)
     if [[ "$AUTO_TAG_ENABLED" == true ]]; then
         local auto_tag_path="${TEMPLATES_DIR}/github-actions/auto-tag/plugin.sh"
         if [[ -f "$auto_tag_path" ]]; then
@@ -590,6 +611,67 @@ prompt_language_selection() {
 }
 
 # =============================================================================
+# Service Selection
+# =============================================================================
+
+prompt_service_selection() {
+    if ! check_tty_available; then
+        print_warning "Non-interactive mode: skipping service plugins"
+        SELECTED_SERVICES=()
+        return
+    fi
+
+    local svc_count=${#AVAILABLE_SERVICES[@]}
+
+    echo "" > /dev/tty
+    print_info "Select service plugins (comma-separated numbers, or 'all'/'none'):"
+
+    local i=1
+    for svc in "${AVAILABLE_SERVICES[@]}"; do
+        local display_name="${SERVICE_DISPLAY_NAMES[$svc]:-$svc}"
+        echo "  $i. $display_name" > /dev/tty
+        ((i++))
+    done
+
+    echo "" > /dev/tty
+    echo -n "Enter selection [none]: " > /dev/tty
+    local response
+    IFS='' read -r response < /dev/tty
+
+    # Build SELECTED_SERVICES from input
+    SELECTED_SERVICES=()
+
+    if [[ -z "$response" ]] || [[ "$response" == "none" ]]; then
+        :
+    elif [[ "$response" == "all" ]]; then
+        SELECTED_SERVICES=("${AVAILABLE_SERVICES[@]}")
+    else
+        IFS=',' read -ra nums <<< "$response"
+        for num in "${nums[@]}"; do
+            num=$(echo "$num" | tr -d ' ')
+            if [[ "$num" =~ ^[0-9]+$ ]] && [[ "$num" -ge 1 ]] && [[ "$num" -le "$svc_count" ]]; then
+                SELECTED_SERVICES+=("${AVAILABLE_SERVICES[$((num-1))]}")
+            else
+                print_warning "Invalid selection: $num"
+            fi
+        done
+    fi
+
+    # Set feature flags based on selection
+    for svc in "${SELECTED_SERVICES[@]}"; do
+        case "$svc" in
+            postgresql) POSTGRESQL_ENABLED=true ;;
+        esac
+    done
+
+    if [[ ${#SELECTED_SERVICES[@]} -eq 0 ]]; then
+        print_success "Selected: none (skipping service plugins)"
+    else
+        print_success "Selected: ${SELECTED_SERVICES[*]}"
+    fi
+}
+
+# =============================================================================
 # Argument Parsing
 # =============================================================================
 
@@ -622,6 +704,11 @@ parse_arguments() {
                 ;;
             --codex)
                 CODEX_ENABLED=true
+                shift
+                ;;
+            --postgresql)
+                POSTGRESQL_ENABLED=true
+                SELECTED_SERVICES+=("postgresql")
                 shift
                 ;;
             --github-actions)
@@ -694,7 +781,12 @@ main() {
         prompt_language_selection
     fi
 
-    # Prompt for GitHub Actions features if in interactive mode
+    # Select services if not specified
+    if [[ ${#SELECTED_SERVICES[@]} -eq 0 ]]; then
+        prompt_service_selection
+    fi
+
+    # Prompt for optional features if in interactive mode
     if check_tty_available; then
         # Ask about Codex CLI integration
         if [[ "$CODEX_ENABLED" != true ]]; then
@@ -734,6 +826,7 @@ main() {
     print_section "Setup Configuration"
     echo "Project name:         $PROJECT_NAME"
     echo "Language:             ${SELECTED_LANGUAGES[*]:-none}"
+    echo "Services:             ${SELECTED_SERVICES[*]:-none}"
     echo "Codex CLI:            $CODEX_ENABLED"
     echo "Project Integration:  $GITHUB_ACTIONS_ENABLED"
     echo "Auto-Tag:             $AUTO_TAG_ENABLED"
