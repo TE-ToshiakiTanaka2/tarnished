@@ -99,6 +99,7 @@ declare -A LANGUAGE_DISPLAY_NAMES=(
 # Feature flags
 GITHUB_ACTIONS_ENABLED=false
 AUTO_TAG_ENABLED=false
+CODEX_ENABLED=false
 DRY_RUN=false
 SKIP_CONFIRM=false
 
@@ -126,6 +127,7 @@ Options:
     -d, --dry-run       Preview files without creating them
     -y, --yes           Skip confirmation prompts
     --lang <language>   Select language template (can be specified multiple times)
+    --codex             Include OpenAI Codex CLI integration (code review)
     --github-actions    Include GitHub Project integration (requires erd CLI)
     --overwrite         Overwrite existing files without confirmation
 
@@ -145,6 +147,7 @@ Examples:
     ./setup.sh --lang rust                  # Rust only
     ./setup.sh --lang python                # Python only
     ./setup.sh --lang rust --lang python    # Rust + Python
+    ./setup.sh --lang rust --codex          # Rust with Codex CLI code review
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
     ./setup.sh --overwrite                  # Overwrite existing files
@@ -408,7 +411,17 @@ load_selected_plugins() {
         load_order+=("${TEMPLATES_DIR}/claude/plugin.sh")
     fi
 
-    # 4. GitHub Actions plugins (if enabled)
+    # 4. Codex plugin (if enabled)
+    if [[ "$CODEX_ENABLED" == true ]]; then
+        local codex_path="${TEMPLATES_DIR}/codex/plugin.sh"
+        if [[ -f "$codex_path" ]]; then
+            load_order+=("$codex_path")
+        else
+            print_warning "Codex plugin not found, skipping"
+        fi
+    fi
+
+    # 5. GitHub Actions plugins (if enabled)
     if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
         local github_actions_path="${TEMPLATES_DIR}/github-actions/project-integration/plugin.sh"
         if [[ -f "$github_actions_path" ]]; then
@@ -607,6 +620,10 @@ parse_arguments() {
                     exit 1
                 fi
                 ;;
+            --codex)
+                CODEX_ENABLED=true
+                shift
+                ;;
             --github-actions)
                 GITHUB_ACTIONS_ENABLED=true
                 shift
@@ -679,6 +696,17 @@ main() {
 
     # Prompt for GitHub Actions features if in interactive mode
     if check_tty_available; then
+        # Ask about Codex CLI integration
+        if [[ "$CODEX_ENABLED" != true ]]; then
+            echo "" > /dev/tty
+            echo -n "Enable OpenAI Codex CLI integration (code review)? (y/n) [n]: " > /dev/tty
+            local codex_response
+            read -r codex_response < /dev/tty
+            if [[ "$codex_response" == "y" || "$codex_response" == "Y" ]]; then
+                CODEX_ENABLED=true
+            fi
+        fi
+
         # Ask about project-integration
         if [[ "$GITHUB_ACTIONS_ENABLED" != true ]]; then
             echo "" > /dev/tty
@@ -706,6 +734,7 @@ main() {
     print_section "Setup Configuration"
     echo "Project name:         $PROJECT_NAME"
     echo "Language:             ${SELECTED_LANGUAGES[*]:-none}"
+    echo "Codex CLI:            $CODEX_ENABLED"
     echo "Project Integration:  $GITHUB_ACTIONS_ENABLED"
     echo "Auto-Tag:             $AUTO_TAG_ENABLED"
     echo "Overwrite:            $OVERWRITE_ALL"
