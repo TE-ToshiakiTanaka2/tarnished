@@ -21,6 +21,9 @@ RUN groupadd --gid $USER_GID $USERNAME \
     && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME
 
+# Ensure /bin/sh uses bash (required for devcontainer features like nvm)
+RUN ln -sf /bin/bash /bin/sh
+
 SHELL ["/bin/bash", "-c"]
 
 CMD ["sleep", "infinity"]
