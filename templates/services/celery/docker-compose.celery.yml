@@ -1,6 +1,8 @@
 services:
   {{PROJECT_NAME}}-celery-worker:
-    image: python:3.12-slim
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery
     container_name: {{PROJECT_NAME}}-celery-worker
     working_dir: /workspace
     volumes:
@@ -14,7 +16,9 @@ services:
       CELERY_RESULT_BACKEND: redis://{{PROJECT_NAME}}-redis:6379/1
 
   {{PROJECT_NAME}}-celery-beat:
-    image: python:3.12-slim
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery
     container_name: {{PROJECT_NAME}}-celery-beat
     working_dir: /workspace
     volumes:

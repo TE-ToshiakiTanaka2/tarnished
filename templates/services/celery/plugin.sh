@@ -37,7 +37,7 @@ plugin_description() {
 # Hook Functions
 # =============================================================================
 
-# Copy Celery docker-compose overlay to target directory
+# Copy Celery docker-compose overlay and Dockerfile to target directory
 plugin_copy() {
     local target_dir="$1"
 
@@ -49,6 +49,16 @@ plugin_copy() {
     if [[ -f "$source_compose" ]]; then
         copy_with_confirm "$source_compose" "$target_compose"
         print_success "Celery docker-compose overlay copied"
+    fi
+
+    # Copy Celery Dockerfile
+    local source_dockerfile="${PLUGIN_DIR}/docker/Dockerfile.celery"
+    local target_dockerfile="${target_dir}/docker/Dockerfile.celery"
+
+    if [[ -f "$source_dockerfile" ]]; then
+        mkdir -p "${target_dir}/docker"
+        copy_with_confirm "$source_dockerfile" "$target_dockerfile"
+        print_success "Celery Dockerfile copied"
     fi
 }
 
