@@ -98,9 +98,11 @@ declare -A LANGUAGE_DISPLAY_NAMES=(
 
 # Service selection
 declare -a SELECTED_SERVICES=()
-declare -a AVAILABLE_SERVICES=("postgresql")
+declare -a AVAILABLE_SERVICES=("postgresql" "redis" "celery")
 declare -A SERVICE_DISPLAY_NAMES=(
     ["postgresql"]="PostgreSQL 16"
+    ["redis"]="Redis 7"
+    ["celery"]="Celery Worker + Beat (requires Python + Redis)"
 )
 
 # Feature flags
@@ -108,6 +110,8 @@ GITHUB_ACTIONS_ENABLED=false
 AUTO_TAG_ENABLED=false
 CODEX_ENABLED=false
 POSTGRESQL_ENABLED=false
+REDIS_ENABLED=false
+CELERY_ENABLED=false
 DRY_RUN=false
 SKIP_CONFIRM=false
 
@@ -137,6 +141,8 @@ Options:
     --lang <language>   Select language template (can be specified multiple times)
     --codex             Include OpenAI Codex CLI integration (code review)
     --postgresql        Include PostgreSQL database service
+    --redis             Include Redis cache/broker service
+    --celery            Include Celery task queue (auto-enables Redis, requires Python)
     --github-actions    Include GitHub Project integration (requires erd CLI)
     --overwrite         Overwrite existing files without confirmation
 
@@ -151,6 +157,8 @@ Available Languages:
 
 Available Services:
     postgresql          PostgreSQL 16 database with psql client
+    redis               Redis 7 cache/broker with redis-cli client
+    celery              Celery Worker + Beat task queue (requires Python + Redis)
 
 Examples:
     ./setup.sh                              # Interactive mode
@@ -161,6 +169,8 @@ Examples:
     ./setup.sh --lang rust --lang python    # Rust + Python
     ./setup.sh --lang rust --codex          # Rust with Codex CLI code review
     ./setup.sh --lang rust --postgresql     # Rust with PostgreSQL
+    ./setup.sh --lang python --redis       # Python with Redis
+    ./setup.sh --lang python --celery      # Python with Celery + Redis (auto-enabled)
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
     ./setup.sh --overwrite                  # Overwrite existing files
@@ -661,8 +671,45 @@ prompt_service_selection() {
     for svc in "${SELECTED_SERVICES[@]}"; do
         case "$svc" in
             postgresql) POSTGRESQL_ENABLED=true ;;
+            redis) REDIS_ENABLED=true ;;
+            celery) CELERY_ENABLED=true ;;
         esac
     done
+
+    # Celery requires Python
+    if [[ "$CELERY_ENABLED" == true ]]; then
+        local python_selected=false
+        for lang in "${SELECTED_LANGUAGES[@]}"; do
+            if [[ "$lang" == "python" ]]; then
+                python_selected=true
+                break
+            fi
+        done
+
+        if [[ "$python_selected" != true ]]; then
+            print_warning "Celery requires Python language plugin. Adding Python automatically."
+            SELECTED_LANGUAGES+=("python")
+        fi
+
+        # Auto-enable Redis if not already selected
+        if [[ "$REDIS_ENABLED" != true ]]; then
+            print_info "Celery requires Redis. Adding Redis automatically."
+            REDIS_ENABLED=true
+            SELECTED_SERVICES+=("redis")
+        fi
+    fi
+
+    # Ensure Redis is loaded before Celery (Celery depends on Redis at setup time)
+    if [[ "$CELERY_ENABLED" == true ]] && [[ "$REDIS_ENABLED" == true ]]; then
+        local -a reordered=()
+        for svc in "${SELECTED_SERVICES[@]}"; do
+            [[ "$svc" == "redis" || "$svc" == "celery" ]] && continue
+            reordered+=("$svc")
+        done
+        reordered+=("redis")
+        reordered+=("celery")
+        SELECTED_SERVICES=("${reordered[@]}")
+    fi
 
     if [[ ${#SELECTED_SERVICES[@]} -eq 0 ]]; then
         print_success "Selected: none (skipping service plugins)"
@@ -709,6 +756,21 @@ parse_arguments() {
             --postgresql)
                 POSTGRESQL_ENABLED=true
                 SELECTED_SERVICES+=("postgresql")
+                shift
+                ;;
+            --redis)
+                REDIS_ENABLED=true
+                SELECTED_SERVICES+=("redis")
+                shift
+                ;;
+            --celery)
+                CELERY_ENABLED=true
+                # Auto-enable Redis as Celery dependency (Redis must load before Celery)
+                if [[ "$REDIS_ENABLED" != true ]]; then
+                    REDIS_ENABLED=true
+                    SELECTED_SERVICES+=("redis")
+                fi
+                SELECTED_SERVICES+=("celery")
                 shift
                 ;;
             --github-actions)
