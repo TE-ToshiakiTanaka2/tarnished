@@ -1,0 +1,20 @@
+services:
+  {{PROJECT_NAME}}-db:
+    image: postgres:16
+    container_name: {{PROJECT_NAME}}-db
+    environment:
+      POSTGRES_DB: {{PROJECT_NAME}}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-EXEC", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
