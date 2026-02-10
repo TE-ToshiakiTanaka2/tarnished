@@ -383,6 +383,7 @@ replace_placeholders() {
         "${target_dir}/docker/Dockerfile.dev"
         "${target_dir}/docker-compose.yml"
         "${target_dir}/CLAUDE.md"
+        "${target_dir}/AGENTS.md"
     )
 
     for file in "${files[@]}"; do

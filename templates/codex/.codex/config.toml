@@ -1,0 +1,13 @@
+# Project-level Codex CLI configuration
+# See: https://developers.openai.com/codex/config-advanced/
+
+# Use the latest Codex model
+model = "gpt-5.3-codex"
+
+# Approval policy: require approval for all actions
+# Options: "untrusted", "on-request", "on-failure", "never"
+approval_policy = "on-request"
+
+# Sandbox mode: restrict file writes to workspace only
+# Options: "workspace-write", "danger-full-access"
+sandbox_mode = "workspace-write"
