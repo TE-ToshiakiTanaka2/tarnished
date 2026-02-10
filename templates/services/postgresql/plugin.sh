@@ -91,19 +91,18 @@ plugin_post_copy() {
         print_success "depends_on added to app service"
     fi
 
-    # Add PostgreSQL docker-compose file to devcontainer.json dockerComposeFile array
+    # Add PostgreSQL DB service to devcontainer.json runServices
     local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
 
     if [[ -f "$target_devcontainer" ]]; then
-        print_info "Adding PostgreSQL compose file to devcontainer.json..."
+        print_info "Adding PostgreSQL DB service to devcontainer.json runServices..."
         local temp_file="${target_devcontainer}.tmp"
 
-        jq '.dockerComposeFile += ["../docker-compose.postgresql.yml"] |
-            .runServices += ["{{PROJECT_NAME}}-db"]' \
+        jq '.runServices += ["{{PROJECT_NAME}}-db"]' \
             "$target_devcontainer" > "$temp_file"
 
         mv "$temp_file" "$target_devcontainer"
-        print_success "PostgreSQL compose file added to devcontainer.json"
+        print_success "PostgreSQL DB service added to devcontainer.json"
     fi
 
     # -------------------------------------------------------------------------
