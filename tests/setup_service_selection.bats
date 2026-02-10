@@ -209,3 +209,125 @@ YAML
     # Cleanup
     rm -rf "$temp_dir"
 }
+
+# =============================================================================
+# PostgreSQL plugin_post_copy Integration Tests
+# =============================================================================
+
+@test "plugin_post_copy does not add docker-compose.postgresql.yml to dockerComposeFile" {
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    # Set up directory structure
+    mkdir -p "${temp_dir}/.devcontainer/scripts"
+
+    # Create base docker-compose.yml with working_dir line
+    cat > "${temp_dir}/docker-compose.yml" << 'YAML'
+services:
+  testapp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: testapp
+    volumes:
+      - .:/workspace:cached
+    working_dir: /workspace
+    command: sleep infinity
+YAML
+
+    # Copy postgresql overlay
+    cp "${SCRIPT_DIR}/templates/services/postgresql/docker-compose.postgresql.yml" \
+       "${temp_dir}/docker-compose.postgresql.yml"
+
+    # Create base devcontainer.json
+    cat > "${temp_dir}/.devcontainer/devcontainer.json" << 'JSON'
+{
+  "name": "testapp",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "testapp",
+  "runServices": ["testapp"],
+  "workspaceFolder": "/workspace"
+}
+JSON
+
+    # Create post.sh
+    cat > "${temp_dir}/.devcontainer/scripts/post.sh" << 'BASH'
+#!/bin/bash
+echo "post-create"
+BASH
+
+    # Source and run plugin_post_copy
+    source "${SCRIPT_DIR}/templates/services/postgresql/plugin.sh"
+    plugin_post_copy "$temp_dir"
+
+    # Verify dockerComposeFile does NOT contain postgresql overlay
+    run jq -r '.dockerComposeFile | length' "${temp_dir}/.devcontainer/devcontainer.json"
+    assert_success
+    assert_output "1"
+
+    run jq -r '.dockerComposeFile[0]' "${temp_dir}/.devcontainer/devcontainer.json"
+    assert_success
+    assert_output "../docker-compose.yml"
+
+    # Cleanup
+    rm -rf "$temp_dir"
+}
+
+@test "plugin_post_copy adds DB service to runServices" {
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    # Set up directory structure
+    mkdir -p "${temp_dir}/.devcontainer/scripts"
+
+    # Create base docker-compose.yml
+    cat > "${temp_dir}/docker-compose.yml" << 'YAML'
+services:
+  testapp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: testapp
+    volumes:
+      - .:/workspace:cached
+    working_dir: /workspace
+    command: sleep infinity
+YAML
+
+    # Copy postgresql overlay
+    cp "${SCRIPT_DIR}/templates/services/postgresql/docker-compose.postgresql.yml" \
+       "${temp_dir}/docker-compose.postgresql.yml"
+
+    # Create base devcontainer.json
+    cat > "${temp_dir}/.devcontainer/devcontainer.json" << 'JSON'
+{
+  "name": "testapp",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "testapp",
+  "runServices": ["testapp"],
+  "workspaceFolder": "/workspace"
+}
+JSON
+
+    # Create post.sh
+    cat > "${temp_dir}/.devcontainer/scripts/post.sh" << 'BASH'
+#!/bin/bash
+echo "post-create"
+BASH
+
+    # Source and run plugin_post_copy
+    source "${SCRIPT_DIR}/templates/services/postgresql/plugin.sh"
+    plugin_post_copy "$temp_dir"
+
+    # Verify runServices contains the DB service
+    run jq -r '.runServices | length' "${temp_dir}/.devcontainer/devcontainer.json"
+    assert_success
+    assert_output "2"
+
+    run jq -r '.runServices[1]' "${temp_dir}/.devcontainer/devcontainer.json"
+    assert_success
+    assert_output "{{PROJECT_NAME}}-db"
+
+    # Cleanup
+    rm -rf "$temp_dir"
+}
