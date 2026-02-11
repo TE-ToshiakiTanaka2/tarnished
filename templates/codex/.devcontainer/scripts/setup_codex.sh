@@ -21,7 +21,13 @@ setup_codex() {
     # Install Codex CLI globally
     if ! command -v codex &> /dev/null; then
         echo "  - Installing Codex CLI..."
-        npm install -g @openai/codex
+        if npm install -g @openai/codex; then
+            echo "  - Codex CLI installed successfully"
+        else
+            echo "  [WARN] Failed to install Codex CLI (network error or npm issue)"
+            echo "  You can install it manually later: npm install -g @openai/codex"
+            return 0
+        fi
     else
         echo "  - Codex CLI already installed: $(codex --version 2>/dev/null || echo 'unknown version')"
     fi
