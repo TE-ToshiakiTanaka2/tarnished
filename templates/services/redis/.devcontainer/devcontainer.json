@@ -1,7 +1,4 @@
 {
-  "features": {
-    "ghcr.io/devcontainers-extra/features/redis-cli:1": {}
-  },
   "customizations": {
     "vscode": {
       "extensions": [],

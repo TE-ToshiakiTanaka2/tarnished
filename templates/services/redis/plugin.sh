@@ -5,7 +5,7 @@
 # =============================================================================
 # This plugin provides Redis cache/broker service including:
 # - Redis 7 service via docker-compose
-# - redis-cli client in devcontainer
+# - redis-cli client in devcontainer (installed via post.sh)
 # - Health check configuration
 # - Data persistence with named volume
 # - REDIS_URL environment variable
@@ -128,18 +128,18 @@ plugin_post_copy() {
     fi
 
     # -------------------------------------------------------------------------
-    # Merge devcontainer.json (add redis-cli feature)
+    # Merge devcontainer.json (add customizations)
     # -------------------------------------------------------------------------
     local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
 
     if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
-        print_info "Merging Redis devcontainer features..."
+        print_info "Merging Redis devcontainer customizations..."
         local temp_file="${target_devcontainer}.tmp"
 
         merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
         mv "$temp_file" "$target_devcontainer"
 
-        print_success "Redis devcontainer features merged"
+        print_success "Redis devcontainer customizations merged"
     fi
 
     # -------------------------------------------------------------------------
@@ -197,6 +197,10 @@ plugin_post_copy() {
 # -----------------------------------------------------------------------------
 # Redis Client Setup
 # -----------------------------------------------------------------------------
+if ! command -v redis-cli &> /dev/null; then
+    echo "Installing redis-tools..."
+    sudo apt-get update && sudo apt-get install -y --no-install-recommends redis-tools 2>/dev/null || true
+fi
 if command -v redis-cli &> /dev/null; then
     echo "Redis client is available."
     echo "  - redis-cli version: $(redis-cli --version)"
