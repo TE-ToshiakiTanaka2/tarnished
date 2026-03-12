@@ -1,0 +1,74 @@
+%% icse.sty
+%% Style package for ICSE paper submissions (English)
+%%
+%% This package provides additional utilities not included in acmart,
+%% such as code listings and algorithm formatting.
+%%
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{icse}[2025/01/01 v1.0 ICSE paper style]
+
+%% ========================================
+%% Code Listings
+%% ========================================
+
+\RequirePackage{listings}
+\RequirePackage{xcolor}
+
+% Define colors for code
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{codeblue}{rgb}{0,0,0.8}
+\definecolor{backcolour}{rgb}{0.97,0.97,0.97}
+
+% Code listing style
+\lstdefinestyle{icsestyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codeblue},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\small,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    frame=single,
+    framesep=3pt,
+    xleftmargin=15pt,
+    xrightmargin=5pt
+}
+
+\lstset{style=icsestyle}
+
+%% ========================================
+%% Algorithms
+%% ========================================
+
+\RequirePackage[ruled,vlined,linesnumbered]{algorithm2e}
+
+% Algorithm settings
+\SetAlCapSkip{1em}
+\SetAlgoSkip{medskip}
+
+%% ========================================
+%% Figures
+%% ========================================
+
+% Default figure path
+\graphicspath{{./figures/}{./images/}{./}}
+
+%% ========================================
+%% Additional Utilities
+%% ========================================
+
+\RequirePackage{subfig}
+
+\endinput

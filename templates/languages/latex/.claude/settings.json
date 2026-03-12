@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write(*.tex)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "latexindent -w -s $CLAUDE_FILE_PATH 2>/dev/null; rm -f ${CLAUDE_FILE_PATH}.bak indent.log"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.tex)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "latexindent -w -s $CLAUDE_FILE_PATH 2>/dev/null; rm -f ${CLAUDE_FILE_PATH}.bak indent.log"
+          }
+        ]
+      }
+    ]
+  }
+}

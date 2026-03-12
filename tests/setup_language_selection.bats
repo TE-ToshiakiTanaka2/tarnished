@@ -14,12 +14,13 @@ setup() {
 
     # Set up global variables that setup.sh defines
     declare -ga SELECTED_LANGUAGES=()
-    declare -ga AVAILABLE_LANGUAGES=("rust" "python" "node" "deno")
+    declare -ga AVAILABLE_LANGUAGES=("rust" "python" "node" "deno" "latex")
     declare -gA LANGUAGE_DISPLAY_NAMES=(
         ["rust"]="Rust"
         ["python"]="Python"
         ["node"]="Node.js/TypeScript"
         ["deno"]="Deno"
+        ["latex"]="LaTeX"
     )
 }
 
@@ -73,9 +74,9 @@ parse_language_input() {
 }
 
 @test "last language can be selected" {
-    parse_language_input "4"
+    parse_language_input "5"
     assert_equal "${#SELECTED_LANGUAGES[@]}" "1"
-    assert_equal "${SELECTED_LANGUAGES[0]}" "deno"
+    assert_equal "${SELECTED_LANGUAGES[0]}" "latex"
 }
 
 # --- Multiple selection ---
@@ -94,30 +95,32 @@ parse_language_input() {
     assert_equal "${SELECTED_LANGUAGES[1]}" "deno"
 }
 
-@test "all four languages can be selected" {
-    parse_language_input "1,2,3,4"
-    assert_equal "${#SELECTED_LANGUAGES[@]}" "4"
+@test "all five languages can be selected" {
+    parse_language_input "1,2,3,4,5"
+    assert_equal "${#SELECTED_LANGUAGES[@]}" "5"
     assert_equal "${SELECTED_LANGUAGES[0]}" "rust"
     assert_equal "${SELECTED_LANGUAGES[1]}" "python"
     assert_equal "${SELECTED_LANGUAGES[2]}" "node"
     assert_equal "${SELECTED_LANGUAGES[3]}" "deno"
+    assert_equal "${SELECTED_LANGUAGES[4]}" "latex"
 }
 
 # --- 'all' keyword ---
 
 @test "'all' keyword selects all languages" {
     parse_language_input "all"
-    assert_equal "${#SELECTED_LANGUAGES[@]}" "4"
+    assert_equal "${#SELECTED_LANGUAGES[@]}" "5"
     assert_equal "${SELECTED_LANGUAGES[0]}" "rust"
     assert_equal "${SELECTED_LANGUAGES[1]}" "python"
     assert_equal "${SELECTED_LANGUAGES[2]}" "node"
     assert_equal "${SELECTED_LANGUAGES[3]}" "deno"
+    assert_equal "${SELECTED_LANGUAGES[4]}" "latex"
 }
 
 # --- Invalid input handling ---
 
 @test "out-of-range number is ignored" {
-    parse_language_input "5"
+    parse_language_input "6"
     assert_equal "${#SELECTED_LANGUAGES[@]}" "0"
 }
 

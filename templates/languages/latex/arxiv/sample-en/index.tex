@@ -1,0 +1,74 @@
+%% index.tex
+%% Sample ICSE paper template (English)
+%%
+%% This template demonstrates the basic structure of an academic paper
+%% using the ICSE document class (ACM sigconf format).
+%%
+%% For double-blind review submission, use:
+%%   \documentclass[anonymous,review]{icse}
+%%
+
+\documentclass{icse}
+
+%% ========================================
+%% Document Information
+%% ========================================
+
+\title{Sample Paper Title: A Comprehensive Template for ICSE Submissions}
+
+%% Author Information (ACM format - one block per author)
+
+\author{First Author}
+\affiliation{%
+  \institution{Department of Computer Science, University A}
+  \city{City}
+  \country{Country}
+}
+\email{first@example.com}
+
+\author{Second Author}
+\affiliation{%
+  \institution{Research Institute B}
+  \city{City}
+  \country{Country}
+}
+\email{second@example.com}
+
+%% ========================================
+%% Abstract (must be before \maketitle in acmart)
+%% ========================================
+
+\begin{abstract}
+\input{tex/00_abstract}
+\end{abstract}
+
+%% ========================================
+%% Document Body
+%% ========================================
+
+\begin{document}
+
+\maketitle
+
+%% Introduction
+\input{tex/01_introduction}
+
+%% Conclusion
+\input{tex/02_conclusion}
+
+%% ========================================
+%% Acknowledgments
+%% ========================================
+
+\begin{acks}
+The authors would like to thank the anonymous reviewers for their valuable comments and suggestions.
+\end{acks}
+
+%% ========================================
+%% Bibliography
+%% ========================================
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{bib/references}
+
+\end{document}

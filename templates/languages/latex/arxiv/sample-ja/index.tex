@@ -1,0 +1,81 @@
+%% index.tex
+%% サンプル ICSE 論文テンプレート（日本語）
+%%
+%% このテンプレートは ICSE ドキュメントクラス（ACM sigconf形式）を使用した
+%% 学術論文の基本構造を示しています。
+%%
+%% 匿名レビュー投稿時は以下を使用:
+%%   \documentclass[anonymous,review]{icse-ja}
+%%
+%% ビルド方法: lualatex index.tex
+%%
+
+\documentclass{icse-ja}
+
+%% ========================================
+%% 日本語タイトル・著者情報
+%% ========================================
+
+\jtitle{サンプル論文タイトル：ICSE投稿用テンプレート}
+\jauthor{著者 太郎，著者 花子}
+
+%% ========================================
+%% 英語タイトル・著者情報（ACM形式）
+%% ========================================
+
+\title{Sample Paper Title: A Template for ICSE Submissions}
+
+\author{Taro Author}
+\affiliation{%
+  \institution{A大学 情報科学研究科}
+  \city{東京}
+  \country{日本}
+}
+\email{taro@example.com}
+
+\author{Hanako Author}
+\affiliation{%
+  \institution{B研究所}
+  \city{大阪}
+  \country{日本}
+}
+\email{hanako@example.com}
+
+%% ========================================
+%% 概要（\maketitle の前に記述）
+%% ========================================
+
+\begin{abstract}
+\input{tex/00_abstract}
+\end{abstract}
+
+%% ========================================
+%% 文書本体
+%% ========================================
+
+\begin{document}
+
+\maketitle
+
+%% 序論
+\input{tex/01_introduction}
+
+%% 結論
+\input{tex/02_conclusion}
+
+%% ========================================
+%% 謝辞
+%% ========================================
+
+\begin{acks}
+本研究を進めるにあたり，貴重なご意見をいただいた査読者の方々に感謝いたします。
+\end{acks}
+
+%% ========================================
+%% 参考文献
+%% ========================================
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{bib/references}
+
+\end{document}

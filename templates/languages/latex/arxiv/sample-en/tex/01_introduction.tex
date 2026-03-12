@@ -1,0 +1,92 @@
+%% 01_introduction.tex
+%% Introduction section
+
+\section{Introduction}
+\label{sec:introduction}
+
+Academic writing requires careful attention to formatting and structure.
+This template provides a foundation for preparing papers for ICSE submissions
+using the ACM sigconf format, incorporating best practices from the academic community.
+
+\subsection{Background}
+
+The International Conference on Software Engineering (ICSE) is a premier venue
+for software engineering research. A well-designed template helps authors focus
+on content while ensuring consistent formatting that meets ACM publication standards.
+
+\subsection{Features}
+
+This template includes several useful features:
+
+\begin{itemize}
+    \item Two-column layout based on ACM sigconf format
+    \item Mathematical typesetting with theorem environments
+    \item Code listing support with syntax highlighting
+    \item Algorithm description capabilities
+    \item Automatic bibliography management with ACM Reference Format
+\end{itemize}
+
+\subsection{Mathematical Examples}
+
+The template supports various mathematical constructs.
+For example, a simple equation:
+
+\begin{equation}
+    E = mc^2
+    \label{eq:einstein}
+\end{equation}
+
+And a more complex aligned equation:
+
+\begin{align}
+    \nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+    \nabla \cdot \mathbf{B} &= 0 \\
+    \nabla \times \mathbf{E} &= -\frac{\partial \mathbf{B}}{\partial t} \\
+    \nabla \times \mathbf{B} &= \mu_0 \mathbf{J} + \mu_0 \varepsilon_0 \frac{\partial \mathbf{E}}{\partial t}
+\end{align}
+
+\begin{theorem}
+\label{thm:example}
+For any real numbers $a$ and $b$, $(a + b)^2 = a^2 + 2ab + b^2$.
+\end{theorem}
+
+\begin{proof}
+By direct expansion of $(a + b)(a + b)$.
+\end{proof}
+
+\subsection{Code Listing Example}
+
+The template supports code listings with syntax highlighting:
+
+\begin{lstlisting}[language=Python, caption={Example Python code}]
+def hello_world():
+    """Print a greeting message."""
+    print("Hello, World!")
+    return True
+
+if __name__ == "__main__":
+    hello_world()
+\end{lstlisting}
+
+\subsection{Algorithm Example}
+
+Algorithms can be described using the algorithm2e environment:
+
+\begin{algorithm}[t]
+\caption{Example Algorithm}
+\label{alg:example}
+\KwIn{Input data $X$}
+\KwOut{Processed result $Y$}
+Initialize $Y \leftarrow \emptyset$\;
+\For{each element $x$ in $X$}{
+    Process $x$\;
+    Add result to $Y$\;
+}
+\Return{$Y$}
+\end{algorithm}
+
+\subsection{Paper Organization}
+
+The remainder of this paper is organized as follows.
+Section~\ref{sec:conclusion} concludes the paper with a summary
+of our contributions and future work directions.

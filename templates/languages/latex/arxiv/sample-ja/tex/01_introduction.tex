@@ -1,0 +1,92 @@
+%% 01_introduction.tex
+%% 序論セクション
+
+\section{はじめに}
+\label{sec:introduction}
+
+学術論文の執筆には，書式と構造への細心の注意が必要である．
+本テンプレートは，ICSE（International Conference on Software Engineering）投稿用の論文を
+ACM sigconf形式で作成するための基盤を提供し，学術コミュニティのベストプラクティスを取り入れている．
+
+\subsection{背景}
+
+ICSEはソフトウェア工学研究における主要な発表の場である．
+適切に設計されたテンプレートにより，著者はACM出版基準に準拠した一貫した書式を確保しながら
+内容に集中することができる．
+
+\subsection{機能}
+
+本テンプレートには，以下の便利な機能が含まれている：
+
+\begin{itemize}
+    \item ACM sigconf形式に基づく2カラムレイアウト
+    \item 定理環境を含む数式組版
+    \item シンタックスハイライト付きコードリスト
+    \item アルゴリズム記述機能
+    \item ACM Reference Format による自動参考文献管理
+\end{itemize}
+
+\subsection{数式の例}
+
+本テンプレートは様々な数学的構造をサポートしている．
+例えば，簡単な式：
+
+\begin{equation}
+    E = mc^2
+    \label{eq:einstein}
+\end{equation}
+
+より複雑な整列式：
+
+\begin{align}
+    \nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+    \nabla \cdot \mathbf{B} &= 0 \\
+    \nabla \times \mathbf{E} &= -\frac{\partial \mathbf{B}}{\partial t} \\
+    \nabla \times \mathbf{B} &= \mu_0 \mathbf{J} + \mu_0 \varepsilon_0 \frac{\partial \mathbf{E}}{\partial t}
+\end{align}
+
+\begin{theorem}
+\label{thm:example}
+任意の実数 $a$ と $b$ に対して，$(a + b)^2 = a^2 + 2ab + b^2$ が成り立つ．
+\end{theorem}
+
+\begin{proof}
+$(a + b)(a + b)$ を直接展開することで得られる．
+\end{proof}
+
+\subsection{コードリストの例}
+
+本テンプレートはシンタックスハイライト付きのコードリストをサポートしている：
+
+\begin{lstlisting}[language=Python, caption={Pythonコードの例}]
+def hello_world():
+    """挨拶メッセージを出力する"""
+    print("Hello, World!")
+    return True
+
+if __name__ == "__main__":
+    hello_world()
+\end{lstlisting}
+
+\subsection{アルゴリズムの例}
+
+algorithm2e環境を使用してアルゴリズムを記述できる：
+
+\begin{algorithm}[t]
+\caption{アルゴリズムの例}
+\label{alg:example}
+\KwIn{入力データ $X$}
+\KwOut{処理結果 $Y$}
+$Y \leftarrow \emptyset$ で初期化\;
+\For{$X$ の各要素 $x$ について}{
+    $x$ を処理\;
+    結果を $Y$ に追加\;
+}
+\Return{$Y$}
+\end{algorithm}
+
+\subsection{論文の構成}
+
+本論文の残りの構成は以下の通りである．
+\ref{sec:conclusion}節では，本研究の貢献のまとめと
+今後の研究の方向性について述べる．

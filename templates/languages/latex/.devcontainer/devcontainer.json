@@ -1,0 +1,101 @@
+{
+  "features": {},
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "files.exclude": {
+          "**/.intermediates": true,
+          "**/output": true
+        },
+        "[latex]": {
+          "editor.wordWrap": "on",
+          "editor.wordSeparators": "./\\()\"'-:,.;<>~!@#$%^&*|+=[]{}`~?。．、，（）「」『』［］｛｝《》てにをはがのともへでや ",
+          "editor.tabSize": 2,
+          "editor.insertSpaces": true,
+          "editor.detectIndentation": false,
+          "editor.suggestSelection": "recentlyUsedByPrefix",
+          "editor.suggest.snippetsPreventQuickSuggestions": false,
+          "editor.quickSuggestions": {
+            "other": true,
+            "comments": false,
+            "strings": false
+          },
+          "editor.bracketPairColorization.enabled": true,
+          "editor.unicodeHighlight.invisibleCharacters": true,
+          "editor.unicodeHighlight.allowedCharacters": {
+            "，": true,
+            "．": true,
+            "！": true,
+            "？": true,
+            "［": true,
+            "］": true,
+            "｛": true,
+            "｝": true,
+            "＜": true,
+            "＞": true
+          },
+          "editor.stickyScroll.enabled": true
+        },
+        "latex-workshop.latex.recipe.default": "latexmk",
+        "latex-workshop.latex.recipes": [
+          {
+            "name": "latexmk",
+            "tools": [
+              "latexmk"
+            ]
+          }
+        ],
+        "latex-workshop.latex.tools": [
+          {
+            "name": "latexmk",
+            "command": "latexmk",
+            "args": [
+              "-time",
+              "%DOC%"
+            ]
+          }
+        ],
+        "latex-workshop.latex.autoBuild.run": "never",
+        "latex-workshop.latex.autoBuild.cleanAndRetry.enabled": false,
+        "latex-workshop.latex.autoClean.run": "onFailed",
+        "latex-workshop.latex.clean.method": "glob",
+        "latex-workshop.latex.clean.fileTypes": [
+          "*.aux",
+          "*.bbl",
+          "*.blg",
+          "*.idx",
+          "*.ind",
+          "*.lof",
+          "*.lot",
+          "*.out",
+          "*.toc",
+          "*.acn",
+          "*.acr",
+          "*.alg",
+          "*.glg",
+          "*.glo",
+          "*.gls",
+          "*.ist",
+          "*.fls",
+          "*.log",
+          "*.fdb_latexmk",
+          "*.snm",
+          "*.nav",
+          "*.dvi",
+          "*.synctex.gz",
+          "*.synctex.gz(busy)"
+        ],
+        "latex-workshop.intellisense.package.enabled": true,
+        "latex-workshop.view.pdf.internal.synctex.keybinding": "ctrl-click",
+        "latex-workshop.synctex.afterBuild.enabled": true,
+        "latex-workshop.synctex.path": "synctex",
+        "latex-workshop.synctex.synctexjs.enabled": true,
+        "latex-workshop.view.pdf.viewer": "tab",
+        "latex-workshop.view.pdf.zoom": "page-width"
+      },
+      "extensions": [
+        "james-yu.latex-workshop"
+      ]
+    }
+  }
+}
