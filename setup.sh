@@ -88,12 +88,13 @@ declare -a PLUGIN_NAMES=()
 
 # Language selection
 declare -a SELECTED_LANGUAGES=()
-declare -a AVAILABLE_LANGUAGES=("rust" "python" "node" "deno")
+declare -a AVAILABLE_LANGUAGES=("rust" "python" "node" "deno" "latex")
 declare -A LANGUAGE_DISPLAY_NAMES=(
     ["rust"]="Rust"
     ["python"]="Python"
     ["node"]="Node.js/TypeScript"
     ["deno"]="Deno"
+    ["latex"]="LaTeX"
 )
 
 # Service selection
