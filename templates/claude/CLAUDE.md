@@ -20,7 +20,12 @@ This file provides context to Claude Code about the project structure and develo
 │   ├── devcontainer.json   # VS Code Devcontainer settings
 │   └── scripts/            # Setup scripts
 ├── .claude/                # Claude Code configuration
-│   ├── commands/           # Custom slash commands
+│   ├── skills/             # Custom skills (slash commands)
+│   │   ├── issue/          # Issue creation skill
+│   │   ├── implement/      # Implementation skill
+│   │   ├── pr/             # Pull Request skill
+│   │   ├── review/         # Code review skill (via Codex)
+│   │   └── design/         # Architecture design skill
 │   ├── scripts/            # Helper scripts
 │   └── settings.json       # Claude Code settings
 ├── docker/                 # Docker configuration
@@ -71,11 +76,15 @@ docker-compose down
 
 ### Claude Code
 
-Available custom commands:
+Available skills (slash commands):
 
-- `/issue` - Create a GitHub Issue from requirements
-- `/implement <issue_number>` - Implement a GitHub Issue
-- `/pr` - Create a Pull Request
+- `/issue` - Create a GitHub Issue from requirements (uses sc:brainstorm)
+- `/design <issue_number>` - Design architecture with UML diagrams (uses sc:research, sc:design, sc:workflow)
+- `/implement <issue_number>` - Implement a GitHub Issue (uses sc:design, sc:workflow)
+- `/review` - Code review via Codex CLI (requires codex)
+- `/pr` - Create a Pull Request (uses sc:analyze, sc:improve, sc:cleanup, sc:reflect)
+
+**Typical workflow**: `/issue` → `/design` → `/implement` → `/review` → `/pr`
 
 ## Important Notes
 
