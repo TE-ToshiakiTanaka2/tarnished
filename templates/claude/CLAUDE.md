@@ -25,8 +25,7 @@ This file provides context to Claude Code about the project structure and develo
 │   │   ├── implement/      # Implementation skill
 │   │   ├── pr/             # Pull Request skill
 │   │   ├── review/         # Code review skill (via Codex)
-│   │   ├── design/         # Architecture design skill
-│   │   └── bugfix/         # Bug investigation/fix skill
+│   │   └── design/         # Architecture design skill
 │   ├── scripts/            # Helper scripts
 │   └── settings.json       # Claude Code settings
 ├── docker/                 # Docker configuration
@@ -83,7 +82,6 @@ Available skills (slash commands):
 - `/design <issue_number>` - Design architecture with UML diagrams (uses sc:research, sc:design, sc:workflow)
 - `/implement <issue_number>` - Implement a GitHub Issue (uses sc:design, sc:workflow)
 - `/review` - Code review via Codex CLI (requires codex)
-- `/bugfix <issue_number>` - Investigate and fix a bug (uses sc:analyze)
 - `/pr` - Create a Pull Request (uses sc:analyze, sc:improve, sc:cleanup, sc:reflect)
 
 **Typical workflow**: `/issue` → `/design` → `/implement` → `/review` → `/pr`
