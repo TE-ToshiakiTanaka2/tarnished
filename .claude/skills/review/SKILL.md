@@ -26,6 +26,12 @@ After installation, run /review again.
 
 Do NOT proceed with any review steps if Codex CLI is not available.
 
+## MCP Tools
+
+Use the following MCP tools for code understanding during review:
+
+- **serena**: `find_symbol`, `get_symbols_overview`, `search_for_pattern` — for tracing code paths and understanding symbol relationships in the reviewed changes
+
 ## Usage
 
 Review the current feature branch's implementation (default):

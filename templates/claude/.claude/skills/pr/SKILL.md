@@ -50,6 +50,12 @@ Pull Request creation skill for CLI projects. Handles code analysis, improvement
     - Re-check CI
 11. **Report completion** - Present PR URL
 
+## MCP Tools
+
+Use the following MCP tools for code analysis:
+
+- **serena**: `find_symbol`, `get_symbols_overview` — for understanding code structure during analysis and improvement phases
+
 ## SuperClaude Skills Used
 
 | Skill | Purpose |

@@ -11,6 +11,12 @@ agent: Explore
 
 Project metrics and analytics skill. Collects code statistics, test coverage, issue/PR status, dependency health, and git activity summary. Generates a comprehensive metrics report.
 
+## MCP Tools
+
+Use the following MCP tools for project exploration:
+
+- **serena**: `find_file`, `list_dir` — for discovering project files and directory structure
+
 ## Usage
 
 ```

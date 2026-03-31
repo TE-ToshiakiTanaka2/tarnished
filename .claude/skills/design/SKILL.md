@@ -101,6 +101,13 @@ Examples:
 
 **Important**: This branch is shared with `/implement`. The `/implement` command will detect and reuse this branch.
 
+## MCP Tools
+
+Use the following MCP tools for efficient codebase analysis and library research:
+
+- **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `list_dir` — for understanding existing architecture, finding related symbols, and navigating the codebase
+- **context7**: `resolve-library-id`, `query-docs` — for researching external libraries and frameworks referenced in the issue
+
 ## SuperClaude Skills Used
 
 | Skill | Purpose | Output |
