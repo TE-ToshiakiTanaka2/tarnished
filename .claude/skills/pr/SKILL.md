@@ -1,7 +1,7 @@
 ---
 name: pr
 description: Create a Pull Request. Uses SuperClaude skills (sc:analyze, sc:improve) for code analysis and improvements. Handles PR creation and CI monitoring with auto-fix loop.
-argument-hint: [target_branch]
+argument-hint: "[target_branch]"
 disable-model-invocation: true
 ---
 

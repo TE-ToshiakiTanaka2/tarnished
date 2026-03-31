@@ -1,7 +1,7 @@
 ---
 name: implement
 description: Implement a GitHub Issue. Uses SuperClaude skills (sc:design, sc:workflow) for design and planning. Handles branch creation, implementation, static analysis, testing, and progressive commits.
-argument-hint: [issue_number]
+argument-hint: "[issue_number]"
 disable-model-invocation: true
 ---
 

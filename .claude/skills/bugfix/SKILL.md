@@ -1,7 +1,7 @@
 ---
 name: bugfix
 description: Bug investigation and fix workflow. Uses SuperClaude sc:analyze for root cause analysis. Investigates bugs, implements fix with regression tests, and verifies the solution.
-argument-hint: [issue_number]
+argument-hint: "[issue_number]"
 disable-model-invocation: true
 ---
 

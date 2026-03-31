@@ -1,7 +1,7 @@
 ---
 name: review
 description: Code review via Codex CLI. Delegates review of the current branch to OpenAI Codex for an independent second opinion, then applies fixes. Requires codex CLI to be installed.
-argument-hint: [--builtin]
+argument-hint: "[--builtin]"
 disable-model-invocation: true
 ---
 

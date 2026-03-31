@@ -1,7 +1,7 @@
 ---
 name: issue
 description: Create a GitHub Issue from requirements. Uses SuperClaude sc:brainstorm for requirement discovery, handles implementation planning, sizing, and Issue creation with project field configuration.
-argument-hint: [description of what you want to build]
+argument-hint: "[description of what you want to build]"
 disable-model-invocation: true
 ---
 
