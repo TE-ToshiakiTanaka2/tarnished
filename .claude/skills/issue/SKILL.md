@@ -1,6 +1,6 @@
 ---
 name: issue
-description: Create a GitHub Issue from requirements. Handles requirement discovery, implementation planning, sizing, and Issue creation with project field configuration.
+description: Create a GitHub Issue from requirements. Uses SuperClaude sc:brainstorm for requirement discovery, handles implementation planning, sizing, and Issue creation with project field configuration.
 argument-hint: [description of what you want to build]
 disable-model-invocation: true
 ---
@@ -14,7 +14,7 @@ GitHub Issue creation skill for CLI projects. Handles requirement discovery, Iss
 ### Phase 1: Requirement Understanding and Discovery
 
 1. **Confirm user request** - Understand what the user wants to accomplish
-2. **Deep requirement analysis** - Dig deeper into requirements:
+2. **Execute `/sc:brainstorm`** - Use SuperClaude's brainstorm skill to dig deeper into requirements:
    - Discover hidden requirements
    - Identify edge cases
    - Confirm technical constraints
@@ -36,9 +36,15 @@ GitHub Issue creation skill for CLI projects. Handles requirement discovery, Iss
 9. **Set Project fields** - Automatically set Size and Priority (if project.yml exists)
 10. **Return Issue number**
 
-## Requirement Analysis Perspectives
+## SuperClaude Skills Used
 
-Explore requirements from these perspectives:
+| Skill | Purpose |
+| --- | --- |
+| `/sc:brainstorm` | Deep requirement analysis and edge case discovery |
+
+## Leveraging sc:brainstorm
+
+Use `/sc:brainstorm` to explore requirements from these perspectives:
 
 - **Functional requirements**: What to achieve
 - **Non-functional requirements**: Performance, security, maintainability
@@ -111,7 +117,7 @@ Context and purpose
 ## Workflow Example
 
 1. User: "I want to add a feature to load configuration files"
-2. Deep requirement analysis:
+2. Execute `/sc:brainstorm` to dig deeper into requirements:
    - "Which format? JSON/TOML/YAML?"
    - "What's the default path?"
    - "Need environment variable override?"
@@ -140,8 +146,9 @@ Ready for /implement #XX
 
 ## Integration
 
-- **Next step**: Start implementation with `/implement <issue_number>`
+- **Next step**: Design with `/design <issue_number>` or start implementation with `/implement <issue_number>`
 - **Final step**: Create Pull Request with `/pr`
+- **Typical workflow**: **`/issue`** → `/design` → `/implement` → `/review` → `/pr`
 
 ARGUMENTS:
 $ARGUMENTS

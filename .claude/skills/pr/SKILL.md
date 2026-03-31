@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Create a Pull Request. Handles code analysis, quality improvements, PR creation, and CI monitoring with auto-fix loop.
+description: Create a Pull Request. Uses SuperClaude skills (sc:analyze, sc:improve) for code analysis and improvements. Handles PR creation and CI monitoring with auto-fix loop.
 argument-hint: [target_branch]
 disable-model-invocation: true
 ---
@@ -18,12 +18,12 @@ Pull Request creation skill for CLI projects. Handles code analysis, improvement
 
 ### Phase 1: Code Analysis and Improvement
 
-1. **Code analysis** - Comprehensive code analysis:
+1. **Execute `/sc:analyze`** - Comprehensive code analysis:
    - Code quality
    - Security
    - Performance
    - Architecture
-2. **Improvements** - Fix discovered issues:
+2. **Execute `/sc:improve`** - Fix discovered issues:
    - Code quality improvements
    - Pattern standardization
    - Remove redundant code
@@ -49,6 +49,13 @@ Pull Request creation skill for CLI projects. Handles code analysis, improvement
     - Commit & push
     - Re-check CI
 11. **Report completion** - Present PR URL
+
+## SuperClaude Skills Used
+
+| Skill | Purpose |
+| --- | --- |
+| `/sc:analyze` | Comprehensive code analysis (quality, security, performance, architecture) |
+| `/sc:improve` | Code quality improvements and pattern standardization |
 
 ## CI Fix Loop
 
@@ -174,16 +181,17 @@ CI Status: All checks passed (after 1 fix iteration)
 
 ## Best Practices
 
-- **Analyze Before PR**: Discover issues early with code analysis
-- **Improve Proactively**: Enhance quality before submitting
+- **Analyze Before PR**: Discover issues early with `/sc:analyze`
+- **Improve Proactively**: Enhance quality with `/sc:improve` before submitting
 - **CI First**: Run same checks as CI locally beforehand
 - **Clear Description**: PR description easy for reviewers to understand
 - **Issue Linking**: Always link related Issues
 
 ## Integration
 
-- **Prerequisite**: Implementation completed with `/implement <issue_number>`
+- **Prerequisite**: Implementation completed with `/implement <issue_number>`, optionally reviewed with `/review`
 - **CI Workflow**: Integrates with GitHub Actions workflows
+- **Typical workflow**: `/issue` → `/design` → `/implement` → `/review` → **`/pr`**
 
 ARGUMENTS:
 $ARGUMENTS

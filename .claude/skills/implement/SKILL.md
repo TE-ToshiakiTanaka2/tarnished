@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Implement a GitHub Issue. Handles branch creation, design, implementation, static analysis, testing, and progressive commits.
+description: Implement a GitHub Issue. Uses SuperClaude skills (sc:design, sc:workflow) for design and planning. Handles branch creation, implementation, static analysis, testing, and progressive commits.
 argument-hint: [issue_number]
 disable-model-invocation: true
 ---
@@ -18,16 +18,22 @@ Implementation skill for CLI projects. Handles design, implementation, static an
 ### Phase 1: Preparation
 
 1. **Review Issue** - Understand Issue content from the context above
-2. **Create branch** - Create branch following naming convention
-3. **Understand codebase** - Grasp the structure of related code
+2. **Check for existing branch/design** - Look for branches and design artifacts:
+   ```bash
+   git branch -a | grep "#{issue_number}"
+   ```
+   - If a branch exists (e.g., from `/design`), checkout and reuse it
+   - Check for design docs in `docs/design/#{issue_number}/`
+3. **Create branch** (if not reusing) - Create branch following naming convention
+4. **Understand codebase** - Grasp the structure of related code
 
-### Phase 2: Design
+### Phase 2: Design (skip if design docs exist from `/design`)
 
-4. **Architecture and design** - Determine architecture and design:
+5. **Execute `/sc:design`** - Determine architecture and design:
    - Module structure
    - Interface design
    - Type definitions
-5. **Implementation workflow** - Generate implementation steps:
+6. **Execute `/sc:workflow`** - Generate implementation steps:
    - Organize task dependencies
    - Determine implementation order
    - Test strategy
@@ -45,6 +51,13 @@ Implementation skill for CLI projects. Handles design, implementation, static an
 9. **Run tests** - Unit and integration tests
 10. **Final commit** - Commit fixes
 11. **Report results** - Present branch name and Issue number
+
+## SuperClaude Skills Used
+
+| Skill | Purpose |
+| --- | --- |
+| `/sc:design` | Architecture and interface design (if no design docs exist) |
+| `/sc:workflow` | Implementation step generation (if no workflow docs exist) |
 
 ## Branch Naming Convention
 
@@ -79,8 +92,8 @@ docs: update CLI usage documentation
 ```mermaid
 graph TD
     A[Review Issue] --> B[Create branch]
-    B --> C[Design]
-    C --> D[Plan workflow]
+    B --> C[sc:design]
+    C --> D[sc:workflow]
     D --> E[Implement feature]
     E --> F[Commit]
     F --> G{All tasks done?}
@@ -137,8 +150,9 @@ Ready for /pr
 
 ## Integration
 
-- **Prerequisite**: Issue created with `/issue`
-- **Next step**: Create Pull Request with `/pr`
+- **Prerequisite**: Issue created with `/issue`, optionally designed with `/design`
+- **Next step**: Review with `/review` or create Pull Request with `/pr`
+- **Typical workflow**: `/issue` → `/design` → **`/implement`** → `/review` → `/pr`
 
 ARGUMENTS:
 $ARGUMENTS
