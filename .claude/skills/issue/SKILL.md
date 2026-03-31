@@ -36,6 +36,12 @@ GitHub Issue creation skill for CLI projects. Handles requirement discovery, Iss
 9. **Set Project fields** - Automatically set Size and Priority (if project.yml exists)
 10. **Return Issue number**
 
+## MCP Tools
+
+Use the following MCP tools for requirement analysis:
+
+- **sequential-thinking**: `sequentialthinking` — for structured requirement discovery: break down complex requests, identify hidden requirements, explore edge cases, and evaluate implementation trade-offs step by step
+
 ## SuperClaude Skills Used
 
 | Skill | Purpose |

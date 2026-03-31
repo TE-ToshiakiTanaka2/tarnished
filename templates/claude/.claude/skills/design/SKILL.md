@@ -107,6 +107,7 @@ Use the following MCP tools for efficient codebase analysis and library research
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `list_dir` — for understanding existing architecture, finding related symbols, and navigating the codebase
 - **context7**: `resolve-library-id`, `query-docs` — for researching external libraries and frameworks referenced in the issue
+- **sequential-thinking**: `sequentialthinking` — for structured reasoning through architecture trade-offs, design decisions, and multi-step design analysis. Use when evaluating multiple design options or when the design scope is unclear initially
 
 ## SuperClaude Skills Used
 

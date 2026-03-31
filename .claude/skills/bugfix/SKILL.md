@@ -69,6 +69,7 @@ Use the following MCP tools for bug investigation:
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `find_referencing_symbols` — for tracing code paths, finding references to buggy symbols, and understanding call chains
 - **context7**: `resolve-library-id`, `query-docs` — for checking library behavior when the bug may relate to external dependency usage
+- **sequential-thinking**: `sequentialthinking` — for structured root cause analysis: form hypotheses, verify against code evidence, revise and narrow down until the root cause is identified
 
 ## SuperClaude Skills Used
 
