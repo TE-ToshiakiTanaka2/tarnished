@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(for skill:*)",
-      "Bash(do cp:*)",
-      "Bash(done)"
-    ]
-  }
-}
