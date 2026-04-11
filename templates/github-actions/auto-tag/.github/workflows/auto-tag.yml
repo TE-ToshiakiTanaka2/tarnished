@@ -7,16 +7,15 @@
 # Prerequisites:
 #   1. Create .github/versioning.yml with your version configuration:
 #      ```yaml
-#      branches:
-#        - prefix: "major/"
-#          bump: major
-#        - prefix: "release/"
-#          bump: minor
-#        - prefix: "feature/"
-#          bump: patch
-#        - prefix: "fix/"
-#          bump: patch
-#      default_bump: rc
+#      versioning:
+#        branch_prefixes:
+#          major:
+#            - "major/"
+#          minor:
+#            - "release/"
+#          patch:
+#            - "feature/"
+#            - "fix/"
 #      ```
 #
 # For more information about erd: https://github.com/TE-ToshiakiTanaka2/tarnished

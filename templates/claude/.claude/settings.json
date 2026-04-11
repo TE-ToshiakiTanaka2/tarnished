@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/scripts/deny-check.sh"
+            "command": "/workspace/.claude/scripts/deny-check.sh"
           }
         ]
       }

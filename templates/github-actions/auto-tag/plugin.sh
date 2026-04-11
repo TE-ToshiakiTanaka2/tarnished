@@ -131,22 +131,24 @@ plugin_post_copy() {
 # Auto-Tag Version Configuration
 # For use with erd CLI: https://github.com/TE-ToshiakiTanaka2/tarnished
 
-branches:
-  - prefix: "major/"
-    bump: major
-  - prefix: "release/"
-    bump: minor
-  - prefix: "feature/"
-    bump: patch
-  - prefix: "fix/"
-    bump: patch
-  - prefix: "bugfix/"
-    bump: patch
-  - prefix: "hotfix/"
-    bump: patch
+versioning:
+  branch_prefixes:
+    # Major version bump (X.0.0)
+    major:
+      - "major/"
 
-# Default bump type when branch doesn't match any prefix
-default_bump: rc
+    # Minor version bump (0.X.0)
+    minor:
+      - "release/"
+
+    # Patch version bump (0.0.X)
+    patch:
+      - "feature/"
+      - "fix/"
+      - "bugfix/"
+      - "hotfix/"
+
+    # Note: Branches that don't match any prefix default to RC (0.0.0-rc.X)
 EOF
 
         print_success "Created .github/versioning.yml"
