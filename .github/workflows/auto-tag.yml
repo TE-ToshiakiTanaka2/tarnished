@@ -55,7 +55,7 @@ jobs:
           # Method 2: For squash merges, extract PR number and get branch via API
           # Format: "feat: some message (#123)"
           if [ -z "$BRANCH" ]; then
-            PR_NUMBER=$(echo "$COMMIT_MSG" | grep -o '(#[0-9]\+)' | head -1 | tr -d '(#)')
+            PR_NUMBER=$(echo "$COMMIT_MSG" | grep -o '(#[0-9]\+)' | tail -1 | tr -d '(#)')
             if [ -n "$PR_NUMBER" ]; then
               echo "Found PR number: $PR_NUMBER"
               # Get the head branch name from PR via GitHub API
