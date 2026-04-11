@@ -47,6 +47,11 @@ plugin_copy() {
         copy_dir_with_confirm "${PLUGIN_DIR}/.claude/commands" "${target_dir}/.claude/commands"
     fi
 
+    # Copy skills directory
+    if [[ -d "${PLUGIN_DIR}/.claude/skills" ]]; then
+        copy_dir_with_confirm "${PLUGIN_DIR}/.claude/skills" "${target_dir}/.claude/skills"
+    fi
+
     # Copy scripts directory
     if [[ -d "${PLUGIN_DIR}/.claude/scripts" ]]; then
         copy_dir_with_confirm "${PLUGIN_DIR}/.claude/scripts" "${target_dir}/.claude/scripts"
