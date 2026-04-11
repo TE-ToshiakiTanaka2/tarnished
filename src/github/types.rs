@@ -13,6 +13,13 @@ pub struct CreateIssueResponse {
     pub html_url: String,
 }
 
+/// Label on a GitHub issue
+#[derive(Debug, Deserialize)]
+pub struct IssueLabel {
+    /// Label name
+    pub name: String,
+}
+
 /// Response from getting an issue via REST API
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -27,6 +34,9 @@ pub struct GetIssueResponse {
     pub body: Option<String>,
     /// Issue URL
     pub html_url: String,
+    /// Issue labels
+    #[serde(default)]
+    pub labels: Vec<IssueLabel>,
 }
 
 /// Response from GraphQL query to get project info

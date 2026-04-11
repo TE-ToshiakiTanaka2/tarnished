@@ -76,6 +76,13 @@ pub struct ProjectConfig {
     /// PR event status configuration
     #[serde(default)]
     pub pr_status: Option<PrStatusConfig>,
+
+    /// Label-based project routing.
+    ///
+    /// Maps issue label names to additional project configurations.
+    /// When an issue has a matching label, it is also linked to that project.
+    #[serde(default)]
+    pub label_projects: HashMap<String, LabelProjectConfig>,
 }
 
 /// PR event status configuration
@@ -94,6 +101,33 @@ pub struct ProjectReference {
 
     /// Project number
     pub number: u32,
+}
+
+/// Configuration for a label-based project route.
+///
+/// Maps an issue label to a specific GitHub Project with its own field defaults.
+///
+/// # Example
+///
+/// ```yaml
+/// label_projects:
+///   bugfix:
+///     owner: "my-org"
+///     number: 7
+///     field_defaults:
+///       Status: "Todo"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelProjectConfig {
+    /// Project owner (user or organization)
+    pub owner: String,
+
+    /// Project number
+    pub number: u32,
+
+    /// Field defaults specific to this label route
+    #[serde(default)]
+    pub field_defaults: HashMap<String, String>,
 }
 
 /// Error types for project configuration
@@ -261,6 +295,7 @@ default_project:
             field_defaults: HashMap::from([("Status".to_string(), "Todo".to_string())]),
             schedule_defaults: None,
             pr_status: None,
+            label_projects: HashMap::new(),
         };
 
         let yaml = serde_yaml::to_string(&config).unwrap();
@@ -305,6 +340,86 @@ schedule_defaults:
         assert_eq!(schedule.iteration, Some("Sprint 5".to_string()));
         assert_eq!(schedule.start, None);
         assert_eq!(schedule.end, None);
+    }
+
+    #[test]
+    fn test_project_config_with_label_projects() {
+        let yaml = r#"
+default_project:
+  owner: "test-owner"
+  number: 1
+
+field_defaults:
+  Status: "Todo"
+
+label_projects:
+  bugfix:
+    owner: "test-owner"
+    number: 7
+    field_defaults:
+      Status: "Todo"
+  incident:
+    owner: "test-owner"
+    number: 10
+    field_defaults:
+      Status: "Triage"
+      Priority: "P0"
+"#;
+
+        let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.label_projects.len(), 2);
+
+        let bugfix = config.label_projects.get("bugfix").unwrap();
+        assert_eq!(bugfix.owner, "test-owner");
+        assert_eq!(bugfix.number, 7);
+        assert_eq!(
+            bugfix.field_defaults.get("Status"),
+            Some(&"Todo".to_string())
+        );
+
+        let incident = config.label_projects.get("incident").unwrap();
+        assert_eq!(incident.owner, "test-owner");
+        assert_eq!(incident.number, 10);
+        assert_eq!(
+            incident.field_defaults.get("Status"),
+            Some(&"Triage".to_string())
+        );
+        assert_eq!(
+            incident.field_defaults.get("Priority"),
+            Some(&"P0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_project_config_without_label_projects() {
+        let yaml = r#"
+default_project:
+  owner: "test-owner"
+  number: 1
+"#;
+
+        let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.label_projects.is_empty());
+    }
+
+    #[test]
+    fn test_project_config_label_projects_empty_field_defaults() {
+        let yaml = r#"
+default_project:
+  owner: "test-owner"
+  number: 1
+
+label_projects:
+  feature:
+    owner: "test-owner"
+    number: 5
+"#;
+
+        let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+        let feature = config.label_projects.get("feature").unwrap();
+        assert_eq!(feature.owner, "test-owner");
+        assert_eq!(feature.number, 5);
+        assert!(feature.field_defaults.is_empty());
     }
 
     #[test]

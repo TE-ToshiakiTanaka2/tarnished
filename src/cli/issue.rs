@@ -252,17 +252,22 @@ impl IssueCommands {
 
         // Link to project if requested
         if link_project {
-            self.link_issue_to_project(
-                &client,
+            if let Some(project_config) = Self::load_project_config(
                 config,
-                &issue.node_id,
                 project_number_override,
                 project_owner_override,
                 size_override,
                 priority_override,
                 status_override,
-            )
-            .await?;
+            ) {
+                Self::link_issue_to_project(
+                    &client,
+                    &project_config,
+                    &issue.node_id,
+                    config.verbose,
+                )
+                .await?;
+            }
         }
 
         Ok(())
@@ -328,38 +333,84 @@ impl IssueCommands {
             }
         }
 
-        // Link to project
-        self.link_issue_to_project(
-            &client,
+        // Load and prepare project config
+        let Some(project_config) = Self::load_project_config(
             config,
-            &issue.node_id,
             project_number_override,
             project_owner_override,
             effective_size,
             effective_priority,
             status_override,
-        )
-        .await?;
+        ) else {
+            return Ok(());
+        };
+
+        // Link to default project
+        Self::link_issue_to_project(&client, &project_config, &issue.node_id, config.verbose)
+            .await?;
+
+        // Label-based project routing: link to additional projects based on issue labels
+        if !project_config.label_projects.is_empty() {
+            let label_names: Vec<&str> = issue.labels.iter().map(|l| l.name.as_str()).collect();
+
+            for (label_key, label_config) in &project_config.label_projects {
+                if !label_names.contains(&label_key.as_str()) {
+                    continue;
+                }
+
+                if config.verbose {
+                    eprintln!(
+                        "Label '{label_key}' matched: routing to project {}/projects/{}",
+                        label_config.owner, label_config.number
+                    );
+                }
+
+                // Build a temporary ProjectConfig for this label route
+                let label_project_config = ProjectConfig {
+                    default_project: crate::project_config::ProjectReference {
+                        owner: label_config.owner.clone(),
+                        number: label_config.number,
+                    },
+                    field_defaults: label_config.field_defaults.clone(),
+                    schedule_defaults: None,
+                    pr_status: None,
+                    label_projects: std::collections::HashMap::new(),
+                };
+
+                match Self::link_issue_to_project(
+                    &client,
+                    &label_project_config,
+                    &issue.node_id,
+                    config.verbose,
+                )
+                .await
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to link issue to label project '{label_key}' \
+                             ({}/projects/{}): {e}",
+                            label_config.owner, label_config.number
+                        );
+                    }
+                }
+            }
+        }
 
         println!("Successfully linked issue #{issue_number} to project");
 
         Ok(())
     }
 
-    /// Link an issue to a project and set field defaults
-    #[allow(clippy::too_many_arguments)]
-    async fn link_issue_to_project(
-        &self,
-        client: &GitHubClient,
+    /// Load project config and apply CLI overrides.
+    fn load_project_config(
         config: &Config,
-        issue_node_id: &str,
         project_number_override: Option<u32>,
         project_owner_override: Option<&str>,
         size_override: Option<&str>,
         priority_override: Option<&str>,
         status_override: Option<&str>,
-    ) -> anyhow::Result<()> {
-        // Load project config
+    ) -> Option<ProjectConfig> {
         let mut project_config =
             match ProjectConfig::load_with_path(config.project_config_path.as_ref()) {
                 Ok(c) => c,
@@ -368,7 +419,7 @@ impl IssueCommands {
                         eprintln!("Warning: Could not load project config: {e}");
                         eprintln!("Skipping project linking.");
                     }
-                    return Ok(());
+                    return None;
                 }
             };
 
@@ -397,28 +448,33 @@ impl IssueCommands {
                 .insert("Status".to_string(), status.to_string());
         }
 
+        Some(project_config)
+    }
+
+    /// Link an issue to a single project and set field defaults.
+    async fn link_issue_to_project(
+        client: &GitHubClient,
+        project_config: &ProjectConfig,
+        issue_node_id: &str,
+        verbose: bool,
+    ) -> anyhow::Result<()> {
         let project_owner = &project_config.default_project.owner;
         let project_number = project_config.default_project.number;
 
-        if config.verbose {
+        if verbose {
             eprintln!("Fetching project {project_owner}/projects/{project_number}...");
         }
 
         // Get project info
         let project = client.get_project(project_owner, project_number).await?;
 
-        if config.verbose {
+        if verbose {
             eprintln!("Adding issue to project '{}'...", project.title);
         }
 
         // Add issue to project with defaults
         let item_id = client
-            .add_issue_to_project_with_defaults(
-                &project,
-                issue_node_id,
-                &project_config,
-                config.verbose,
-            )
+            .add_issue_to_project_with_defaults(&project, issue_node_id, project_config, verbose)
             .await?;
 
         println!(
@@ -428,7 +484,7 @@ impl IssueCommands {
         );
 
         // Print applied field defaults
-        if !project_config.field_defaults.is_empty() && config.verbose {
+        if !project_config.field_defaults.is_empty() && verbose {
             eprintln!("Applied field defaults:");
             for (field, value) in &project_config.field_defaults {
                 eprintln!("  - {field}: {value}");
