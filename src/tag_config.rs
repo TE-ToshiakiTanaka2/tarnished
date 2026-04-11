@@ -415,10 +415,10 @@ branches:
 
     #[test]
     fn test_legacy_empty_branches() {
-        let yaml = r#"
+        let yaml = r"
 branches: []
 default_bump: rc
-"#;
+";
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         let config = config.normalize();
         assert!(config.versioning.branch_prefixes.is_empty());
