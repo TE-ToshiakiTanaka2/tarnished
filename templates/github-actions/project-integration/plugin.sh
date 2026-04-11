@@ -1077,6 +1077,22 @@ ${field_defaults_yaml}${schedule_defaults_yaml}
 # PR event status configuration
 pr_status:
   on_open: "${PR_OPEN_STATUS:-In Review}"
+
+# Label-based project routing (optional)
+# Route issues with specific labels to additional projects.
+# Each label key maps to a project with its own field_defaults.
+# label_projects:
+#   bugfix:
+#     owner: "${PROJECT_OWNER}"
+#     number: 2
+#     field_defaults:
+#       Status: "Todo"
+#   incident:
+#     owner: "${PROJECT_OWNER}"
+#     number: 3
+#     field_defaults:
+#       Status: "Triage"
+#       Priority: "P0"
 EOF
 
         print_success "Created .github/project.yml"
