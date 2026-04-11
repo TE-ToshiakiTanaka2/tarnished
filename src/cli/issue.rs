@@ -111,6 +111,10 @@ pub enum IssueCommands {
         /// Parse Size/Priority from issue body if not specified
         #[arg(long, default_value = "true")]
         parse_body: bool,
+
+        /// Only perform label-based project routing (skip default project link)
+        #[arg(long)]
+        label_only: bool,
     },
 }
 
@@ -178,6 +182,7 @@ impl IssueCommands {
                 priority,
                 status,
                 parse_body,
+                label_only,
             } => {
                 self.execute_link(
                     config,
@@ -188,6 +193,7 @@ impl IssueCommands {
                     priority.as_deref(),
                     status.as_deref(),
                     *parse_body,
+                    *label_only,
                 )
                 .await
             }
@@ -285,6 +291,7 @@ impl IssueCommands {
         priority_override: Option<&str>,
         status_override: Option<&str>,
         parse_body: bool,
+        label_only: bool,
     ) -> anyhow::Result<()> {
         // Get repository from config
         let repo = config.get_repo().ok_or_else(|| {
@@ -345,9 +352,11 @@ impl IssueCommands {
             return Ok(());
         };
 
-        // Link to default project
-        Self::link_issue_to_project(&client, &project_config, &issue.node_id, config.verbose)
-            .await?;
+        // Link to default project (skipped with --label-only)
+        if !label_only {
+            Self::link_issue_to_project(&client, &project_config, &issue.node_id, config.verbose)
+                .await?;
+        }
 
         // Label-based project routing: link to additional projects based on issue labels
         if !project_config.label_projects.is_empty() {
