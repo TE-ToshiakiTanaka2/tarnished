@@ -66,7 +66,7 @@ Use the following MCP tools for code analysis:
 
 ### Phase 4: CI Monitoring and Validation
 
-11. **Monitor GitHub Actions** - Check CI status with `gh pr checks`
+11. **Monitor GitHub Actions** - Wait for CI completion using `gh run watch <run_id> --exit-status` with `run_in_background: true`. Do NOT use `sleep` to poll — it is blocked by the runtime. After the background task completes, check results with `gh pr checks <pr_number>`.
 12. **Execute `/sc:reflect`** - Validate CI results and overall PR quality:
     - Analyze CI pass/fail results
     - Reflect on test coverage adequacy
