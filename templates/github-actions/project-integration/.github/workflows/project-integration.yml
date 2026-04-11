@@ -19,6 +19,13 @@
 #        Status: "Backlog"
 #        Size: "M"
 #        Priority: "P1"
+#      # Optional: route labeled issues to additional projects
+#      # label_projects:
+#      #   bugfix:
+#      #     owner: "your-username-or-org"
+#      #     number: 2
+#      #     field_defaults:
+#      #       Status: "Todo"
 #      ```
 #
 # For more information about erd: https://github.com/TE-ToshiakiTanaka2/tarnished

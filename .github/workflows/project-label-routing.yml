@@ -1,0 +1,134 @@
+name: Project Label Routing
+
+on:
+  issues:
+    types: [labeled]
+  workflow_call:
+    inputs:
+      issue-number:
+        description: "Issue number"
+        required: true
+        type: string
+      config-path:
+        description: "Path to project.yml config file"
+        required: false
+        default: ".github/project.yml"
+        type: string
+      erd-version:
+        description: "Version of erd to download (e.g., v1.0.0, latest)"
+        required: false
+        default: "latest"
+        type: string
+    secrets:
+      PROJECT_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+  ERD_REPO: TE-ToshiakiTanaka2/tarnished
+
+jobs:
+  route-by-label:
+    name: Route Issue by Label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # === Local invocation: Build erd from source ===
+      - name: Setup Rust (local)
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry (local)
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-
+
+      - name: Build erd (local)
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        run: cargo build --release
+
+      # === External invocation: Download erd from Releases ===
+      - name: Download erd (external)
+        if: github.repository != 'TE-ToshiakiTanaka2/tarnished'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          VERSION="${{ inputs.erd-version }}"
+
+          if [ "$VERSION" = "latest" ]; then
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/latest/download/erd-linux-x86_64"
+          else
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/download/${VERSION}/erd-linux-x86_64"
+          fi
+
+          echo "Downloading erd from: $DOWNLOAD_URL"
+          mkdir -p target/release
+          curl -fsSL -o target/release/erd "$DOWNLOAD_URL"
+          chmod +x target/release/erd
+
+          echo "erd version:"
+          ./target/release/erd --version || echo "Version check failed (binary may not support --version)"
+
+      # === Common steps ===
+      - name: Determine issue number
+        id: issue
+        run: |
+          if [ "${{ github.repository }}" != "TE-ToshiakiTanaka2/tarnished" ]; then
+            echo "number=${{ inputs.issue-number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine config path
+        id: config
+        run: |
+          if [ "${{ github.repository }}" != "TE-ToshiakiTanaka2/tarnished" ]; then
+            echo "path=${{ inputs.config-path }}" >> $GITHUB_OUTPUT
+          else
+            echo "path=.github/project.yml" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check label_projects config
+        id: check-config
+        run: |
+          CONFIG_PATH="${{ steps.config.outputs.path }}"
+          if [ -f "$CONFIG_PATH" ] && grep -q 'label_projects:' "$CONFIG_PATH"; then
+            echo "has_label_projects=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_label_projects=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Route issue by label
+        if: steps.check-config.outputs.has_label_projects == 'true'
+        id: route
+        run: |
+          ./target/release/erd --verbose issue link ${{ steps.issue.outputs.number }} \
+            --label-only \
+            --config "${{ steps.config.outputs.path }}"
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ERD_REPO: ${{ github.repository }}
+        continue-on-error: true
+
+      - name: Skip (no label_projects configured)
+        if: steps.check-config.outputs.has_label_projects != 'true'
+        run: echo "No label_projects section in config, skipping label routing."
+
+      - name: Log failure (external)
+        if: steps.route.outcome == 'failure' && github.repository != 'TE-ToshiakiTanaka2/tarnished'
+        run: |
+          echo "::warning::Label routing failed for some projects. Check PROJECT_TOKEN and label_projects configuration."

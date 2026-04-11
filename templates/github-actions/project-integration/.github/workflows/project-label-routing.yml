@@ -1,0 +1,42 @@
+# =============================================================================
+# Project Label Routing Workflow (Caller)
+# =============================================================================
+# Calls the reusable workflow from TE-ToshiakiTanaka2/tarnished to route
+# labeled Issues to additional GitHub Projects based on label_projects config.
+#
+# This workflow is OPTIONAL. Only add it if you use label_projects in your
+# .github/project.yml to route issues to different projects by label.
+#
+# Prerequisites:
+#   1. PROJECT_TOKEN secret configured (same as project-integration)
+#   2. label_projects section in .github/project.yml:
+#      ```yaml
+#      label_projects:
+#        bugfix:
+#          owner: "your-username-or-org"
+#          number: 2
+#          field_defaults:
+#            Status: "Todo"
+#      ```
+#
+# For more information about erd: https://github.com/TE-ToshiakiTanaka2/tarnished
+# =============================================================================
+
+name: Project Label Routing
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  call-label-routing:
+    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/project-label-routing.yml@__ERD_REF__
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      config-path: ".github/project.yml"
+    secrets:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
