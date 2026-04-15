@@ -26,7 +26,9 @@ Example:
 ### Phase 1: Preparation
 
 1. **Review Issue** - Use `gh issue view` to understand Issue content
-2. **Detect or create branch** - Check if `/design` already created a branch for this issue. If yes, switch to it. If no, create a new branch following naming convention.
+2. **Detect or create branch** - Follow `_shared/branch` procedure (Issue mode) with the issue number
+   - This handles existing branch detection, checkout, and new branch creation
+   - See `_shared/branch/SKILL.md` for full procedure
 3. **Load design artifacts** (if exists) - Read `docs/design/#{issue_number}/` for design decisions, API spec, and workflow
 4. **Execute `/erd:index-repo`** - Efficient repository indexing for codebase understanding:
    - Map relevant modules and their relationships

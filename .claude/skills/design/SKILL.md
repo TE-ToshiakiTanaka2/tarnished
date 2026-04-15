@@ -26,15 +26,9 @@ Example:
 ### Phase 1: Preparation
 
 1. **Review Issue** - Use `gh issue view` to understand Issue content and requirements
-2. **Create branch** - Create branch following naming convention (shared with `/implement`)
-   - **Important: Check for existing branches first.** Before creating a new branch, search for any existing branches for the same issue number:
-     ```bash
-     git branch -a | grep "#{issue_number}"
-     ```
-   - If a branch already exists (e.g., from `/metrics`), either:
-     - **Checkout and reuse** the existing branch directly, OR
-     - **Create a new branch** and immediately **merge the existing branch** into it so that all prior artifacts are available
-   - This ensures that artifacts from prior workflow steps are accessible on the design branch
+2. **Create branch** - Follow `_shared/branch` procedure (Issue mode) with the issue number
+   - This handles branch naming, existing branch detection, and checkout/creation
+   - See `_shared/branch/SKILL.md` for full procedure
 3. **Create docs directory** - Create `docs/design/#{issue_number}/` directory structure
 
 ### Phase 2: Research (if needed)

@@ -37,10 +37,14 @@ GitHub Issue creation skill for projects. Handles requirement discovery through 
 
 ### Phase 3: Issue Creation and Configuration
 
-5. **Create GitHub Issue** - English title with detailed description using `gh issue create`
-6. **Configure Issue settings** - Set Labels, Milestone, Assignee
-7. **Set Project fields** - Automatically set Size and Priority (if project.yml exists)
-8. **Return Issue number**
+5. **Create GitHub Issue** - Follow `_shared/issue` procedure with the prepared parameters:
+   - `title`: English title from brainstorm/estimation results
+   - `body`: Issue body formatted per the Issue Description Format below
+   - `labels`: Determined from issue type (feature, bugfix, refactor, etc.)
+   - `size`: From `/erd:estimate` results (XS/S/M/L/XL)
+   - `priority`: From `/erd:estimate` results (P0/P1/P2)
+   - See `_shared/issue/SKILL.md` for full procedure (Issue creation, milestone, project fields)
+6. **Return Issue number**
 
 ## erd Skills Used
 
