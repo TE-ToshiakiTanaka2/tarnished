@@ -8,6 +8,10 @@ Discover and refine requirements through Socratic dialogue and structured explor
 /erd:brainstorm [topic or idea]
 ```
 
+## MCP Tools
+
+- **context7**: `resolve-library-id`, `query-docs` -- for verifying technical feasibility and checking library capabilities during requirements exploration
+
 ## Behavioral Flow
 
 1. **Understand**: Confirm the user's intent and context

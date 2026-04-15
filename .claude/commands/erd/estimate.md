@@ -8,6 +8,10 @@ Provide structured development estimates for tasks, features, or projects.
 /erd:estimate [target task or feature description]
 ```
 
+## MCP Tools
+
+- **context7**: `resolve-library-id`, `query-docs` -- for assessing complexity of external library integrations during estimation
+
 ## Behavioral Flow
 
 1. **Analyze scope**: Examine the target's complexity factors, dependencies, and affected layers
