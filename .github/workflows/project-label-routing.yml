@@ -9,6 +9,11 @@ on:
         description: "Issue number"
         required: true
         type: string
+      label-name:
+        description: "Label name that triggered the event (for early filtering)"
+        required: false
+        default: ""
+        type: string
       config-path:
         description: "Path to project.yml config file"
         required: false
@@ -39,13 +44,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # === Early label filtering ===
+      - name: Check label against config
+        id: label-check
+        run: |
+          LABEL_NAME="${{ inputs.label-name }}"
+          CONFIG_PATH="${{ inputs.config-path || '.github/project.yml' }}"
+
+          if [ -z "$LABEL_NAME" ]; then
+            echo "No label-name provided, proceeding with full routing."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          elif [ -f "$CONFIG_PATH" ] && grep -qE "^\s+${LABEL_NAME}:" "$CONFIG_PATH"; then
+            echo "Label '${LABEL_NAME}' found in label_projects config."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          else
+            echo "Label '${LABEL_NAME}' not found in label_projects config, skipping."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip (label not in config)
+        if: steps.label-check.outputs.skip == 'true'
+        run: echo "Label '${{ inputs.label-name }}' is not configured in label_projects. Skipping label routing."
+
       # === Local invocation: Build erd from source ===
       - name: Setup Rust (local)
-        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        if: steps.label-check.outputs.skip != 'true' && github.repository == 'TE-ToshiakiTanaka2/tarnished'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry (local)
-        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        if: steps.label-check.outputs.skip != 'true' && github.repository == 'TE-ToshiakiTanaka2/tarnished'
         uses: actions/cache@v4
         with:
           path: |
@@ -58,12 +85,12 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build erd (local)
-        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        if: steps.label-check.outputs.skip != 'true' && github.repository == 'TE-ToshiakiTanaka2/tarnished'
         run: cargo build --release
 
       # === External invocation: Download erd from Releases ===
       - name: Download erd (external)
-        if: github.repository != 'TE-ToshiakiTanaka2/tarnished'
+        if: steps.label-check.outputs.skip != 'true' && github.repository != 'TE-ToshiakiTanaka2/tarnished'
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
         run: |
@@ -85,6 +112,7 @@ jobs:
 
       # === Common steps ===
       - name: Determine issue number
+        if: steps.label-check.outputs.skip != 'true'
         id: issue
         run: |
           if [ "${{ github.repository }}" != "TE-ToshiakiTanaka2/tarnished" ]; then
@@ -94,6 +122,7 @@ jobs:
           fi
 
       - name: Determine config path
+        if: steps.label-check.outputs.skip != 'true'
         id: config
         run: |
           if [ "${{ github.repository }}" != "TE-ToshiakiTanaka2/tarnished" ]; then
@@ -103,6 +132,7 @@ jobs:
           fi
 
       - name: Verify erd supports --label-only
+        if: steps.label-check.outputs.skip != 'true'
         id: verify-erd
         run: |
           if ./target/release/erd issue link --help 2>&1 | grep -q '\-\-label-only'; then
@@ -114,7 +144,7 @@ jobs:
           fi
 
       - name: Check label_projects config
-        if: steps.verify-erd.outputs.supported == 'true'
+        if: steps.label-check.outputs.skip != 'true' && steps.verify-erd.outputs.supported == 'true'
         id: check-config
         run: |
           CONFIG_PATH="${{ steps.config.outputs.path }}"
@@ -125,7 +155,7 @@ jobs:
           fi
 
       - name: Route issue by label
-        if: steps.verify-erd.outputs.supported == 'true' && steps.check-config.outputs.has_label_projects == 'true'
+        if: steps.label-check.outputs.skip != 'true' && steps.verify-erd.outputs.supported == 'true' && steps.check-config.outputs.has_label_projects == 'true'
         id: route
         run: |
           ./target/release/erd --verbose issue link ${{ steps.issue.outputs.number }} \
@@ -137,16 +167,16 @@ jobs:
         continue-on-error: true
 
       - name: Skip (no label_projects configured)
-        if: steps.verify-erd.outputs.supported == 'true' && steps.check-config.outputs.has_label_projects != 'true'
+        if: steps.label-check.outputs.skip != 'true' && steps.verify-erd.outputs.supported == 'true' && steps.check-config.outputs.has_label_projects != 'true'
         run: echo "No label_projects section in config, skipping label routing."
 
       - name: Fail (erd binary too old)
-        if: steps.verify-erd.outputs.supported != 'true'
+        if: steps.label-check.outputs.skip != 'true' && steps.verify-erd.outputs.supported != 'true'
         run: |
           echo "::error::Label routing skipped: erd binary does not support --label-only flag. Update erd-version input to a newer release."
           exit 1
 
       - name: Log failure (external)
-        if: steps.route.outcome == 'failure' && github.repository != 'TE-ToshiakiTanaka2/tarnished'
+        if: steps.label-check.outputs.skip != 'true' && steps.route.outcome == 'failure' && github.repository != 'TE-ToshiakiTanaka2/tarnished'
         run: |
           echo "::warning::Label routing failed for some projects. Check PROJECT_TOKEN and label_projects configuration."

@@ -280,7 +280,7 @@ impl IssueCommands {
     }
 
     /// Execute the link issue command
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn execute_link(
         &self,
         config: &Config,
@@ -353,10 +353,13 @@ impl IssueCommands {
         };
 
         // Link to default project (skipped with --label-only)
-        if !label_only {
+        let mut linked = if label_only {
+            false
+        } else {
             Self::link_issue_to_project(&client, &project_config, &issue.node_id, config.verbose)
                 .await?;
-        }
+            true
+        };
 
         // Label-based project routing: link to additional projects based on issue labels
         if !project_config.label_projects.is_empty() {
@@ -394,7 +397,9 @@ impl IssueCommands {
                 )
                 .await
                 {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        linked = true;
+                    }
                     Err(e) => {
                         eprintln!(
                             "Warning: Failed to link issue to label project '{label_key}' \
@@ -406,7 +411,11 @@ impl IssueCommands {
             }
         }
 
-        println!("Successfully linked issue #{issue_number} to project");
+        if linked {
+            println!("Successfully linked issue #{issue_number} to project");
+        } else if label_only {
+            println!("No matching label projects found for issue #{issue_number}");
+        }
 
         Ok(())
     }

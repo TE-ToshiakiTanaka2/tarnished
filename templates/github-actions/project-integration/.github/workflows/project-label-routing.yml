@@ -37,6 +37,7 @@ jobs:
     uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/project-label-routing.yml@__ERD_REF__
     with:
       issue-number: ${{ github.event.issue.number }}
+      label-name: ${{ github.event.label.name }}
       config-path: ".github/project.yml"
     secrets:
       PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
