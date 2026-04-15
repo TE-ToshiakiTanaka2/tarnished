@@ -513,6 +513,332 @@ init_field_config_vars() {
 
     # Selected fields for configuration
     SELECTED_SINGLE_SELECT_FIELDS=()
+
+    # Label routing configuration
+    ENABLE_LABEL_ROUTING="false"
+    declare -gA LABEL_ROUTING_PROJECTS   # label -> "owner:number"
+    LABEL_ROUTING_PROJECTS=()
+    declare -gA LABEL_ROUTING_FIELDS     # "label:field_name" -> "value"
+    LABEL_ROUTING_FIELDS=()
+    LABEL_ROUTING_LABELS=()              # ordered list of label names
+}
+
+# =============================================================================
+# Label Routing Setup Functions
+# =============================================================================
+
+# Build label_projects YAML section from LABEL_ROUTING_* variables
+# Outputs YAML to stdout (without the "label_projects:" header)
+build_label_projects_yaml() {
+    local yaml=""
+    for label in "${LABEL_ROUTING_LABELS[@]}"; do
+        local project_info="${LABEL_ROUTING_PROJECTS[$label]}"
+        local owner="${project_info%%:*}"
+        local number="${project_info##*:}"
+
+        yaml+="  ${label}:"$'\n'
+        yaml+="    owner: \"${owner}\""$'\n'
+        yaml+="    number: ${number}"$'\n'
+
+        # Collect field_defaults for this label
+        local has_fields=false
+        local fields_yaml=""
+        for key in "${!LABEL_ROUTING_FIELDS[@]}"; do
+            local key_label="${key%%:*}"
+            local field_name="${key##*:}"
+            if [[ "$key_label" == "$label" ]]; then
+                if [[ "$has_fields" == false ]]; then
+                    fields_yaml+="    field_defaults:"$'\n'
+                    has_fields=true
+                fi
+                fields_yaml+="      ${field_name}: \"${LABEL_ROUTING_FIELDS[$key]}\""$'\n'
+            fi
+        done
+        yaml+="$fields_yaml"
+    done
+    echo -n "$yaml"
+}
+
+# Configure a single label→project mapping
+# Args: label_name, owner_projects_json (optional, for gh CLI mode)
+# Sets: LABEL_ROUTING_PROJECTS[label], LABEL_ROUTING_FIELDS[label:field]
+prompt_label_routing_project() {
+    local label_name="$1"
+    local owner_projects="${2:-}"
+    local current_user="${3:-}"
+
+    local lr_owner=""
+    local lr_number=""
+
+    if [[ -n "$owner_projects" ]] && [[ "$owner_projects" != "null" ]]; then
+        # gh CLI mode: select project from list
+        local project_count
+        project_count=$(echo "$owner_projects" | jq '.projects | length')
+
+        if [[ "$project_count" -eq 1 ]]; then
+            lr_owner=$(echo "$owner_projects" | jq -r '.projects[0].owner.login')
+            lr_number=$(echo "$owner_projects" | jq -r '.projects[0].number')
+            local project_title
+            project_title=$(echo "$owner_projects" | jq -r '.projects[0].title')
+            print_success "Auto-selected project: $project_title (#$lr_number) @$lr_owner"
+        else
+            echo "" > /dev/tty
+            echo "Select project for label '$label_name':" > /dev/tty
+            local i
+            for ((i=0; i<project_count; i++)); do
+                local title owner number
+                title=$(echo "$owner_projects" | jq -r ".projects[$i].title")
+                owner=$(echo "$owner_projects" | jq -r ".projects[$i].owner.login")
+                number=$(echo "$owner_projects" | jq -r ".projects[$i].number")
+                echo "  $((i+1))) $title (#$number) @$owner" > /dev/tty
+            done
+
+            echo -n "Select project [1]: " > /dev/tty
+            local selection
+            read -r selection < /dev/tty
+            selection="${selection:-1}"
+
+            local idx=$((selection - 1))
+            if [[ "$idx" -ge 0 ]] && [[ "$idx" -lt "$project_count" ]]; then
+                lr_owner=$(echo "$owner_projects" | jq -r ".projects[$idx].owner.login")
+                lr_number=$(echo "$owner_projects" | jq -r ".projects[$idx].number")
+            else
+                lr_owner=$(echo "$owner_projects" | jq -r '.projects[0].owner.login')
+                lr_number=$(echo "$owner_projects" | jq -r '.projects[0].number')
+            fi
+        fi
+
+        # Store the mapping
+        LABEL_ROUTING_PROJECTS["$label_name"]="${lr_owner}:${lr_number}"
+
+        # Try to fetch field schema for field_defaults configuration
+        local detailed_fields
+        detailed_fields=$(get_project_fields_detailed "$lr_owner" "$lr_number")
+
+        if [[ -n "$detailed_fields" ]]; then
+            # Extract single select fields
+            local nodes
+            nodes=$(echo "$detailed_fields" | jq -r '.data.user.projectV2.fields.nodes // .data.organization.projectV2.fields.nodes // []')
+            local single_select_fields
+            single_select_fields=$(echo "$nodes" | jq '[.[] | select(.options != null)]')
+            local field_count
+            field_count=$(echo "$single_select_fields" | jq 'length')
+
+            if [[ "$field_count" -gt 0 ]]; then
+                echo "" > /dev/tty
+                echo "Configure field_defaults for label '$label_name'?" > /dev/tty
+                echo "  1) Yes - select fields to configure" > /dev/tty
+                echo "  2) No - skip field_defaults" > /dev/tty
+                echo -n "Enter selection [1]: " > /dev/tty
+                local configure_fields
+                read -r configure_fields < /dev/tty
+                configure_fields="${configure_fields:-1}"
+
+                if [[ "$configure_fields" == "1" ]]; then
+                    # Show available fields and let user select
+                    echo "" > /dev/tty
+                    echo "Available Single Select fields:" > /dev/tty
+                    local i
+                    for ((i=0; i<field_count; i++)); do
+                        local name options_count
+                        name=$(echo "$single_select_fields" | jq -r ".[$i].name")
+                        options_count=$(echo "$single_select_fields" | jq ".[$i].options | length")
+                        echo "  $((i+1))) $name [$options_count options]" > /dev/tty
+                    done
+
+                    echo "" > /dev/tty
+                    echo "Enter field numbers to configure (comma-separated, 'all', or 'none'):" > /dev/tty
+                    echo -n "Selection [all]: " > /dev/tty
+                    local selection
+                    read -r selection < /dev/tty
+                    selection="${selection:-all}"
+
+                    local selected_indices=()
+                    if [[ "$selection" == "none" ]]; then
+                        : # No fields selected
+                    elif [[ "$selection" == "all" ]]; then
+                        for ((i=0; i<field_count; i++)); do
+                            selected_indices+=("$i")
+                        done
+                    else
+                        IFS=',' read -ra indices <<< "$selection"
+                        for idx in "${indices[@]}"; do
+                            idx=$(echo "$idx" | tr -d ' ')
+                            if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "$field_count" ]]; then
+                                selected_indices+=("$((idx-1))")
+                            fi
+                        done
+                    fi
+
+                    for idx in "${selected_indices[@]}"; do
+                        local field_name field_options
+                        field_name=$(echo "$single_select_fields" | jq -r ".[$idx].name")
+                        field_options=$(echo "$single_select_fields" | jq ".[$idx].options")
+
+                        local default_value
+                        default_value=$(prompt_single_select_field_value "$field_name" "$field_options")
+                        if [[ -n "$default_value" ]]; then
+                            LABEL_ROUTING_FIELDS["${label_name}:${field_name}"]="$default_value"
+                        fi
+                    done
+                fi
+            fi
+        else
+            # Fallback: manual field_defaults
+            echo "" > /dev/tty
+            echo "Configure field_defaults for label '$label_name'?" > /dev/tty
+            echo -n "Enter 'y' to configure, any other key to skip [n]: " > /dev/tty
+            local configure_fields
+            read -r configure_fields < /dev/tty
+
+            if [[ "$configure_fields" == "y" ]]; then
+                echo "Enter field defaults (field_name=value). Press Enter on empty line to finish." > /dev/tty
+                echo "Example: Status=Todo" > /dev/tty
+                while true; do
+                    echo -n "Field default (or Enter to finish): " > /dev/tty
+                    local input
+                    read -r input < /dev/tty
+                    [[ -z "$input" ]] && break
+                    local field_name="${input%%=*}"
+                    local field_value="${input#*=}"
+                    if [[ -n "$field_name" ]] && [[ -n "$field_value" ]] && [[ "$field_name" != "$field_value" ]]; then
+                        LABEL_ROUTING_FIELDS["${label_name}:${field_name}"]="$field_value"
+                        print_info "Set $field_name = $field_value for label '$label_name'"
+                    else
+                        print_warning "Invalid format. Use: field_name=value"
+                    fi
+                done
+            fi
+        fi
+    else
+        # Manual mode: no gh CLI
+        echo "" > /dev/tty
+        local default_owner="${current_user:-${PROJECT_OWNER:-}}"
+        echo -n "Enter project owner for label '$label_name'" > /dev/tty
+        if [[ -n "$default_owner" ]]; then
+            echo -n " [$default_owner]" > /dev/tty
+        fi
+        echo -n ": " > /dev/tty
+        read -r lr_owner < /dev/tty
+        lr_owner="${lr_owner:-$default_owner}"
+
+        echo -n "Enter project number [1]: " > /dev/tty
+        read -r lr_number < /dev/tty
+        lr_number="${lr_number:-1}"
+
+        LABEL_ROUTING_PROJECTS["$label_name"]="${lr_owner}:${lr_number}"
+
+        # Manual field_defaults
+        echo "" > /dev/tty
+        echo "Configure field_defaults for label '$label_name'?" > /dev/tty
+        echo -n "Enter 'y' to configure, any other key to skip [n]: " > /dev/tty
+        local configure_fields
+        read -r configure_fields < /dev/tty
+
+        if [[ "$configure_fields" == "y" ]]; then
+            echo "Enter field defaults (field_name=value). Press Enter on empty line to finish." > /dev/tty
+            echo "Example: Status=Todo" > /dev/tty
+            while true; do
+                echo -n "Field default (or Enter to finish): " > /dev/tty
+                local input
+                read -r input < /dev/tty
+                [[ -z "$input" ]] && break
+                local field_name="${input%%=*}"
+                local field_value="${input#*=}"
+                if [[ -n "$field_name" ]] && [[ -n "$field_value" ]] && [[ "$field_name" != "$field_value" ]]; then
+                    LABEL_ROUTING_FIELDS["${label_name}:${field_name}"]="$field_value"
+                    print_info "Set $field_name = $field_value for label '$label_name'"
+                else
+                    print_warning "Invalid format. Use: field_name=value"
+                fi
+            done
+        fi
+    fi
+}
+
+# Main label routing setup prompt
+# Called at the end of plugin_interactive_setup()
+prompt_label_routing_setup() {
+    echo "" > /dev/tty
+    print_section "Label-Based Project Routing (Optional)"
+    echo "Route issues with specific labels to additional GitHub Projects." > /dev/tty
+    echo "This adds the project-label-routing.yml workflow to your repository." > /dev/tty
+    echo "" > /dev/tty
+    echo -n "Enable label-based project routing? (y/n) [n]: " > /dev/tty
+
+    local enable_routing
+    read -r enable_routing < /dev/tty
+
+    if [[ "$enable_routing" != "y" ]]; then
+        print_info "Label routing skipped"
+        return 0
+    fi
+
+    ENABLE_LABEL_ROUTING="true"
+
+    # Detect projects for selection
+    local owner_projects=""
+    local current_user=""
+    if check_gh_available; then
+        current_user=$(get_current_user)
+        if [[ -n "$current_user" ]]; then
+            owner_projects=$(get_owner_projects "$current_user")
+        fi
+    fi
+
+    # Loop to add label→project mappings
+    while true; do
+        echo "" > /dev/tty
+        echo -n "Enter label name (e.g., bugfix, incident): " > /dev/tty
+        local label_name
+        read -r label_name < /dev/tty
+
+        if [[ -z "$label_name" ]]; then
+            print_warning "Label name cannot be empty"
+            continue
+        fi
+
+        # Check for duplicate
+        if [[ -v "LABEL_ROUTING_PROJECTS[$label_name]" ]]; then
+            print_warning "Label '$label_name' is already configured. Skipping."
+            continue
+        fi
+
+        prompt_label_routing_project "$label_name" "$owner_projects" "$current_user"
+        LABEL_ROUTING_LABELS+=("$label_name")
+
+        local project_info="${LABEL_ROUTING_PROJECTS[$label_name]}"
+        local lr_owner="${project_info%%:*}"
+        local lr_number="${project_info##*:}"
+        print_success "Configured: label '$label_name' → project #$lr_number @$lr_owner"
+
+        echo "" > /dev/tty
+        echo -n "Add another label routing? (y/n) [n]: " > /dev/tty
+        local add_another
+        read -r add_another < /dev/tty
+        if [[ "$add_another" != "y" ]]; then
+            break
+        fi
+    done
+
+    # Print summary
+    echo "" > /dev/tty
+    print_info "Label routing summary:"
+    for label in "${LABEL_ROUTING_LABELS[@]}"; do
+        local project_info="${LABEL_ROUTING_PROJECTS[$label]}"
+        local lr_owner="${project_info%%:*}"
+        local lr_number="${project_info##*:}"
+        echo "  - $label → project #$lr_number @$lr_owner" > /dev/tty
+
+        # Show field_defaults if any
+        for key in "${!LABEL_ROUTING_FIELDS[@]}"; do
+            local key_label="${key%%:*}"
+            local field_name="${key##*:}"
+            if [[ "$key_label" == "$label" ]]; then
+                echo "    $field_name: ${LABEL_ROUTING_FIELDS[$key]}" > /dev/tty
+            fi
+        done
+    done
 }
 
 # Prompt for GitHub Project configuration with gh CLI integration
@@ -779,6 +1105,11 @@ plugin_interactive_setup() {
         prompt_manual_field_defaults
     fi
 
+    # Label routing setup (optional sub-feature)
+    if check_tty_available; then
+        prompt_label_routing_setup
+    fi
+
     echo ""
     print_success "Project configuration collected"
 }
@@ -991,6 +1322,12 @@ plugin_copy() {
                 local workflow_name
                 workflow_name=$(basename "$workflow")
 
+                # Skip project-label-routing.yml if label routing is not enabled
+                if [[ "$workflow_name" == "project-label-routing.yml" ]] && [[ "$ENABLE_LABEL_ROUTING" != "true" ]]; then
+                    print_info "Skipping $workflow_name (label routing not enabled)"
+                    continue
+                fi
+
                 # Read, replace version placeholder, and write
                 local target_file="${target_dir}/.github/workflows/${workflow_name}"
                 if [[ -f "$target_file" ]]; then
@@ -1062,6 +1399,31 @@ plugin_post_copy() {
             fi
         fi
 
+        # Build label_projects YAML section
+        local label_projects_yaml=""
+        if [[ "$ENABLE_LABEL_ROUTING" == "true" ]] && [[ ${#LABEL_ROUTING_LABELS[@]} -gt 0 ]]; then
+            label_projects_yaml=$'\n'"# Label-based project routing"$'\n'
+            label_projects_yaml+="# Route issues with specific labels to additional projects."$'\n'
+            label_projects_yaml+="label_projects:"$'\n'
+            label_projects_yaml+="$(build_label_projects_yaml)"
+        else
+            label_projects_yaml=$'\n'"# Label-based project routing (optional)"$'\n'
+            label_projects_yaml+="# Route issues with specific labels to additional projects."$'\n'
+            label_projects_yaml+="# Each label key maps to a project with its own field_defaults."$'\n'
+            label_projects_yaml+="# label_projects:"$'\n'
+            label_projects_yaml+="#   bugfix:"$'\n'
+            label_projects_yaml+="#     owner: \"${PROJECT_OWNER}\""$'\n'
+            label_projects_yaml+="#     number: 2"$'\n'
+            label_projects_yaml+="#     field_defaults:"$'\n'
+            label_projects_yaml+="#       Status: \"Todo\""$'\n'
+            label_projects_yaml+="#   incident:"$'\n'
+            label_projects_yaml+="#     owner: \"${PROJECT_OWNER}\""$'\n'
+            label_projects_yaml+="#     number: 3"$'\n'
+            label_projects_yaml+="#     field_defaults:"$'\n'
+            label_projects_yaml+="#       Status: \"Triage\""$'\n'
+            label_projects_yaml+="#       Priority: \"P0\""
+        fi
+
         # Write the config file
         cat > "$project_config" << EOF
 # GitHub Project Integration Configuration
@@ -1077,22 +1439,7 @@ ${field_defaults_yaml}${schedule_defaults_yaml}
 # PR event status configuration
 pr_status:
   on_open: "${PR_OPEN_STATUS:-In Review}"
-
-# Label-based project routing (optional)
-# Route issues with specific labels to additional projects.
-# Each label key maps to a project with its own field_defaults.
-# label_projects:
-#   bugfix:
-#     owner: "${PROJECT_OWNER}"
-#     number: 2
-#     field_defaults:
-#       Status: "Todo"
-#   incident:
-#     owner: "${PROJECT_OWNER}"
-#     number: 3
-#     field_defaults:
-#       Status: "Triage"
-#       Priority: "P0"
+${label_projects_yaml}
 EOF
 
         print_success "Created .github/project.yml"
