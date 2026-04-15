@@ -36,21 +36,31 @@ Use the following MCP tools for code analysis:
 
 - **serena**: `find_symbol`, `get_symbols_overview` — for understanding code structure during analysis and improvement phases
 
+## erd Command Invocation
+
+All erd commands in this skill MUST be invoked explicitly using the **Skill tool**:
+
+```
+Skill(skill: "erd:<command>", args: "<arguments>")
+```
+
+Do NOT simply read and follow the erd command's markdown instructions inline. Each erd command must be invoked as a separate Skill tool call to ensure proper execution context.
+
 ## What This Skill Does
 
 ### Phase 1: Code Analysis and Improvement
 
-1. **Execute `/erd:analyze`** - Comprehensive code analysis:
+1. **Invoke `/erd:analyze` via Skill tool** - `Skill(skill: "erd:analyze")`:
    - Code quality: readability, maintainability, DRY
    - Security: input validation, injection risks, auth checks
    - Performance: inefficient patterns, unnecessary allocations
    - Architecture: module design, layer separation
-2. **Execute `/erd:improve`** - Fix discovered issues:
+2. **Invoke `/erd:improve` via Skill tool** - `Skill(skill: "erd:improve")`:
    - Code quality improvements
    - Pattern standardization
    - Type safety enhancements
    - Error handling improvements
-3. **Execute `/erd:cleanup`** - Final code cleanup:
+3. **Invoke `/erd:cleanup` via Skill tool** - `Skill(skill: "erd:cleanup")`:
    - Remove dead code and unused imports
    - Optimize import ordering
    - Clean up commented-out code

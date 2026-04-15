@@ -21,6 +21,16 @@ Example:
 /design 42
 ```
 
+## erd Command Invocation
+
+All erd commands in this skill MUST be invoked explicitly using the **Skill tool**:
+
+```
+Skill(skill: "erd:<command>", args: "<arguments>")
+```
+
+Do NOT simply read and follow the erd command's markdown instructions inline. Each erd command must be invoked as a separate Skill tool call to ensure proper execution context.
+
 ## What This Skill Does
 
 ### Phase 1: Preparation
@@ -33,7 +43,7 @@ Example:
 
 ### Phase 2: Research (if needed)
 
-4. **Execute `/erd:research`** (conditional) - Research external libraries, APIs, or patterns:
+4. **Invoke `/erd:research` via Skill tool** (conditional) - `Skill(skill: "erd:research", args: "<libraries, APIs, or patterns to research>")`:
    - When the issue involves unfamiliar libraries or third-party integrations
    - When architectural decisions require understanding of external documentation
    - Skip if the issue scope is well-understood and internal-only
@@ -41,7 +51,7 @@ Example:
 
 ### Phase 3: Architecture Design
 
-5. **Execute `/erd:design`** - Determine architecture and design:
+5. **Invoke `/erd:design` via Skill tool** - `Skill(skill: "erd:design", args: "<issue requirements and research findings>")`:
    - Module structure and organization
    - Interface/API design
    - Type definitions and data models
@@ -55,7 +65,7 @@ Example:
 
 ### Phase 4: Workflow Planning
 
-7. **Execute `/erd:workflow`** - Generate implementation steps:
+7. **Invoke `/erd:workflow` via Skill tool** - `Skill(skill: "erd:workflow", args: "<design output and issue requirements>")`:
    - Organize task dependencies
    - Determine implementation order
    - Test strategy
