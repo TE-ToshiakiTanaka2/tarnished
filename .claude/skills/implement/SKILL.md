@@ -23,13 +23,13 @@ Example:
 
 ## erd Command Invocation
 
-All erd commands in this skill MUST be invoked explicitly using the **Skill tool**:
+All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
 
 ```
-Skill(skill: "erd:<command>", args: "<arguments>")
+Read(".claude/commands/erd/<command>.md") → follow instructions inline
 ```
 
-Do NOT simply read and follow the erd command's markdown instructions inline. Each erd command must be invoked as a separate Skill tool call to ensure proper execution context.
+Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
 
 ## What This Skill Does
 
@@ -40,14 +40,14 @@ Do NOT simply read and follow the erd command's markdown instructions inline. Ea
    - This handles existing branch detection, checkout, and new branch creation
    - See `_shared/branch/SKILL.md` for full procedure
 3. **Load design artifacts** (if exists) - Read `docs/design/#{issue_number}/` for design decisions, API spec, and workflow
-4. **Invoke `/erd:index-repo` via Skill tool** - `Skill(skill: "erd:index-repo")`:
+4. **Load `/erd:index-repo` and follow inline** - `Read(".claude/commands/erd/index-repo.md")`:
    - Map relevant modules and their relationships
    - Identify files that need modification
    - Understand existing patterns and conventions
 
 ### Phase 2: Implementation
 
-5. **Invoke `/erd:implement` via Skill tool** - `Skill(skill: "erd:implement", args: "<issue requirements and design artifacts>")`:
+5. **Load `/erd:implement` and follow inline** - `Read(".claude/commands/erd/implement.md")`:
    - Follow design artifacts from `/design` (if available)
    - Follow language best practices
    - Proper error handling
@@ -56,11 +56,11 @@ Do NOT simply read and follow the erd command's markdown instructions inline. Ea
 
 ### Phase 3: Build and Test
 
-7. **Invoke `/erd:build` via Skill tool** - `Skill(skill: "erd:build")`:
+7. **Load `/erd:build` and follow inline** - `Read(".claude/commands/erd/build.md")`:
    - Run language-specific linters and formatters
    - Run type checkers
    - Fix build errors iteratively
-8. **Invoke `/erd:test` via Skill tool** - `Skill(skill: "erd:test")`:
+8. **Load `/erd:test` and follow inline** - `Read(".claude/commands/erd/test.md")`:
    - Unit tests
    - Integration tests (if applicable)
    - E2E tests (if applicable)
@@ -68,21 +68,21 @@ Do NOT simply read and follow the erd command's markdown instructions inline. Ea
 
 ### Phase 4: Quality Assurance
 
-9. **Invoke `/erd:analyze` via Skill tool** - `Skill(skill: "erd:analyze")`:
+9. **Load `/erd:analyze` and follow inline** - `Read(".claude/commands/erd/analyze.md")`:
    - Code quality: readability, maintainability, DRY
    - Security: input validation, injection risks, auth checks
    - Performance: inefficient patterns, unnecessary allocations
    - Architecture: module design, layer separation
-10. **Invoke `/erd:improve` via Skill tool** - `Skill(skill: "erd:improve")`:
+10. **Load `/erd:improve` and follow inline** - `Read(".claude/commands/erd/improve.md")`:
     - Code quality improvements
     - Pattern standardization
     - Type safety enhancements
     - Error handling improvements
-11. **Re-invoke `/erd:build`** and **`/erd:test`** via Skill tool - Verify improvements don't break anything
+11. **Re-load `/erd:build`** and **`/erd:test`** and follow inline - Verify improvements don't break anything
 
 ### Phase 5: Error Recovery (if needed)
 
-12. **Invoke `/erd:troubleshoot` via Skill tool** (conditional) - `Skill(skill: "erd:troubleshoot", args: "<error details and context>")`:
+12. **Load `/erd:troubleshoot` and follow inline** (conditional) - `Read(".claude/commands/erd/troubleshoot.md")`:
     - Diagnose root cause of failures
     - Identify dependency issues
     - Resolve configuration problems

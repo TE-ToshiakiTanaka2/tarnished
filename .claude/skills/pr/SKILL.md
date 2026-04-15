@@ -38,29 +38,29 @@ Use the following MCP tools for code analysis:
 
 ## erd Command Invocation
 
-All erd commands in this skill MUST be invoked explicitly using the **Skill tool**:
+All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
 
 ```
-Skill(skill: "erd:<command>", args: "<arguments>")
+Read(".claude/commands/erd/<command>.md") → follow instructions inline
 ```
 
-Do NOT simply read and follow the erd command's markdown instructions inline. Each erd command must be invoked as a separate Skill tool call to ensure proper execution context.
+Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
 
 ## What This Skill Does
 
 ### Phase 1: Code Analysis and Improvement
 
-1. **Invoke `/erd:analyze` via Skill tool** - `Skill(skill: "erd:analyze")`:
+1. **Load `/erd:analyze` and follow inline** - `Read(".claude/commands/erd/analyze.md")`:
    - Code quality: readability, maintainability, DRY
    - Security: input validation, injection risks, auth checks
    - Performance: inefficient patterns, unnecessary allocations
    - Architecture: module design, layer separation
-2. **Invoke `/erd:improve` via Skill tool** - `Skill(skill: "erd:improve")`:
+2. **Load `/erd:improve` and follow inline** - `Read(".claude/commands/erd/improve.md")`:
    - Code quality improvements
    - Pattern standardization
    - Type safety enhancements
    - Error handling improvements
-3. **Invoke `/erd:cleanup` via Skill tool** - `Skill(skill: "erd:cleanup")`:
+3. **Load `/erd:cleanup` and follow inline** - `Read(".claude/commands/erd/cleanup.md")`:
    - Remove dead code and unused imports
    - Optimize import ordering
    - Clean up commented-out code

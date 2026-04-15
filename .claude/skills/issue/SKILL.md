@@ -17,20 +17,20 @@ GitHub Issue creation skill for projects. Handles requirement discovery through 
 
 ## erd Command Invocation
 
-All erd commands in this skill MUST be invoked explicitly using the **Skill tool**:
+All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
 
 ```
-Skill(skill: "erd:<command>", args: "<arguments>")
+Read(".claude/commands/erd/<command>.md") → follow instructions inline
 ```
 
-Do NOT simply read and follow the erd command's markdown instructions inline. Each erd command must be invoked as a separate Skill tool call to ensure proper execution context.
+Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
 
 ## What This Skill Does
 
 ### Phase 1: Requirement Understanding and Discovery
 
 1. **Confirm user request** - Understand what the user wants to accomplish
-2. **Invoke `/erd:brainstorm` via Skill tool** - `Skill(skill: "erd:brainstorm", args: "<user's requirements description>")`:
+2. **Load `/erd:brainstorm` and follow inline** - `Read(".claude/commands/erd/brainstorm.md")`:
    - Discover hidden requirements through Socratic dialogue
    - Identify edge cases and boundary conditions
    - Confirm technical constraints
@@ -39,7 +39,7 @@ Do NOT simply read and follow the erd command's markdown instructions inline. Ea
 
 ### Phase 2: Estimation
 
-4. **Invoke `/erd:estimate` via Skill tool** - `Skill(skill: "erd:estimate", args: "<organized requirements summary>")`:
+4. **Load `/erd:estimate` and follow inline** - `Read(".claude/commands/erd/estimate.md")`:
    - Determine Size (XS/S/M/L/XL) based on scope and complexity
    - Determine Priority (High/Medium/Low) based on impact and urgency
    - Identify risks and dependencies
