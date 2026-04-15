@@ -92,4 +92,40 @@ plugin_post_copy() {
         print_success "Claude scripts made executable"
     fi
 
+    # -------------------------------------------------------------------------
+    # MCP Server Setup Integration
+    # -------------------------------------------------------------------------
+
+    # Copy MCP setup script to devcontainer scripts
+    if [[ -d "${PLUGIN_DIR}/.devcontainer/scripts" ]]; then
+        mkdir -p "${target_dir}/.devcontainer/scripts"
+        for script in "${PLUGIN_DIR}/.devcontainer/scripts"/*.sh; do
+            if [[ -f "$script" ]]; then
+                local script_name
+                script_name=$(basename "$script")
+                copy_with_confirm "$script" "${target_dir}/.devcontainer/scripts/${script_name}"
+            fi
+        done
+        make_scripts_executable "${target_dir}/.devcontainer/scripts"
+    fi
+
+    # Integrate MCP setup into post.sh
+    local post_sh="${target_dir}/.devcontainer/scripts/post.sh"
+    local mcp_marker="# MCP Server Setup"
+
+    if [[ -f "$post_sh" ]] && ! grep -q "$mcp_marker" "$post_sh"; then
+        print_info "Integrating MCP server setup into post.sh..."
+        cat >> "$post_sh" << 'EOF'
+
+# -----------------------------------------------------------------------------
+# MCP Server Setup
+# -----------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/setup_mcp.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_mcp.sh"
+    setup_mcp
+fi
+EOF
+        print_success "MCP server setup integrated into post.sh"
+    fi
 }
