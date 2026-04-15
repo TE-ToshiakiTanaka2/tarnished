@@ -1,6 +1,6 @@
 ---
 name: design
-description: Design architecture and generate design artifacts for a GitHub Issue with UML diagrams. Uses SuperClaude skills (sc:research, sc:design, sc:workflow) and saves all artifacts to docs/design/.
+description: Design architecture and generate design artifacts for a GitHub Issue with UML diagrams. Uses erd commands (erd:research, erd:design, erd:workflow) and saves all artifacts to docs/design/.
 argument-hint: "[issue_number]"
 disable-model-invocation: true
 ---
@@ -39,7 +39,7 @@ Example:
 
 ### Phase 2: Research (if needed)
 
-4. **Execute `/sc:research`** (conditional) - Research external libraries, APIs, or patterns:
+4. **Execute `/erd:research`** (conditional) - Research external libraries, APIs, or patterns:
    - When the issue involves unfamiliar libraries or third-party integrations
    - When architectural decisions require understanding of external documentation
    - Skip if the issue scope is well-understood and internal-only
@@ -47,7 +47,7 @@ Example:
 
 ### Phase 3: Architecture Design
 
-5. **Execute `/sc:design`** - Determine architecture and design:
+5. **Execute `/erd:design`** - Determine architecture and design:
    - Module structure and organization
    - Interface/API design
    - Type definitions and data models
@@ -61,7 +61,7 @@ Example:
 
 ### Phase 4: Workflow Planning
 
-7. **Execute `/sc:workflow`** - Generate implementation steps:
+7. **Execute `/erd:workflow`** - Generate implementation steps:
    - Organize task dependencies
    - Determine implementation order
    - Test strategy
@@ -109,28 +109,28 @@ Use the following MCP tools for efficient codebase analysis and library research
 - **context7**: `resolve-library-id`, `query-docs` — for researching external libraries and frameworks referenced in the issue
 - **sequential-thinking**: `sequentialthinking` — for structured reasoning through architecture trade-offs, design decisions, and multi-step design analysis. Use when evaluating multiple design options or when the design scope is unclear initially
 
-## SuperClaude Skills Used
+## erd Skills Used
 
 | Skill | Purpose | Output |
 | --- | --- | --- |
-| `/sc:research` | Research external libraries, APIs, patterns (conditional) | `docs/design/#{issue_number}/research.md` |
-| `/sc:design` | Architecture and interface design | `docs/design/#{issue_number}/design.md` |
-| `/sc:workflow` | Implementation step generation | `docs/design/#{issue_number}/workflow.md` |
+| `/erd:research` | Research external libraries, APIs, patterns (conditional) | `docs/design/#{issue_number}/research.md` |
+| `/erd:design` | Architecture and interface design | `docs/design/#{issue_number}/design.md` |
+| `/erd:workflow` | Implementation step generation | `docs/design/#{issue_number}/workflow.md` |
 
-## Leveraging sc:research
+## Leveraging erd:research
 
-Use `/sc:research` when the issue involves external dependencies:
+Use `/erd:research` when the issue involves external dependencies:
 
 - Library documentation and best practices
 - API integration patterns
 - Security considerations for third-party services
 - Performance characteristics of candidate solutions
 
-**Decision rule**: If the issue references external libraries, APIs, or patterns that are not already established in the codebase, execute sc:research. Otherwise, skip.
+**Decision rule**: If the issue references external libraries, APIs, or patterns that are not already established in the codebase, execute erd:research. Otherwise, skip.
 
-## Leveraging sc:design
+## Leveraging erd:design
 
-Use `/sc:design` to design the following and **save to `docs/design/#{issue_number}/design.md`**:
+Use `/erd:design` to design the following and **save to `docs/design/#{issue_number}/design.md`**:
 
 ```markdown
 # Design: #{issue_number} {title}
@@ -206,9 +206,9 @@ Generate the following and **save to `docs/design/#{issue_number}/api-spec.md`**
 | --- | --- | --- |
 ```
 
-## Leveraging sc:workflow
+## Leveraging erd:workflow
 
-Use `/sc:workflow` to generate implementation steps and **save to `docs/design/#{issue_number}/workflow.md`**:
+Use `/erd:workflow` to generate implementation steps and **save to `docs/design/#{issue_number}/workflow.md`**:
 
 ```markdown
 # Workflow: #{issue_number} {title}
@@ -312,10 +312,10 @@ graph TD
 
 ```
 docs/design/#{issue_number}/
-├── research.md      # External research findings (sc:research, if applicable)
-├── design.md        # Architecture and interface design (sc:design output)
+├── research.md      # External research findings (erd:research, if applicable)
+├── design.md        # Architecture and interface design (erd:design output)
 ├── api-spec.md      # API/interface specification (if applicable)
-├── workflow.md       # Implementation steps and plan (sc:workflow output)
+├── workflow.md       # Implementation steps and plan (erd:workflow output)
 ├── sequence.md       # Mermaid sequence diagram (if applicable)
 ├── class.md          # Mermaid class diagram (if applicable)
 └── flowchart.md      # Mermaid flowchart (if applicable)
@@ -331,15 +331,15 @@ graph TD
     B1 --> C[Create docs directory]
     B --> C
     C --> D{External dependencies?}
-    D -->|Yes| D1[Execute sc:research]
+    D -->|Yes| D1[Execute erd:research]
     D1 --> D2[Save research.md]
-    D2 --> E[Execute sc:design]
+    D2 --> E[Execute erd:design]
     D -->|No| E
     E --> E2[Save design.md]
     E2 --> E3{API/interface changes?}
     E3 -->|Yes| E4[Generate api-spec.md]
     E3 -->|No| F
-    E4 --> F[Execute sc:workflow]
+    E4 --> F[Execute erd:workflow]
     F --> F2[Save workflow.md]
     F2 --> G[Auto-detect UML types]
     G --> H{Sequence needed?}

@@ -1,6 +1,6 @@
 ---
 name: issue
-description: Create a GitHub Issue from requirements through brainstorming, estimation, and structured Issue creation. Uses SuperClaude skills (sc:brainstorm, sc:estimate) and sequential-thinking MCP.
+description: Create a GitHub Issue from requirements through brainstorming, estimation, and structured Issue creation. Uses erd commands (erd:brainstorm, erd:estimate) and sequential-thinking MCP.
 argument-hint: ""
 disable-model-invocation: true
 ---
@@ -26,7 +26,7 @@ Use the following MCP tools for requirement analysis:
 ### Phase 1: Requirement Understanding and Discovery
 
 1. **Confirm user request** - Understand what the user wants to accomplish
-2. **Execute `/sc:brainstorm`** - Use SuperClaude's brainstorm feature to dig deeper into requirements:
+2. **Execute `/erd:brainstorm`** - Use brainstorm command to dig deeper into requirements:
    - Discover hidden requirements through Socratic dialogue
    - Identify edge cases and boundary conditions
    - Confirm technical constraints
@@ -35,7 +35,7 @@ Use the following MCP tools for requirement analysis:
 
 ### Phase 2: Estimation
 
-4. **Execute `/sc:estimate`** - Development estimation with intelligent analysis:
+4. **Execute `/erd:estimate`** - Development estimation with intelligent analysis:
    - Determine Size (XS/S/M/L/XL) based on scope and complexity
    - Determine Priority (High/Medium/Low) based on impact and urgency
    - Identify risks and dependencies
@@ -48,16 +48,16 @@ Use the following MCP tools for requirement analysis:
 7. **Set Project fields** - Automatically set Size and Priority (if project.yml exists)
 8. **Return Issue number**
 
-## SuperClaude Skills Used
+## erd Skills Used
 
 | Skill | Purpose | Phase |
 | --- | --- | --- |
-| `/sc:brainstorm` | Interactive requirements discovery through Socratic dialogue | Phase 1 |
-| `/sc:estimate` | Development estimates with intelligent analysis | Phase 2 |
+| `/erd:brainstorm` | Interactive requirements discovery through Socratic dialogue | Phase 1 |
+| `/erd:estimate` | Development estimates with intelligent analysis | Phase 2 |
 
-## Leveraging sc:brainstorm
+## Leveraging erd:brainstorm
 
-Use `/sc:brainstorm` to explore requirements from these perspectives:
+Use `/erd:brainstorm` to explore requirements from these perspectives:
 
 - **Functional requirements**: What to achieve, acceptance criteria
 - **Non-functional requirements**: Performance, security, maintainability
@@ -65,9 +65,9 @@ Use `/sc:brainstorm` to explore requirements from these perspectives:
 - **User experience**: UI/UX considerations, accessibility
 - **Data model**: New or modified entities, relationships, migrations
 
-## Leveraging sc:estimate
+## Leveraging erd:estimate
 
-Use `/sc:estimate` to produce a structured estimation:
+Use `/erd:estimate` to produce a structured estimation:
 
 - **Size**: Based on file count, module span, and complexity
 - **Priority**: Based on impact, urgency, and dependencies
@@ -144,11 +144,11 @@ Context and purpose
 
 ```mermaid
 graph TD
-    A[Confirm user request] --> B[Execute sc:brainstorm]
+    A[Confirm user request] --> B[Execute erd:brainstorm]
     B --> C[Organize requirements]
     C --> D{User feedback}
     D -->|Adjustments needed| B
-    D -->|Approved| E[Execute sc:estimate]
+    D -->|Approved| E[Execute erd:estimate]
     E --> F[Create GitHub Issue]
     F --> G[Configure settings]
     G --> H[Return Issue number]
@@ -164,7 +164,7 @@ Settings:
 - Milestone: v1.0
 - Assignee: @username
 
-Estimation (sc:estimate):
+Estimation (erd:estimate):
 - Size: M (3-5 files, spanning multiple modules)
 - Priority: Medium (normal feature addition)
 - Affected Layers: ...
