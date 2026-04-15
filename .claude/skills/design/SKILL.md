@@ -23,13 +23,13 @@ Example:
 
 ## erd Command Invocation
 
-All erd commands in this skill MUST be invoked explicitly using the **Skill tool**:
+All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
 
 ```
-Skill(skill: "erd:<command>", args: "<arguments>")
+Read(".claude/commands/erd/<command>.md") → follow instructions inline
 ```
 
-Do NOT simply read and follow the erd command's markdown instructions inline. Each erd command must be invoked as a separate Skill tool call to ensure proper execution context.
+Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
 
 ## What This Skill Does
 
@@ -43,7 +43,7 @@ Do NOT simply read and follow the erd command's markdown instructions inline. Ea
 
 ### Phase 2: Research (if needed)
 
-4. **Invoke `/erd:research` via Skill tool** (conditional) - `Skill(skill: "erd:research", args: "<libraries, APIs, or patterns to research>")`:
+4. **Load `/erd:research` and follow inline** (conditional) - `Read(".claude/commands/erd/research.md")`:
    - When the issue involves unfamiliar libraries or third-party integrations
    - When architectural decisions require understanding of external documentation
    - Skip if the issue scope is well-understood and internal-only
@@ -51,7 +51,7 @@ Do NOT simply read and follow the erd command's markdown instructions inline. Ea
 
 ### Phase 3: Architecture Design
 
-5. **Invoke `/erd:design` via Skill tool** - `Skill(skill: "erd:design", args: "<issue requirements and research findings>")`:
+5. **Load `/erd:design` and follow inline** - `Read(".claude/commands/erd/design.md")`:
    - Module structure and organization
    - Interface/API design
    - Type definitions and data models
@@ -65,7 +65,7 @@ Do NOT simply read and follow the erd command's markdown instructions inline. Ea
 
 ### Phase 4: Workflow Planning
 
-7. **Invoke `/erd:workflow` via Skill tool** - `Skill(skill: "erd:workflow", args: "<design output and issue requirements>")`:
+7. **Load `/erd:workflow` and follow inline** - `Read(".claude/commands/erd/workflow.md")`:
    - Organize task dependencies
    - Determine implementation order
    - Test strategy
