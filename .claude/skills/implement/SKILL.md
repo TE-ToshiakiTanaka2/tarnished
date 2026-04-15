@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Implement a GitHub Issue with codebase understanding, build verification, testing, and quality assurance. Uses SuperClaude skills (sc:index-repo, sc:implement, sc:build, sc:test, sc:analyze, sc:improve, sc:troubleshoot).
+description: Implement a GitHub Issue with codebase understanding, build verification, testing, and quality assurance. Uses erd commands (erd:index-repo, erd:implement, erd:build, erd:test, erd:analyze, erd:improve, erd:troubleshoot).
 argument-hint: "[issue_number]"
 disable-model-invocation: true
 ---
@@ -28,14 +28,14 @@ Example:
 1. **Review Issue** - Use `gh issue view` to understand Issue content
 2. **Detect or create branch** - Check if `/design` already created a branch for this issue. If yes, switch to it. If no, create a new branch following naming convention.
 3. **Load design artifacts** (if exists) - Read `docs/design/#{issue_number}/` for design decisions, API spec, and workflow
-4. **Execute `/sc:index-repo`** - Efficient repository indexing for codebase understanding:
+4. **Execute `/erd:index-repo`** - Efficient repository indexing for codebase understanding:
    - Map relevant modules and their relationships
    - Identify files that need modification
    - Understand existing patterns and conventions
 
 ### Phase 2: Implementation
 
-5. **Execute `/sc:implement`** - Feature implementation with persona activation:
+5. **Execute `/erd:implement`** - Feature implementation with persona activation:
    - Follow design artifacts from `/design` (if available)
    - Follow language best practices
    - Proper error handling
@@ -44,11 +44,11 @@ Example:
 
 ### Phase 3: Build and Test
 
-7. **Execute `/sc:build`** - Build verification with error handling:
+7. **Execute `/erd:build`** - Build verification with error handling:
    - Run language-specific linters and formatters
    - Run type checkers
    - Fix build errors iteratively
-8. **Execute `/sc:test`** - Test execution with coverage analysis:
+8. **Execute `/erd:test`** - Test execution with coverage analysis:
    - Unit tests
    - Integration tests (if applicable)
    - E2E tests (if applicable)
@@ -56,21 +56,21 @@ Example:
 
 ### Phase 4: Quality Assurance
 
-9. **Execute `/sc:analyze`** - Comprehensive code analysis:
+9. **Execute `/erd:analyze`** - Comprehensive code analysis:
    - Code quality: readability, maintainability, DRY
    - Security: input validation, injection risks, auth checks
    - Performance: inefficient patterns, unnecessary allocations
    - Architecture: module design, layer separation
-10. **Execute `/sc:improve`** - Fix discovered issues:
+10. **Execute `/erd:improve`** - Fix discovered issues:
     - Code quality improvements
     - Pattern standardization
     - Type safety enhancements
     - Error handling improvements
-11. **Re-run `/sc:build`** and **`/sc:test`** - Verify improvements don't break anything
+11. **Re-run `/erd:build`** and **`/erd:test`** - Verify improvements don't break anything
 
 ### Phase 5: Error Recovery (if needed)
 
-12. **Execute `/sc:troubleshoot`** (conditional) - When build or test failures persist:
+12. **Execute `/erd:troubleshoot`** (conditional) - When build or test failures persist:
     - Diagnose root cause of failures
     - Identify dependency issues
     - Resolve configuration problems
@@ -105,62 +105,60 @@ Use the following MCP tools during implementation:
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `list_dir`, `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol` — for codebase navigation, understanding existing patterns, and semantic code editing
 - **context7**: `resolve-library-id`, `query-docs` — for looking up library documentation when implementing with external dependencies
-- **sequential-thinking**: `sequentialthinking` — for planning complex implementation steps, resolving design ambiguities, and reasoning through non-obvious integration points
-
-## SuperClaude Skills Used
+## erd Skills Used
 
 | Skill | Purpose | Phase |
 | --- | --- | --- |
-| `/sc:index-repo` | Repository indexing for efficient codebase understanding | Phase 1 |
-| `/sc:implement` | Feature implementation with persona activation | Phase 2 |
-| `/sc:build` | Build verification with intelligent error handling | Phase 3 |
-| `/sc:test` | Test execution with coverage analysis and quality reporting | Phase 3 |
-| `/sc:analyze` | Comprehensive code analysis (quality, security, performance, architecture) | Phase 4 |
-| `/sc:improve` | Systematic code quality improvements | Phase 4 |
-| `/sc:troubleshoot` | Diagnose and resolve persistent build/test failures (conditional) | Phase 5 |
+| `/erd:index-repo` | Repository indexing for efficient codebase understanding | Phase 1 |
+| `/erd:implement` | Feature implementation with persona activation | Phase 2 |
+| `/erd:build` | Build verification with intelligent error handling | Phase 3 |
+| `/erd:test` | Test execution with coverage analysis and quality reporting | Phase 3 |
+| `/erd:analyze` | Comprehensive code analysis (quality, security, performance, architecture) | Phase 4 |
+| `/erd:improve` | Systematic code quality improvements | Phase 4 |
+| `/erd:troubleshoot` | Diagnose and resolve persistent build/test failures (conditional) | Phase 5 |
 
-## Leveraging sc:index-repo
+## Leveraging erd:index-repo
 
-Use `/sc:index-repo` for efficient codebase understanding:
+Use `/erd:index-repo` for efficient codebase understanding:
 
 - Significant token reduction compared to reading full files
 - Map module relationships and dependencies
 - Identify patterns and conventions already in use
 - Focus on files relevant to the current issue
 
-## Leveraging sc:implement
+## Leveraging erd:implement
 
-Use `/sc:implement` for the actual coding work:
+Use `/erd:implement` for the actual coding work:
 
 - Follow design artifacts from `/design` phase (if available)
 - Activate appropriate persona for the language/framework
 - Implement with proper type annotations and error handling
 - Create progressive commits per logical unit
 
-## Leveraging sc:build
+## Leveraging erd:build
 
-Use `/sc:build` to verify the build:
+Use `/erd:build` to verify the build:
 
 - Run language-specific linters and formatters
 - Run type checkers (mypy, tsc, cargo check, etc.)
 - Fix errors iteratively until build passes
 - Language detection is automatic based on project files
 
-## Leveraging sc:test
+## Leveraging erd:test
 
-Use `/sc:test` to run and analyze tests:
+Use `/erd:test` to run and analyze tests:
 
 - Execute the project's test suite
 - Analyze test coverage
 - Identify and add missing test cases
 - Run integration/E2E tests if applicable
 
-## Leveraging sc:analyze and sc:improve
+## Leveraging erd:analyze and erd:improve
 
-Use `/sc:analyze` then `/sc:improve` as a feedback loop:
+Use `/erd:analyze` then `/erd:improve` as a feedback loop:
 
 ```
-sc:analyze findings → sc:improve fixes → sc:build verify → sc:test verify
+erd:analyze findings → erd:improve fixes → erd:build verify → erd:test verify
 ```
 
 Analysis domains:
@@ -178,7 +176,7 @@ feat: add config type definitions
 feat: implement config file loader
 test: add unit tests for config module
 fix: resolve edge case in config parsing
-refactor: extract validation logic (sc:improve)
+refactor: extract validation logic (erd:improve)
 ```
 
 ## Implementation Workflow
@@ -190,23 +188,23 @@ graph TD
     B -->|No| C2[Create branch]
     C --> D[Load design artifacts]
     C2 --> D
-    D --> E[Execute sc:index-repo]
-    E --> F[Execute sc:implement]
+    D --> E[Execute erd:index-repo]
+    E --> F[Execute erd:implement]
     F --> G[Progressive commits]
-    G --> H[Execute sc:build]
+    G --> H[Execute erd:build]
     H --> I{Build OK?}
     I -->|No| J[Fix build errors]
     J --> H
-    I -->|Yes| K[Execute sc:test]
+    I -->|Yes| K[Execute erd:test]
     K --> L{Tests pass?}
     L -->|No| M{Persistent failure?}
-    M -->|Yes| N[Execute sc:troubleshoot]
+    M -->|Yes| N[Execute erd:troubleshoot]
     N --> F
     M -->|No| O[Fix tests]
     O --> K
-    L -->|Yes| P[Execute sc:analyze]
-    P --> Q[Execute sc:improve]
-    Q --> R[Re-run sc:build + sc:test]
+    L -->|Yes| P[Execute erd:analyze]
+    P --> Q[Execute erd:improve]
+    Q --> R[Re-run erd:build + erd:test]
     R --> S{All pass?}
     S -->|No| T[Fix issues]
     T --> R
@@ -218,7 +216,7 @@ graph TD
 
 - **Build errors**: Attempt auto-fix with linters/formatters, retry build
 - **Test failures**: Analyze cause, fix implementation, re-run tests
-- **Persistent failures**: Escalate to `/sc:troubleshoot` for root cause analysis
+- **Persistent failures**: Escalate to `/erd:troubleshoot` for root cause analysis
 - **Blockers**: Report to user, request guidance
 
 ## Output Format
@@ -229,24 +227,24 @@ Implementation Complete
 Branch: feature/username/#123/add-config-loader
 Issue: #123
 
-Codebase Analysis (sc:index-repo):
+Codebase Analysis (erd:index-repo):
   - Indexed N modules, identified M relevant files
 
-Quality Checks (sc:build):
+Quality Checks (erd:build):
   - Linting: Passed
   - Formatting: Passed
   - Type Check: Passed
 
-Tests (sc:test):
+Tests (erd:test):
   - Unit tests: 15/15 passed
   - Integration tests: 3/3 passed
 
-Code Analysis (sc:analyze):
+Code Analysis (erd:analyze):
   - Quality: No issues
   - Security: No issues
   - Performance: No issues
 
-Improvements Applied (sc:improve):
+Improvements Applied (erd:improve):
   - Standardized error handling pattern
   - Enhanced type safety in 2 modules
 
@@ -254,7 +252,7 @@ Commits:
 - feat: add Config type definitions
 - feat: implement config loader
 - test: add config loader tests
-- refactor: improve error handling (sc:improve)
+- refactor: improve error handling (erd:improve)
 
 Ready for /review or /pr
 ```
@@ -262,7 +260,7 @@ Ready for /review or /pr
 ## Best Practices
 
 - **Design First**: Load and follow design artifacts from `/design` if available
-- **Codebase Understanding**: Use `/sc:index-repo` before jumping into implementation
+- **Codebase Understanding**: Use `/erd:index-repo` before jumping into implementation
 - **Incremental Implementation**: Implement and commit in small logical units
 - **Type Safety**: Maximize use of type systems where available
 - **Test Coverage**: Always add tests for new features

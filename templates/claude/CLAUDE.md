@@ -20,12 +20,13 @@ This file provides context to Claude Code about the project structure and develo
 │   ├── devcontainer.json   # VS Code Devcontainer settings
 │   └── scripts/            # Setup scripts
 ├── .claude/                # Claude Code configuration
+│   ├── commands/erd/       # erd commands (brainstorm, estimate, etc.)
 │   ├── skills/             # Custom skills (slash commands)
 │   │   ├── issue/          # Issue creation skill
+│   │   ├── design/         # Architecture design skill
 │   │   ├── implement/      # Implementation skill
-│   │   ├── pr/             # Pull Request skill
 │   │   ├── review/         # Code review skill (via Codex)
-│   │   └── design/         # Architecture design skill
+│   │   └── pr/             # Pull Request skill
 │   ├── scripts/            # Helper scripts
 │   └── settings.json       # Claude Code settings
 ├── docker/                 # Docker configuration
@@ -78,11 +79,28 @@ docker-compose down
 
 Available skills (slash commands):
 
-- `/issue` - Create a GitHub Issue from requirements (uses sc:brainstorm)
-- `/design <issue_number>` - Design architecture with UML diagrams (uses sc:research, sc:design, sc:workflow)
-- `/implement <issue_number>` - Implement a GitHub Issue (uses sc:design, sc:workflow)
+- `/issue` - Create a GitHub Issue from requirements (uses erd:brainstorm, erd:estimate)
+- `/design <issue_number>` - Design architecture with UML diagrams (uses erd:research, erd:design, erd:workflow)
+- `/implement <issue_number>` - Implement a GitHub Issue (uses erd:implement, erd:build, erd:test)
 - `/review` - Code review via Codex CLI (requires codex)
-- `/pr` - Create a Pull Request (uses sc:analyze, sc:improve, sc:cleanup, sc:reflect)
+- `/pr [--merge]` - Create a Pull Request (uses erd:analyze, erd:improve, erd:cleanup, erd:reflect)
+
+Available erd commands (callable independently):
+
+- `/erd:brainstorm` - Interactive requirements discovery
+- `/erd:estimate` - Development estimation (Size/Priority/Risk)
+- `/erd:research` - External library/API research
+- `/erd:design` - Architecture and component design
+- `/erd:workflow` - Implementation workflow planning
+- `/erd:index-repo` - Repository indexing for token reduction
+- `/erd:implement` - Feature implementation
+- `/erd:build` - Build verification
+- `/erd:test` - Test execution and coverage
+- `/erd:analyze` - Code quality/security/performance analysis
+- `/erd:improve` - Code quality improvements
+- `/erd:cleanup` - Dead code removal and cleanup
+- `/erd:troubleshoot` - Issue diagnosis and root cause analysis
+- `/erd:reflect` - CI result validation and PR quality assessment
 
 **Typical workflow**: `/issue` → `/design` → `/implement` → `/review` → `/pr`
 

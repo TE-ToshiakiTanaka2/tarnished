@@ -5,10 +5,10 @@
 # =============================================================================
 # This plugin provides Claude Code configuration including:
 # - Custom slash commands (issue, implement, pr)
+# - Custom erd: commands (brainstorm, estimate, design, etc.)
 # - Claude Code settings with hooks
 # - Deny check script
 # - CLAUDE.md project context file
-# - SuperClaude Framework setup (automatic integration with post.sh)
 #
 # =============================================================================
 
@@ -26,7 +26,7 @@ plugin_name() {
 
 # Return plugin description
 plugin_description() {
-    echo "Claude Code configuration, custom commands, and SuperClaude setup"
+    echo "Claude Code configuration, custom commands, and erd commands"
 }
 
 # =============================================================================
@@ -93,29 +93,10 @@ plugin_post_copy() {
     fi
 
     # -------------------------------------------------------------------------
-    # Devcontainer Features Integration (uv for SuperClaude)
+    # MCP Server Setup Integration
     # -------------------------------------------------------------------------
 
-    # Merge devcontainer.json features (uv package manager for SuperClaude)
-    local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
-    local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
-
-    if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
-        print_info "Merging Claude devcontainer features..."
-        local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
-
-        # Merge devcontainer.json with special handling for features and extensions
-        merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
-        mv "$temp_file" "$target_devcontainer"
-
-        print_success "Claude devcontainer features merged"
-    fi
-
-    # -------------------------------------------------------------------------
-    # SuperClaude Framework Integration
-    # -------------------------------------------------------------------------
-
-    # Copy SuperClaude setup script to devcontainer scripts
+    # Copy MCP setup script to devcontainer scripts
     if [[ -d "${PLUGIN_DIR}/.devcontainer/scripts" ]]; then
         mkdir -p "${target_dir}/.devcontainer/scripts"
         for script in "${PLUGIN_DIR}/.devcontainer/scripts"/*.sh; do
@@ -125,27 +106,26 @@ plugin_post_copy() {
                 copy_with_confirm "$script" "${target_dir}/.devcontainer/scripts/${script_name}"
             fi
         done
-        # Make devcontainer scripts executable
         make_scripts_executable "${target_dir}/.devcontainer/scripts"
     fi
 
-    # Integrate SuperClaude setup into post.sh
+    # Integrate MCP setup into post.sh
     local post_sh="${target_dir}/.devcontainer/scripts/post.sh"
-    local superclaude_marker="# SuperClaude Framework"
+    local mcp_marker="# MCP Server Setup"
 
-    if [[ -f "$post_sh" ]] && ! grep -q "$superclaude_marker" "$post_sh"; then
-        print_info "Integrating SuperClaude setup into post.sh..."
+    if [[ -f "$post_sh" ]] && ! grep -q "$mcp_marker" "$post_sh"; then
+        print_info "Integrating MCP server setup into post.sh..."
         cat >> "$post_sh" << 'EOF'
 
 # -----------------------------------------------------------------------------
-# SuperClaude Framework
+# MCP Server Setup
 # -----------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/setup_superclaude.sh" ]]; then
-    source "${SCRIPT_DIR}/setup_superclaude.sh"
-    setup_superclaude
+if [[ -f "${SCRIPT_DIR}/setup_mcp.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_mcp.sh"
+    setup_mcp
 fi
 EOF
-        print_success "SuperClaude setup integrated into post.sh"
+        print_success "MCP server setup integrated into post.sh"
     fi
 }
