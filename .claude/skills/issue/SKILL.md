@@ -1,6 +1,6 @@
 ---
 name: issue
-description: Create a GitHub Issue from requirements through brainstorming, estimation, and structured Issue creation. Uses erd commands (erd:brainstorm, erd:estimate) and sequential-thinking MCP.
+description: Create a GitHub Issue from requirements through brainstorming, estimation, and structured Issue creation. Uses erd commands (erd:brainstorm, erd:estimate).
 argument-hint: ""
 disable-model-invocation: true
 ---
@@ -14,12 +14,6 @@ GitHub Issue creation skill for projects. Handles requirement discovery through 
 ```
 /issue
 ```
-
-## MCP Tools
-
-Use the following MCP tools for requirement analysis:
-
-- **sequential-thinking**: `sequentialthinking` — for structured requirement discovery: break down complex requests, identify hidden requirements, explore edge cases, and evaluate implementation trade-offs step by step
 
 ## What This Skill Does
 

@@ -10,12 +10,12 @@ Diagnose and resolve issues in code, builds, deployments, and system behavior.
 
 ## MCP Tools
 
-- **sequential-thinking**: `sequentialthinking` -- for structured root cause analysis, hypothesis testing, and systematic debugging
+- **context7**: `resolve-library-id`, `query-docs` -- for looking up library-specific error patterns and known issues when troubleshooting dependency-related problems
 
 ## Behavioral Flow
 
 1. **Gather**: Collect error messages, logs, stack traces, and system state
-2. **Hypothesize**: Form hypotheses about root causes using sequential-thinking
+2. **Hypothesize**: Form hypotheses about root causes
 3. **Investigate**: Test each hypothesis systematically with targeted analysis
 4. **Diagnose**: Identify the root cause with supporting evidence
 5. **Propose**: Present solution options ranked by safety and effectiveness

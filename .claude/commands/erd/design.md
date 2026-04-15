@@ -11,7 +11,7 @@ Design system architecture, APIs, and component interfaces with comprehensive sp
 ## MCP Tools
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `list_dir` -- for understanding existing architecture, finding related symbols, and analyzing current codebase structure
-- **sequential-thinking**: `sequentialthinking` -- for evaluating design trade-offs, reasoning through architectural decisions, and validating design coherence
+- **context7**: `resolve-library-id`, `query-docs` -- for researching library APIs and patterns when design involves external dependencies
 
 ## Behavioral Flow
 
@@ -27,7 +27,7 @@ Design system architecture, APIs, and component interfaces with comprehensive sp
 1. Use `get_symbols_overview` to understand existing module structure
 2. Use `find_symbol` to examine related interfaces and types
 3. Use `search_for_pattern` to identify conventions already in use
-4. Use `sequential-thinking` to reason through design trade-offs
+4. Reason through design trade-offs before committing to an approach
 
 ### Design considerations:
 - **Consistency**: Follow existing patterns and conventions in the codebase

@@ -11,7 +11,6 @@ Comprehensive code analysis across quality, security, performance, and architect
 ## MCP Tools
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_referencing_symbols` -- for understanding code structure, symbol relationships, and usage patterns
-- **sequential-thinking**: `sequentialthinking` -- for structured multi-domain analysis and prioritizing findings
 
 ## Behavioral Flow
 

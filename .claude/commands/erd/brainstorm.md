@@ -8,10 +8,6 @@ Discover and refine requirements through Socratic dialogue and structured explor
 /erd:brainstorm [topic or idea]
 ```
 
-## MCP Tools
-
-- **sequential-thinking**: `sequentialthinking` -- for structured multi-step reasoning through requirements discovery, breaking down complex ideas, and evaluating trade-offs
-
 ## Behavioral Flow
 
 1. **Understand**: Confirm the user's intent and context
@@ -34,7 +30,7 @@ Explore requirements from each of these perspectives:
 ## Key Principles
 
 - Ask **one focused question at a time** -- don't overwhelm with multiple questions
-- Use **sequential-thinking** to reason through complex requirement spaces before asking
+- Reason through complex requirement spaces internally before asking
 - Build on user answers progressively -- each question should deepen understanding
 - Identify **assumptions** explicitly and validate them with the user
 - When the user's answer reveals new scope, acknowledge it and explore further

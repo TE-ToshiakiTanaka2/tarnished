@@ -105,8 +105,6 @@ Use the following MCP tools during implementation:
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `list_dir`, `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol` — for codebase navigation, understanding existing patterns, and semantic code editing
 - **context7**: `resolve-library-id`, `query-docs` — for looking up library documentation when implementing with external dependencies
-- **sequential-thinking**: `sequentialthinking` — for planning complex implementation steps, resolving design ambiguities, and reasoning through non-obvious integration points
-
 ## SuperClaude Skills Used
 
 | Skill | Purpose | Phase |

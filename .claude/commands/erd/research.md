@@ -11,6 +11,7 @@ Research external libraries, APIs, patterns, and technologies with evidence-base
 ## MCP Tools
 
 - **context7**: `resolve-library-id`, `query-docs` -- for looking up library documentation, API references, and framework-specific patterns
+- **playwright**: for extracting content from JavaScript-heavy documentation sites when WebSearch or context7 cannot retrieve sufficient information
 
 ## Behavioral Flow
 

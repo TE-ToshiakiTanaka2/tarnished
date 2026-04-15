@@ -8,10 +8,6 @@ Generate structured implementation workflows from requirements and design specif
 /erd:workflow [requirement description or design reference]
 ```
 
-## MCP Tools
-
-- **sequential-thinking**: `sequentialthinking` -- for systematic task decomposition, dependency analysis, and implementation order optimization
-
 ## Behavioral Flow
 
 1. **Analyze**: Parse requirements and design specifications to understand implementation scope
