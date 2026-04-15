@@ -21,6 +21,16 @@ Example:
 /implement 42
 ```
 
+## erd Command Invocation
+
+All erd commands in this skill MUST be invoked explicitly using the **Skill tool**:
+
+```
+Skill(skill: "erd:<command>", args: "<arguments>")
+```
+
+Do NOT simply read and follow the erd command's markdown instructions inline. Each erd command must be invoked as a separate Skill tool call to ensure proper execution context.
+
 ## What This Skill Does
 
 ### Phase 1: Preparation
@@ -30,14 +40,14 @@ Example:
    - This handles existing branch detection, checkout, and new branch creation
    - See `_shared/branch/SKILL.md` for full procedure
 3. **Load design artifacts** (if exists) - Read `docs/design/#{issue_number}/` for design decisions, API spec, and workflow
-4. **Execute `/erd:index-repo`** - Efficient repository indexing for codebase understanding:
+4. **Invoke `/erd:index-repo` via Skill tool** - `Skill(skill: "erd:index-repo")`:
    - Map relevant modules and their relationships
    - Identify files that need modification
    - Understand existing patterns and conventions
 
 ### Phase 2: Implementation
 
-5. **Execute `/erd:implement`** - Feature implementation with persona activation:
+5. **Invoke `/erd:implement` via Skill tool** - `Skill(skill: "erd:implement", args: "<issue requirements and design artifacts>")`:
    - Follow design artifacts from `/design` (if available)
    - Follow language best practices
    - Proper error handling
@@ -46,11 +56,11 @@ Example:
 
 ### Phase 3: Build and Test
 
-7. **Execute `/erd:build`** - Build verification with error handling:
+7. **Invoke `/erd:build` via Skill tool** - `Skill(skill: "erd:build")`:
    - Run language-specific linters and formatters
    - Run type checkers
    - Fix build errors iteratively
-8. **Execute `/erd:test`** - Test execution with coverage analysis:
+8. **Invoke `/erd:test` via Skill tool** - `Skill(skill: "erd:test")`:
    - Unit tests
    - Integration tests (if applicable)
    - E2E tests (if applicable)
@@ -58,21 +68,21 @@ Example:
 
 ### Phase 4: Quality Assurance
 
-9. **Execute `/erd:analyze`** - Comprehensive code analysis:
+9. **Invoke `/erd:analyze` via Skill tool** - `Skill(skill: "erd:analyze")`:
    - Code quality: readability, maintainability, DRY
    - Security: input validation, injection risks, auth checks
    - Performance: inefficient patterns, unnecessary allocations
    - Architecture: module design, layer separation
-10. **Execute `/erd:improve`** - Fix discovered issues:
+10. **Invoke `/erd:improve` via Skill tool** - `Skill(skill: "erd:improve")`:
     - Code quality improvements
     - Pattern standardization
     - Type safety enhancements
     - Error handling improvements
-11. **Re-run `/erd:build`** and **`/erd:test`** - Verify improvements don't break anything
+11. **Re-invoke `/erd:build`** and **`/erd:test`** via Skill tool - Verify improvements don't break anything
 
 ### Phase 5: Error Recovery (if needed)
 
-12. **Execute `/erd:troubleshoot`** (conditional) - When build or test failures persist:
+12. **Invoke `/erd:troubleshoot` via Skill tool** (conditional) - `Skill(skill: "erd:troubleshoot", args: "<error details and context>")`:
     - Diagnose root cause of failures
     - Identify dependency issues
     - Resolve configuration problems

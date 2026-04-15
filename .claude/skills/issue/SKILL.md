@@ -15,12 +15,22 @@ GitHub Issue creation skill for projects. Handles requirement discovery through 
 /issue
 ```
 
+## erd Command Invocation
+
+All erd commands in this skill MUST be invoked explicitly using the **Skill tool**:
+
+```
+Skill(skill: "erd:<command>", args: "<arguments>")
+```
+
+Do NOT simply read and follow the erd command's markdown instructions inline. Each erd command must be invoked as a separate Skill tool call to ensure proper execution context.
+
 ## What This Skill Does
 
 ### Phase 1: Requirement Understanding and Discovery
 
 1. **Confirm user request** - Understand what the user wants to accomplish
-2. **Execute `/erd:brainstorm`** - Use brainstorm command to dig deeper into requirements:
+2. **Invoke `/erd:brainstorm` via Skill tool** - `Skill(skill: "erd:brainstorm", args: "<user's requirements description>")`:
    - Discover hidden requirements through Socratic dialogue
    - Identify edge cases and boundary conditions
    - Confirm technical constraints
@@ -29,7 +39,7 @@ GitHub Issue creation skill for projects. Handles requirement discovery through 
 
 ### Phase 2: Estimation
 
-4. **Execute `/erd:estimate`** - Development estimation with intelligent analysis:
+4. **Invoke `/erd:estimate` via Skill tool** - `Skill(skill: "erd:estimate", args: "<organized requirements summary>")`:
    - Determine Size (XS/S/M/L/XL) based on scope and complexity
    - Determine Priority (High/Medium/Low) based on impact and urgency
    - Identify risks and dependencies

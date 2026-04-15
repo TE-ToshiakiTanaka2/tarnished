@@ -952,8 +952,12 @@ main() {
     echo ""
     echo "Available Claude Code commands:"
     echo "  /issue     - Create a GitHub Issue"
+    echo "  /design    - Design architecture for a GitHub Issue"
     echo "  /implement - Implement a GitHub Issue"
+    echo "  /review    - Code review via Codex CLI"
     echo "  /pr        - Create a Pull Request"
+    echo ""
+    echo "Workflow: /issue → /design → /implement → /review → /pr"
 }
 
 # Run main function
