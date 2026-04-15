@@ -102,7 +102,19 @@ jobs:
             echo "path=.github/project.yml" >> $GITHUB_OUTPUT
           fi
 
+      - name: Verify erd supports --label-only
+        id: verify-erd
+        run: |
+          if ./target/release/erd issue link --help 2>&1 | grep -q '\-\-label-only'; then
+            echo "supported=true" >> $GITHUB_OUTPUT
+            echo "erd binary supports --label-only flag."
+          else
+            echo "supported=false" >> $GITHUB_OUTPUT
+            echo "::error::Downloaded erd binary does not support --label-only. Please update erd-version to a release that includes this flag."
+          fi
+
       - name: Check label_projects config
+        if: steps.verify-erd.outputs.supported == 'true'
         id: check-config
         run: |
           CONFIG_PATH="${{ steps.config.outputs.path }}"
@@ -113,7 +125,7 @@ jobs:
           fi
 
       - name: Route issue by label
-        if: steps.check-config.outputs.has_label_projects == 'true'
+        if: steps.verify-erd.outputs.supported == 'true' && steps.check-config.outputs.has_label_projects == 'true'
         id: route
         run: |
           ./target/release/erd --verbose issue link ${{ steps.issue.outputs.number }} \
@@ -125,8 +137,14 @@ jobs:
         continue-on-error: true
 
       - name: Skip (no label_projects configured)
-        if: steps.check-config.outputs.has_label_projects != 'true'
+        if: steps.verify-erd.outputs.supported == 'true' && steps.check-config.outputs.has_label_projects != 'true'
         run: echo "No label_projects section in config, skipping label routing."
+
+      - name: Fail (erd binary too old)
+        if: steps.verify-erd.outputs.supported != 'true'
+        run: |
+          echo "::error::Label routing skipped: erd binary does not support --label-only flag. Update erd-version input to a newer release."
+          exit 1
 
       - name: Log failure (external)
         if: steps.route.outcome == 'failure' && github.repository != 'TE-ToshiakiTanaka2/tarnished'
