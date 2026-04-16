@@ -2,85 +2,71 @@
 
 ## Architecture Overview
 
-This is a straightforward refactoring of DevContainer setup scripts to change MCP server installation scope from user-level (`local`, the default) to project-level (`--scope project`). Additionally, the superclaude dependency is removed from the main workspace's `post.sh` and replaced with a standalone `setup_mcp.sh`.
+Replace `claude mcp add` (user-scoped by default) with `claude plugins install -s project` using official plugins from the `claude-plugins-official` marketplace. This standardizes the entry point for MCP server installation and removes the superclaude dependency from the main workspace's `post.sh`.
 
 ## Module Structure
 
 ```
 .devcontainer/scripts/
-├── post.sh              # Modified: remove setup_superclaude(), add setup_mcp.sh sourcing
-└── setup_mcp.sh         # New: MCP server setup for main workspace
+├── post.sh              # Modified: remove setup_superclaude(), add setup_plugins.sh sourcing
+└── setup_plugins.sh     # New: plugin installation for main workspace
 
 templates/claude/.devcontainer/scripts/
-└── setup_mcp.sh         # Modified: add --scope project to claude mcp add commands
+└── setup_plugins.sh     # Renamed + Modified: use claude plugins install
+
+templates/claude/
+└── plugin.sh            # Modified: update references from setup_mcp to setup_plugins
 ```
 
 ## Changes Detail
 
-### 1. `templates/claude/.devcontainer/scripts/setup_mcp.sh` (Modified)
+### 1. `templates/claude/.devcontainer/scripts/setup_plugins.sh` (Renamed from setup_mcp.sh)
 
-Add `-s project` flag to all three `claude mcp add` invocations:
+Replace all `claude mcp add` commands with `claude plugins install`:
 
-| Line | Before | After |
-| --- | --- | --- |
-| 39 | `claude mcp add context7 -- npx ...` | `claude mcp add -s project context7 -- npx ...` |
-| 51 | `claude mcp add serena -- uvx ...` | `claude mcp add -s project serena -- uvx ...` |
-| 69 | `claude mcp add playwright -- npx ...` | `claude mcp add -s project playwright -- npx ...` |
+| Before | After |
+| --- | --- |
+| `claude mcp add -s project context7 -- npx ...` | `claude plugins install context7@claude-plugins-official -s project` |
+| `claude mcp add -s project serena -- uvx ...` | `claude plugins install serena@claude-plugins-official -s project` |
+| `claude mcp add -s project playwright -- npx ...` | `claude plugins install playwright@claude-plugins-official -s project` |
+
+Idempotency check changed from `claude mcp list` to `claude plugins list`.
 
 ### 2. `.devcontainer/scripts/post.sh` (Modified)
 
-- **Delete**: Lines 261-295 (`setup_superclaude()` function and its invocation)
-- **Add**: Source and call `setup_mcp.sh` using the same pattern as `templates/claude/plugin.sh` (L123-127)
+- **Delete**: `setup_superclaude()` function and its invocation (L261-295)
+- **Add**: Source and call `setup_plugins.sh`
 
-The replacement block follows the existing integration pattern from the template:
+### 3. `.devcontainer/scripts/setup_plugins.sh` (New)
 
-```bash
-# -----------------------------------------------------------------------------
-# MCP Server Setup
-# -----------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/setup_mcp.sh" ]]; then
-    source "${SCRIPT_DIR}/setup_mcp.sh"
-    setup_mcp
-fi
-```
+Same structure as template version, with `claude plugins install -s project` for all servers.
 
-### 3. `.devcontainer/scripts/setup_mcp.sh` (New)
+### 4. `templates/claude/plugin.sh` (Modified)
 
-New file following the same structure as `templates/claude/.devcontainer/scripts/setup_mcp.sh` with:
-
-- Same header comment block and function structure
-- `context7` and `serena` as required servers
-- `playwright` as optional (interactive prompt)
-- All `claude mcp add` commands use `-s project`
-- `setup_mcp` function name (matching the template pattern)
+Update integration block: references to `setup_mcp.sh` / `setup_mcp` changed to `setup_plugins.sh` / `setup_plugins`.
 
 ## Data Flow
 
 ```
 DevContainer creation
   → post.sh
-    → source setup_mcp.sh
-      → setup_mcp()
-        → claude mcp add -s project context7
-        → claude mcp add -s project serena
-        → (optional) claude mcp add -s project playwright
+    → source setup_plugins.sh
+      → setup_plugins()
+        → claude plugins install context7@claude-plugins-official -s project
+        → claude plugins install serena@claude-plugins-official -s project
+        → (optional) claude plugins install playwright@claude-plugins-official -s project
 ```
-
-MCP configuration is written to `.claude/settings.json` (project scope) instead of `~/.claude/settings.json` (user scope).
 
 ## Error Handling
 
-Follows the existing pattern in the template's `setup_mcp.sh`:
-
 - Claude Code CLI not installed: warn and return 0
-- `uvx` not available for serena: warn and skip
+- Plugin already installed: skip (checked via `claude plugins list`)
 - Non-interactive environment: skip playwright prompt
-- `setup_mcp.sh` file not found: silently skip (guarded by `-f` check in post.sh)
+- `setup_plugins.sh` file not found: silently skip (guarded by `-f` check)
 
 ## Implementation Notes
 
-- **Flag choice**: Use `-s project` (short form) over `--scope project` for consistency with the concise style of the existing script.
-- **No sequential-thinking**: The superclaude setup included `sequential-thinking`, but the user confirmed only `context7` and `serena` are needed.
-- **Independent maintenance**: The main workspace's `setup_mcp.sh` and the template's `setup_mcp.sh` are separate files maintained independently, not symlinked or shared.
-- **Sourcing pattern**: Uses `source` + function call pattern (matching `plugin.sh` integration), not direct execution, to keep the `is_interactive` function available.
+- **Official plugins**: Using `claude-plugins-official` marketplace standardizes the entry point and ensures consistent MCP server configurations across projects.
+- **No `uvx`/`npx` prerequisite checks**: Plugin system manages dependencies internally.
+- **Independent maintenance**: Main workspace and template `setup_plugins.sh` are separate files.
+- **Sourcing pattern**: Uses `source` + function call to keep `is_interactive` available.
