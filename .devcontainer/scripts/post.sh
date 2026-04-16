@@ -259,12 +259,12 @@ setup_code_quality_tools() {
 setup_code_quality_tools
 
 # -----------------------------------------------------------------------------
-# MCP Server Setup
+# Claude Code Plugin Setup
 # -----------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/setup_mcp.sh" ]]; then
-    source "${SCRIPT_DIR}/setup_mcp.sh"
-    setup_mcp
+if [[ -f "${SCRIPT_DIR}/setup_plugins.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_plugins.sh"
+    setup_plugins
 fi
 
 echo "Post-creation setup complete!"
