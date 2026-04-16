@@ -15,10 +15,11 @@ paths:
 
 ## Deno Runtime
 
-- Use Deno-native APIs (`Deno.readTextFile`, `Deno.env.get`) instead of Node.js compatibility layers
-- Import from `jsr:` or `https://deno.land/std` -- avoid npm imports unless necessary
+- Prefer Deno-native APIs and Web Standard APIs (`fetch`, `crypto.subtle`, `ReadableStream`) over `node:` specifiers for new code
+- Import standard library from `jsr:@std/*` (e.g., `jsr:@std/fs`, `jsr:@std/path`) -- do not use `https://deno.land/std` (frozen)
+- Use `npm:` specifiers for npm packages when no JSR alternative exists
 - Use `import.meta.main` for entry point detection
-- Declare permissions explicitly: `--allow-read`, `--allow-net`, etc.
+- Declare permissions explicitly via CLI flags (`--allow-read`, `--allow-net`) or `deno.json` permission sets; never use `--allow-all` in production
 
 ## Error Handling
 

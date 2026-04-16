@@ -18,8 +18,16 @@ paths:
 - Add type annotations to all function signatures (parameters and return types)
 - Use `mypy --strict` for type checking
 - Prefer `X | Y` union syntax over `Union[X, Y]` (Python 3.10+)
+- Prefer PEP 695 syntax: `type Alias = ...` and `def func[T](x: T)` over `TypeAlias`/`TypeVar` (Python 3.12+)
 - Use `collections.abc` types (`Sequence`, `Mapping`) over `typing` equivalents
 - Avoid `Any` -- use `object` or generics instead
+
+## Data Modeling
+
+- Use `@dataclass(slots=True)` for mutable internal state
+- Use `NamedTuple` for immutable records
+- Use `TypedDict` for typed dictionary interfaces (JSON payloads, API responses)
+- Prefer `match`/`case` for multi-branch dispatch on object structure or type
 
 ## Error Handling
 
@@ -27,6 +35,7 @@ paths:
 - Prefer raising domain-specific exceptions over generic `ValueError`/`RuntimeError`
 - Use `contextlib.suppress()` for intentionally ignored exceptions
 - Always include meaningful error messages in exceptions
+- Pass the original error as `cause` when re-throwing: `raise AppError("msg") from original_error`
 
 ## Testing
 
@@ -47,7 +56,7 @@ paths:
 
 - Use `uv` for dependency management and virtual environments
 - Define dependencies in `pyproject.toml` (PEP 621)
-- Pin exact versions for production dependencies
+- Use version ranges in `pyproject.toml`; commit `uv.lock` for reproducible builds
 - Separate dev dependencies under `[project.optional-dependencies] dev`
 
 ## Import Order

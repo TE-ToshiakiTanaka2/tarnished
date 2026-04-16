@@ -16,7 +16,7 @@ paths:
 
 - `unsafe_code` = forbid -- no unsafe code allowed
 - `missing_docs` = warn
-- Enable clippy groups: all, pedantic, nursery (warn level)
+- Configure lints in `[lints.clippy]` in Cargo.toml: enable `all` and `pedantic` groups (warn level), cherry-pick useful nursery lints individually
 - Allowed lints: `module_name_repetitions`, `must_use_candidate`, `missing_errors_doc`, `missing_panics_doc`, `unnecessary_wraps`
 - Cognitive complexity threshold: 25
 - Max function arguments: 7

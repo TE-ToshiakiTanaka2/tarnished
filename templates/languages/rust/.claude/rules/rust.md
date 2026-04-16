@@ -7,10 +7,10 @@ paths:
 
 ## Style
 
-- Edition 2021, use latest stable Rust
+- Edition 2024, use latest stable Rust
 - Format with `cargo fmt` (rustfmt: max_width=100, tab_spaces=4, Unix line endings)
 - snake_case for functions/variables/modules, PascalCase for types/traits/enums, SCREAMING_SNAKE_CASE for constants
-- Enable clippy groups: all, pedantic, nursery (warn level)
+- Configure lints in `[lints.clippy]` in Cargo.toml: enable `all` and `pedantic` groups (warn level), cherry-pick useful nursery lints individually
 
 ## Error Handling
 
@@ -25,7 +25,7 @@ paths:
 - Prefer strong types over primitive types for domain values (newtype pattern)
 - Use `Option<T>` for nullable values, never sentinel values like -1 or ""
 - Prefer `&str` over `String` in function parameters where ownership is not needed
-- Use `Cow<str>` when a function may or may not need to allocate
+- Consider `Cow<'_, str>` for functions that conditionally allocate (escaping, normalization); for most functions `&str` or `String` is clearer
 
 ## Testing
 
@@ -46,8 +46,9 @@ paths:
 
 - Keep dependencies minimal -- audit with `cargo deny`
 - Pin major versions in `Cargo.toml`
-- Use `cargo-watch` for development, `cargo-edit` for dependency management
+- Use `bacon` for file watching during development; `cargo add`/`cargo rm` are built-in
 - Run `cargo clippy` and `cargo fmt` before every commit
+- Enable `overflow-checks = true` in `[profile.release]`
 
 ## Module Organization
 
