@@ -1,0 +1,176 @@
+#!/bin/bash
+# =============================================================================
+# Template Plugin: mysql
+# This file is meant to be sourced by setup.sh, not executed directly.
+# =============================================================================
+# This plugin provides MySQL database service including:
+# - MySQL 8.0 service via docker-compose
+# - mysql client in devcontainer
+# - Health check configuration
+# - Data persistence with named volume
+# - DATABASE_URL environment variable
+#
+# =============================================================================
+
+# Get the directory where this plugin is located
+PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# =============================================================================
+# Required Functions
+# =============================================================================
+
+# Return plugin identifier
+plugin_name() {
+    echo "mysql"
+}
+
+# Return plugin description
+plugin_description() {
+    echo "MySQL 8.0 database service with mysql client"
+}
+
+# =============================================================================
+# Hook Functions
+# =============================================================================
+
+# Copy MySQL docker-compose overlay to target directory
+plugin_copy() {
+    local target_dir="$1"
+
+    print_info "Copying MySQL docker-compose overlay..."
+
+    local source_compose="${PLUGIN_DIR}/docker-compose.mysql.yml"
+    local target_compose="${target_dir}/docker-compose.mysql.yml"
+
+    if [[ -f "$source_compose" ]]; then
+        copy_with_confirm "$source_compose" "$target_compose"
+        print_success "MySQL docker-compose overlay copied"
+    fi
+}
+
+# Post-copy processing - merge docker-compose, devcontainer, and configure environment
+plugin_post_copy() {
+    local target_dir="$1"
+
+    # -------------------------------------------------------------------------
+    # Merge docker-compose.yml (add MySQL service and volume)
+    # -------------------------------------------------------------------------
+    local target_compose="${target_dir}/docker-compose.yml"
+    local overlay_compose="${target_dir}/docker-compose.mysql.yml"
+
+    if [[ -f "$target_compose" ]] && [[ -f "$overlay_compose" ]]; then
+        print_info "Merging MySQL service into docker-compose.yml..."
+        local temp_file="${target_compose}.tmp"
+
+        merge_docker_compose_services "$target_compose" "$overlay_compose" "$temp_file"
+        mv "$temp_file" "$target_compose"
+
+        print_success "MySQL service merged into docker-compose.yml"
+    fi
+
+    # Add depends_on to the main app service
+    if [[ -f "$target_compose" ]]; then
+        print_info "Adding depends_on for MySQL to app service..."
+
+        local temp_file="${target_compose}.tmp"
+
+        # Insert depends_on block after the main service's working_dir line
+        awk '
+        /working_dir: \/workspace/ && !inserted {
+            print
+            print "    depends_on:"
+            print "      {{PROJECT_NAME}}-db:"
+            print "        condition: service_healthy"
+            inserted=1
+            next
+        }
+        { print }
+        ' "$target_compose" > "$temp_file"
+
+        mv "$temp_file" "$target_compose"
+        print_success "depends_on added to app service"
+    fi
+
+    # Add MySQL DB service to devcontainer.json runServices
+    local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
+
+    if [[ -f "$target_devcontainer" ]]; then
+        print_info "Adding MySQL DB service to devcontainer.json runServices..."
+        local temp_file="${target_devcontainer}.tmp"
+
+        jq '.runServices += ["{{PROJECT_NAME}}-db"]' \
+            "$target_devcontainer" > "$temp_file"
+
+        mv "$temp_file" "$target_devcontainer"
+        print_success "MySQL DB service added to devcontainer.json"
+    fi
+
+    # -------------------------------------------------------------------------
+    # Merge devcontainer.json (add mysql client feature and VS Code extension)
+    # -------------------------------------------------------------------------
+    local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
+
+    if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
+        print_info "Merging MySQL devcontainer features..."
+        local temp_file="${target_devcontainer}.tmp"
+
+        merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
+        mv "$temp_file" "$target_devcontainer"
+
+        print_success "MySQL devcontainer features merged"
+    fi
+
+    # -------------------------------------------------------------------------
+    # Add DATABASE_URL to docker-compose app service environment
+    # -------------------------------------------------------------------------
+    if [[ -f "$target_compose" ]]; then
+        print_info "Adding DATABASE_URL to app service..."
+
+        local temp_file="${target_compose}.tmp"
+
+        # Add environment section with DATABASE_URL after depends_on block
+        awk '
+        /condition: service_healthy/ && !env_inserted {
+            print
+            print "    environment:"
+            print "      DATABASE_URL: mysql://mysql:mysql@{{PROJECT_NAME}}-db:3306/{{PROJECT_NAME}}"
+            env_inserted=1
+            next
+        }
+        { print }
+        ' "$target_compose" > "$temp_file"
+
+        mv "$temp_file" "$target_compose"
+        print_success "DATABASE_URL added to app service"
+    fi
+
+    # -------------------------------------------------------------------------
+    # Add MySQL setup to post.sh
+    # -------------------------------------------------------------------------
+    local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
+
+    if [[ -f "$target_post_sh" ]]; then
+        print_info "Adding MySQL setup to post.sh..."
+
+        cat >> "$target_post_sh" << 'POSTEOF'
+
+# -----------------------------------------------------------------------------
+# MySQL Client Setup
+# -----------------------------------------------------------------------------
+if command -v mysql &> /dev/null; then
+    echo "MySQL client is available."
+    echo "  - mysql version: $(mysql --version)"
+    echo "  - Connection: mysql -h {{PROJECT_NAME}}-db -u mysql -pmysql {{PROJECT_NAME}}"
+    echo "  - DATABASE_URL: mysql://mysql:mysql@{{PROJECT_NAME}}-db:3306/{{PROJECT_NAME}}"
+fi
+POSTEOF
+
+        print_success "MySQL setup added to post.sh"
+    fi
+
+    # Clean up the overlay file (it's been merged)
+    if [[ -f "$overlay_compose" ]]; then
+        rm -f "$overlay_compose"
+        print_info "Cleaned up MySQL overlay file"
+    fi
+}

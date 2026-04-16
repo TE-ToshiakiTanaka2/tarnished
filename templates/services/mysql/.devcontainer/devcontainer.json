@@ -1,0 +1,13 @@
+{
+  "features": {
+    "ghcr.io/devcontainers-extra/features/mysql-client:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "cweijan.vscode-mysql-client2"
+      ],
+      "settings": {}
+    }
+  }
+}

@@ -99,9 +99,10 @@ declare -A LANGUAGE_DISPLAY_NAMES=(
 
 # Service selection
 declare -a SELECTED_SERVICES=()
-declare -a AVAILABLE_SERVICES=("postgresql" "redis" "celery")
+declare -a AVAILABLE_SERVICES=("postgresql" "mysql" "redis" "celery")
 declare -A SERVICE_DISPLAY_NAMES=(
     ["postgresql"]="PostgreSQL 16"
+    ["mysql"]="MySQL 8.0"
     ["redis"]="Redis 7"
     ["celery"]="Celery Worker + Beat (requires Python + Redis)"
 )
@@ -111,6 +112,7 @@ GITHUB_ACTIONS_ENABLED=false
 AUTO_TAG_ENABLED=false
 CODEX_ENABLED=false
 POSTGRESQL_ENABLED=false
+MYSQL_ENABLED=false
 REDIS_ENABLED=false
 CELERY_ENABLED=false
 DRY_RUN=false
@@ -142,6 +144,7 @@ Options:
     --lang <language>   Select language template (can be specified multiple times)
     --codex             Include OpenAI Codex CLI integration (code review)
     --postgresql        Include PostgreSQL database service
+    --mysql             Include MySQL database service
     --redis             Include Redis cache/broker service
     --celery            Include Celery task queue (auto-enables Redis, requires Python)
     --github-actions    Include GitHub Project integration (requires erd CLI)
@@ -158,6 +161,7 @@ Available Languages:
 
 Available Services:
     postgresql          PostgreSQL 16 database with psql client
+    mysql               MySQL 8.0 database with mysql client
     redis               Redis 7 cache/broker with redis-cli client
     celery              Celery Worker + Beat task queue (requires Python + Redis)
 
@@ -170,6 +174,7 @@ Examples:
     ./setup.sh --lang rust --lang python    # Rust + Python
     ./setup.sh --lang rust --codex          # Rust with Codex CLI code review
     ./setup.sh --lang rust --postgresql     # Rust with PostgreSQL
+    ./setup.sh --lang rust --mysql          # Rust with MySQL
     ./setup.sh --lang python --redis       # Python with Redis
     ./setup.sh --lang python --celery      # Python with Celery + Redis (auto-enabled)
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
@@ -672,6 +677,7 @@ prompt_service_selection() {
     for svc in "${SELECTED_SERVICES[@]}"; do
         case "$svc" in
             postgresql) POSTGRESQL_ENABLED=true ;;
+            mysql) MYSQL_ENABLED=true ;;
             redis) REDIS_ENABLED=true ;;
             celery) CELERY_ENABLED=true ;;
         esac
@@ -757,6 +763,11 @@ parse_arguments() {
             --postgresql)
                 POSTGRESQL_ENABLED=true
                 SELECTED_SERVICES+=("postgresql")
+                shift
+                ;;
+            --mysql)
+                MYSQL_ENABLED=true
+                SELECTED_SERVICES+=("mysql")
                 shift
                 ;;
             --redis)
