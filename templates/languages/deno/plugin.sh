@@ -101,6 +101,16 @@ plugin_post_copy() {
         print_success "Deno Claude settings merged"
     fi
 
+    # Copy Claude rules files
+    local plugin_rules_dir="${PLUGIN_DIR}/.claude/rules"
+    local target_rules_dir="${target_dir}/.claude/rules"
+
+    if [[ -d "$plugin_rules_dir" ]]; then
+        print_info "Copying Deno Claude rules..."
+        copy_dir_with_confirm "$plugin_rules_dir" "$target_rules_dir"
+        print_success "Deno Claude rules copied"
+    fi
+
     # Copy deno.json configuration
     local source_deno_json="${PLUGIN_DIR}/deno.json"
     local target_deno_json="${target_dir}/deno.json"

@@ -102,6 +102,16 @@ plugin_post_copy() {
         print_success "Node.js Claude settings merged"
     fi
 
+    # Copy Claude rules files
+    local plugin_rules_dir="${PLUGIN_DIR}/.claude/rules"
+    local target_rules_dir="${target_dir}/.claude/rules"
+
+    if [[ -d "$plugin_rules_dir" ]]; then
+        print_info "Copying TypeScript Claude rules..."
+        copy_dir_with_confirm "$plugin_rules_dir" "$target_rules_dir"
+        print_success "TypeScript Claude rules copied"
+    fi
+
     # Copy tool configuration files
     local tool_configs=("biome.json" "tsconfig.json")
 

@@ -101,6 +101,16 @@ plugin_post_copy() {
         print_success "Rust Claude settings merged"
     fi
 
+    # Copy Claude rules files
+    local plugin_rules_dir="${PLUGIN_DIR}/.claude/rules"
+    local target_rules_dir="${target_dir}/.claude/rules"
+
+    if [[ -d "$plugin_rules_dir" ]]; then
+        print_info "Copying Rust Claude rules..."
+        copy_dir_with_confirm "$plugin_rules_dir" "$target_rules_dir"
+        print_success "Rust Claude rules copied"
+    fi
+
     # Copy tool configuration files
     local tool_configs=("rustfmt.toml" "clippy.toml")
 
