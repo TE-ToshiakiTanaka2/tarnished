@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
 # Tests for prompt_service_selection() parsing logic in setup.sh
-# and PostgreSQL plugin interface verification.
+# and PostgreSQL/MySQL plugin interface verification.
 
 load 'libs/bats-support/load'
 load 'libs/bats-assert/load'
@@ -14,11 +14,13 @@ setup() {
 
     # Set up global variables that setup.sh defines
     declare -ga SELECTED_SERVICES=()
-    declare -ga AVAILABLE_SERVICES=("postgresql")
+    declare -ga AVAILABLE_SERVICES=("postgresql" "mysql")
     declare -gA SERVICE_DISPLAY_NAMES=(
         ["postgresql"]="PostgreSQL 16"
+        ["mysql"]="MySQL 8.0"
     )
     POSTGRESQL_ENABLED=false
+    MYSQL_ENABLED=false
 }
 
 # Helper: extract and test the parsing logic directly
@@ -47,6 +49,7 @@ parse_service_input() {
     for svc in "${SELECTED_SERVICES[@]}"; do
         case "$svc" in
             postgresql) POSTGRESQL_ENABLED=true ;;
+            mysql) MYSQL_ENABLED=true ;;
         esac
     done
 }
@@ -76,9 +79,27 @@ parse_service_input() {
 
 @test "'all' keyword selects all services" {
     parse_service_input "all"
-    assert_equal "${#SELECTED_SERVICES[@]}" "1"
+    assert_equal "${#SELECTED_SERVICES[@]}" "2"
     assert_equal "${SELECTED_SERVICES[0]}" "postgresql"
+    assert_equal "${SELECTED_SERVICES[1]}" "mysql"
     assert_equal "$POSTGRESQL_ENABLED" "true"
+    assert_equal "$MYSQL_ENABLED" "true"
+}
+
+@test "selecting '2' chooses mysql" {
+    parse_service_input "2"
+    assert_equal "${#SELECTED_SERVICES[@]}" "1"
+    assert_equal "${SELECTED_SERVICES[0]}" "mysql"
+    assert_equal "$MYSQL_ENABLED" "true"
+}
+
+@test "selecting '1,2' chooses postgresql and mysql" {
+    parse_service_input "1,2"
+    assert_equal "${#SELECTED_SERVICES[@]}" "2"
+    assert_equal "${SELECTED_SERVICES[0]}" "postgresql"
+    assert_equal "${SELECTED_SERVICES[1]}" "mysql"
+    assert_equal "$POSTGRESQL_ENABLED" "true"
+    assert_equal "$MYSQL_ENABLED" "true"
 }
 
 @test "out-of-range number is ignored" {
@@ -317,6 +338,183 @@ BASH
 
     # Source and run plugin_post_copy
     source "${SCRIPT_DIR}/templates/services/postgresql/plugin.sh"
+    plugin_post_copy "$temp_dir"
+
+    # Verify runServices contains the DB service
+    run jq -r '.runServices | length' "${temp_dir}/.devcontainer/devcontainer.json"
+    assert_success
+    assert_output "2"
+
+    run jq -r '.runServices[1]' "${temp_dir}/.devcontainer/devcontainer.json"
+    assert_success
+    assert_output "{{PROJECT_NAME}}-db"
+
+    # Cleanup
+    rm -rf "$temp_dir"
+}
+
+# =============================================================================
+# MySQL Plugin Interface Tests
+# =============================================================================
+
+@test "mysql plugin.sh has valid bash syntax" {
+    run bash -n "${SCRIPT_DIR}/templates/services/mysql/plugin.sh"
+    assert_success
+}
+
+@test "mysql plugin exports plugin_name function" {
+    source "${SCRIPT_DIR}/templates/services/mysql/plugin.sh"
+    run plugin_name
+    assert_success
+    assert_output "mysql"
+}
+
+@test "mysql plugin exports plugin_description function" {
+    source "${SCRIPT_DIR}/templates/services/mysql/plugin.sh"
+    run plugin_description
+    assert_success
+    assert_output "MySQL 8.0 database service with mysql client"
+}
+
+@test "mysql plugin has plugin_copy function" {
+    source "${SCRIPT_DIR}/templates/services/mysql/plugin.sh"
+    declare -f plugin_copy > /dev/null
+    assert_equal "$?" "0"
+}
+
+@test "mysql plugin has plugin_post_copy function" {
+    source "${SCRIPT_DIR}/templates/services/mysql/plugin.sh"
+    declare -f plugin_post_copy > /dev/null
+    assert_equal "$?" "0"
+}
+
+# =============================================================================
+# MySQL Template File Tests
+# =============================================================================
+
+@test "docker-compose.mysql.yml exists" {
+    [ -f "${SCRIPT_DIR}/templates/services/mysql/docker-compose.mysql.yml" ]
+}
+
+@test "docker-compose.mysql.yml contains mysql:8.0 image" {
+    run grep "image: mysql:8.0" "${SCRIPT_DIR}/templates/services/mysql/docker-compose.mysql.yml"
+    assert_success
+}
+
+@test "docker-compose.mysql.yml contains healthcheck" {
+    run grep "mysqladmin" "${SCRIPT_DIR}/templates/services/mysql/docker-compose.mysql.yml"
+    assert_success
+}
+
+@test "docker-compose.mysql.yml contains volume definition" {
+    run grep "mysql-data" "${SCRIPT_DIR}/templates/services/mysql/docker-compose.mysql.yml"
+    assert_success
+}
+
+@test "docker-compose.mysql.yml contains PROJECT_NAME placeholder" {
+    run grep "{{PROJECT_NAME}}" "${SCRIPT_DIR}/templates/services/mysql/docker-compose.mysql.yml"
+    assert_success
+}
+
+@test "devcontainer.json exists for mysql plugin" {
+    [ -f "${SCRIPT_DIR}/templates/services/mysql/.devcontainer/devcontainer.json" ]
+}
+
+@test "devcontainer.json contains mysql-client feature" {
+    run grep "mysql-client" "${SCRIPT_DIR}/templates/services/mysql/.devcontainer/devcontainer.json"
+    assert_success
+}
+
+@test "mysql devcontainer.json is valid JSON" {
+    run jq '.' "${SCRIPT_DIR}/templates/services/mysql/.devcontainer/devcontainer.json"
+    assert_success
+}
+
+# =============================================================================
+# MySQL Docker Compose Merge Integration Test
+# =============================================================================
+
+@test "mysql docker-compose can be merged with base compose" {
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    # Create base docker-compose.yml
+    cat > "${temp_dir}/base.yml" << 'YAML'
+services:
+  myapp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: myapp
+    volumes:
+      - .:/workspace:cached
+    working_dir: /workspace
+    command: sleep infinity
+YAML
+
+    # Copy mysql overlay
+    cp "${SCRIPT_DIR}/templates/services/mysql/docker-compose.mysql.yml" "${temp_dir}/overlay.yml"
+
+    # Attempt merge
+    merge_docker_compose_services "${temp_dir}/base.yml" "${temp_dir}/overlay.yml" "${temp_dir}/merged.yml"
+
+    # Verify merged file exists and contains both services
+    [ -f "${temp_dir}/merged.yml" ]
+    grep -q "myapp" "${temp_dir}/merged.yml"
+    grep -q "mysql" "${temp_dir}/merged.yml"
+
+    # Cleanup
+    rm -rf "$temp_dir"
+}
+
+# =============================================================================
+# MySQL plugin_post_copy Integration Tests
+# =============================================================================
+
+@test "mysql plugin_post_copy adds DB service to runServices" {
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    # Set up directory structure
+    mkdir -p "${temp_dir}/.devcontainer/scripts"
+
+    # Create base docker-compose.yml
+    cat > "${temp_dir}/docker-compose.yml" << 'YAML'
+services:
+  testapp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: testapp
+    volumes:
+      - .:/workspace:cached
+    working_dir: /workspace
+    command: sleep infinity
+YAML
+
+    # Copy mysql overlay
+    cp "${SCRIPT_DIR}/templates/services/mysql/docker-compose.mysql.yml" \
+       "${temp_dir}/docker-compose.mysql.yml"
+
+    # Create base devcontainer.json
+    cat > "${temp_dir}/.devcontainer/devcontainer.json" << 'JSON'
+{
+  "name": "testapp",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "testapp",
+  "runServices": ["testapp"],
+  "workspaceFolder": "/workspace"
+}
+JSON
+
+    # Create post.sh
+    cat > "${temp_dir}/.devcontainer/scripts/post.sh" << 'BASH'
+#!/bin/bash
+echo "post-create"
+BASH
+
+    # Source and run plugin_post_copy
+    source "${SCRIPT_DIR}/templates/services/mysql/plugin.sh"
     plugin_post_copy "$temp_dir"
 
     # Verify runServices contains the DB service
