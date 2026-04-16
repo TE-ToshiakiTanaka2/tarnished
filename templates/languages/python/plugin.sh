@@ -138,6 +138,16 @@ plugin_post_copy() {
         print_success "Python Claude settings merged"
     fi
 
+    # Copy Claude rules files
+    local plugin_rules_dir="${PLUGIN_DIR}/.claude/rules"
+    local target_rules_dir="${target_dir}/.claude/rules"
+
+    if [[ -d "$plugin_rules_dir" ]]; then
+        print_info "Copying Python Claude rules..."
+        copy_dir_with_confirm "$plugin_rules_dir" "$target_rules_dir"
+        print_success "Python Claude rules copied"
+    fi
+
     # Copy ruff.toml configuration
     local source_ruff="${PLUGIN_DIR}/ruff.toml"
     local target_ruff="${target_dir}/ruff.toml"
