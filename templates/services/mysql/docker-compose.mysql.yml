@@ -1,0 +1,21 @@
+services:
+  {{PROJECT_NAME}}-db:
+    image: mysql:8.0
+    container_name: {{PROJECT_NAME}}-db
+    environment:
+      MYSQL_DATABASE: {{PROJECT_NAME}}
+      MYSQL_USER: mysql
+      MYSQL_PASSWORD: mysql
+      MYSQL_ROOT_PASSWORD: rootpassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql-data:
