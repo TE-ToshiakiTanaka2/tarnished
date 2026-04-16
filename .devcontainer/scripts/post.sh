@@ -259,39 +259,12 @@ setup_code_quality_tools() {
 setup_code_quality_tools
 
 # -----------------------------------------------------------------------------
-# SuperClaude Framework Setup
+# Claude Code Plugin Setup
 # -----------------------------------------------------------------------------
-setup_superclaude() {
-    echo "Setting up SuperClaude Framework..."
-
-    if ! command -v claude &> /dev/null; then
-        echo "  - Error: Claude Code CLI is not installed"
-        echo "  - Please install Claude Code first: https://claude.ai/code"
-        echo "  - Skipping SuperClaude setup"
-        return 1
-    fi
-
-    echo "  - Claude Code CLI detected"
-
-    mkdir -p "$HOME/.claude"
-
-    echo "  - Installing SuperClaude..."
-    uv tool install superclaude
-    uvx superclaude install
-
-    # Configure MCP servers
-    echo "  - Configuring MCP servers..."
-    local mcp_servers="context7 sequential-thinking serena"
-    local mcp_cmd="uvx superclaude mcp"
-    for server in $mcp_servers; do
-        mcp_cmd="$mcp_cmd --servers $server"
-    done
-    # shellcheck disable=SC2086
-    $mcp_cmd
-
-    echo "  - SuperClaude setup complete"
-}
-
-setup_superclaude
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/setup_plugins.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_plugins.sh"
+    setup_plugins
+fi
 
 echo "Post-creation setup complete!"
