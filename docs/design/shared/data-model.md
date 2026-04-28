@@ -105,7 +105,7 @@ erDiagram
 
 ## Schemas / Migrations
 
-This project is a single-binary CLI with no persistent database. The "schemas" are YAML config files. Their evolution:
+This project is a single-binary CLI with no persistent database. The "schemas" are YAML config files and a few generated text artifacts. Their evolution:
 
 | File | Migration | Issue |
 | --- | --- | --- |
@@ -117,5 +117,10 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `_shared/design-migration/SKILL.md` | One-shot migration of `docs/design/#{issue}/` → `docs/design/shared/*` | #257 |
 | `docs/design/shared/*` | New layer for cumulative project truth | #257 |
 | `.claude/commands/erd/*.md` | Internalized SuperClaude front-half skills as `/erd:*` slash commands | #240 |
+| `.gitignore` (downstream-project seed) | Per-file blacklist (`.claude/settings.local.json`, `.codex/config.local.toml`) replaced with marker-guarded whitelist blocks for `.claude/*` and `.codex/*`; always-ignore added for `.serena/` and `screenshots/` | #259 |
 
-No SQL, no database migrations — config files are the only schemas.
+No SQL, no database migrations — config files and the seeded `.gitignore` are the only schemas.
+
+## Generated-Artifact Contracts
+
+The `.gitignore` produced by `update_gitignore()` and Codex's `plugin_post_copy` is structured as a sequence of **marker-guarded blocks**. The marker (a comment line) is the keyed-on identity of the block; rewriting it without coordination would re-trigger the block-append on existing projects (a benign but visible side effect). The exact marker strings and block contents are defined in [api-spec.md](./api-spec.md) :: "Setup / Plugin Surface".

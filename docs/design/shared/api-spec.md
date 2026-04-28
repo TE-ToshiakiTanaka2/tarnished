@@ -140,6 +140,28 @@ Available Claude Code commands:
 Workflow: /issue → /design → /implement → /review → /pr
 ```
 
+### `scripts/lib/common.sh::update_gitignore()` (#259)
+
+Signature: `update_gitignore <target_dir>`. Seeds `${target_dir}/.gitignore` with three idempotent whitelist/ignore blocks. Each block is appended only if its line-anchored comment marker is absent (`grep -q "^<marker>$"`). User-authored content between or after blocks is preserved (FR-7).
+
+| Block | Marker (line-anchored) | Contents |
+| --- | --- | --- |
+| Claude whitelist | `# Claude Code (track project configs only)` | `.claude/*` + allowlist: `commands/`, `skills/`, `scripts/`, `agents/`, `rules/`, `hooks/`, `settings.json` |
+| Serena | `# Serena MCP working files` | `.serena/` |
+| Screenshots | `# Local screenshots (manual UI testing)` | `screenshots/` |
+
+`update_gitignore` calls `touch` on a missing `.gitignore` and emits exactly two messages (`[INFO] Updating .gitignore...`, `[OK] .gitignore updated`).
+
+### `templates/codex/plugin.sh::plugin_post_copy` — gitignore step (#259)
+
+Same idempotency contract as above. Appends one block:
+
+| Block | Marker (line-anchored) | Contents |
+| --- | --- | --- |
+| Codex whitelist | `# Codex CLI (track shared config only)` | `.codex/*` + `!.codex/config.toml` |
+
+The Codex block is gated on the existence of `${target_dir}/.gitignore` (created earlier by `update_gitignore`); the plugin only appends.
+
 ### `templates/claude/.devcontainer/scripts/setup_plugins.sh` (#249, #255)
 
 | Function | Purpose |
@@ -160,6 +182,7 @@ Contract: under `set -e` (in `post.sh`), this script MUST `return 0` even when i
 | `anyhow::Error` (boundary) | Anywhere | Wrapped at command boundary |
 | Plugin install failure | shell warning | `setup_plugins.sh` per-plugin; non-fatal |
 | Marketplace registration failure | shell warning, `return 0` | `setup_plugins.sh` ensure_claude_marketplace; non-fatal so `post.sh` continues |
+| `update_gitignore` write failure | shell error (propagates under `set -euo pipefail`) | `${target_dir}/.gitignore` not writable |
 
 ## Versioning Policy
 

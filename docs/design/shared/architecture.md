@@ -52,7 +52,10 @@ Design artifacts are split into a shared cumulative layer (this directory) and p
 │   ├── shared/                       # Cumulative project truth (this layer, #257)
 │   └── #{issue}/                     # Per-issue deltas
 ├── docker/, docker-compose.yml       # Dev environment
-├── scripts/                          # Setup helpers
+├── scripts/
+│   └── lib/common.sh                 # Shared shell utilities — output helpers, file copy, JSON merge,
+│                                     #   docker-compose merge, gitignore seeding (#259), TTY detection,
+│                                     #   prompts. Sourced by setup.sh and every plugin.sh.
 ├── setup.sh                          # Top-level template-installer entry (#246: command-list message)
 └── tests/                            # Integration tests
 ```
@@ -85,6 +88,18 @@ error.rs (thiserror — common error type)
 
 Templates are independent and have no Rust dependency — they are plain files copied by `setup.sh`.
 
+The shell side (`setup.sh` + `scripts/lib/common.sh` + per-template `plugin.sh`) follows a parallel layered shape:
+
+```
+setup.sh (orchestration; flag parsing; plugin discovery)
+    │
+    ▼
+scripts/lib/common.sh (shared utilities — output, copy, merge, gitignore seeding, TTY)
+    │
+    ▼
+templates/<flavor>/plugin.sh (per-flavor copy + post-copy hooks: codex, claude, ...)
+```
+
 ## Technology Choices
 
 | Area | Choice | Rationale |
@@ -106,8 +121,9 @@ Template plugins are POSIX shell. Claude/Codex setup uses `claude plugins instal
 
 - **Config loading**: Both `ProjectConfig` (`project.yml`) and `Config` (in `tag_config.rs`) use `#[serde(default)]` aggressively for backward compatibility (which once silently masked a wrong template format — see #228).
 - **Logging / verbosity**: Routed through the global `Config` (verbose flag).
-- **Idempotency**: All shell setup helpers (`setup_plugins.sh`, `plugin.sh`, marketplace registration) MUST be idempotent. `set -e` in `post.sh` requires careful return-0 on non-fatal failures (#255).
+- **Idempotency**: All shell setup helpers (`setup_plugins.sh`, `plugin.sh`, marketplace registration, `update_gitignore`) MUST be idempotent. `set -e` in `post.sh` requires careful return-0 on non-fatal failures (#255). Idempotency comes in two flavors: line-level (`grep -q "^<line>$"` before append, used for single-line cases) and block-level (`grep -q "^<marker>$"` keying off a comment marker that the function itself writes, used for multi-line whitelist blocks — see Gitignore policy below, #259).
 - **Plugin failures**: Wrapped per-plugin so one failure does not abort the whole setup (#255).
 - **GitHub API**: All calls go through `github/client.rs`. Rate-limit errors propagate as `GitHubClientError`. Non-fatal issues (e.g., a label-routed project not found) are logged as warnings (#230).
 - **Workflow triggers**: `project-integration.yml` triggers on `[opened, reopened, labeled]` so label routing fires when labels are added post-creation (#230). Optional sub-features are split out (#244).
 - **Design artifact maintenance**: `/design` reads `docs/design/shared/*` first, regenerates them as a snapshot at the end (NFR-1: never append, always overwrite). `/implement` reads both layers (#257).
+- **Gitignore policy** (#259): Downstream projects' `.gitignore` is seeded by `scripts/lib/common.sh::update_gitignore()` and per-plugin gitignore steps (e.g., `templates/codex/plugin.sh::plugin_post_copy`). The seed is **whitelist-style** for `.claude/` and `.codex/` — `.claude/*` and `.codex/*` are ignored, with explicit allowlist for project-tracked subdirectories (`commands/`, `skills/`, `scripts/`, `agents/`, `rules/`, `hooks/`, `settings.json` for Claude; `config.toml` for Codex). Always-ignore directives cover `.serena/` (Serena MCP working files) and `screenshots/` (manual UI testing). Block-level idempotency: each block is preceded by a stable comment marker; `grep -q` keys on the marker. User-authored lines between or after blocks are preserved.

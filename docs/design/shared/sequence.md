@@ -167,3 +167,54 @@ sequenceDiagram
     Note over Migration,Issue: existing #{old}/ files are PRESERVED unchanged (FR-5)
     Migration-->>Design: shared/ seeded; resume normal flow
 ```
+
+## `update_gitignore` — block-level idempotent appends (#259)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Setup as setup.sh
+    participant Common as scripts/lib/common.sh
+    participant Codex as templates/codex/plugin.sh (optional)
+    participant File as ${target}/.gitignore
+
+    User->>Setup: ./setup.sh -y --lang ...
+    Setup->>Common: update_gitignore(target_dir)
+    Common->>Common: print_info "Updating .gitignore..."
+    alt .gitignore missing
+        Common->>File: touch
+    end
+
+    Note over Common,File: Block 1 — .claude/* whitelist
+    Common->>File: grep -q "^# Claude Code (track project configs only)$"
+    alt marker absent
+        Common->>File: append blank + marker + .claude/* + 7 allow-list lines
+    else marker present
+        Note over Common: skip
+    end
+
+    Note over Common,File: Block 2 — .serena/
+    Common->>File: grep -q "^# Serena MCP working files$"
+    alt marker absent
+        Common->>File: append blank + marker + .serena/
+    end
+
+    Note over Common,File: Block 3 — screenshots/
+    Common->>File: grep -q "^# Local screenshots (manual UI testing)$"
+    alt marker absent
+        Common->>File: append blank + marker + screenshots/
+    end
+
+    Common->>Common: print_success ".gitignore updated"
+    Common-->>Setup: ok
+
+    opt Codex plugin selected
+        Setup->>Codex: plugin_post_copy(target_dir)
+        Note over Codex,File: Block 4 — .codex/* whitelist
+        Codex->>File: grep -q "^# Codex CLI (track shared config only)$"
+        alt marker absent
+            Codex->>File: append blank + marker + .codex/* + !.codex/config.toml
+        end
+        Codex-->>Setup: ok
+    end
+```
