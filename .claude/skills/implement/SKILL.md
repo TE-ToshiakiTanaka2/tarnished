@@ -39,7 +39,10 @@ Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the ent
 2. **Detect or create branch** - Follow `_shared/branch` procedure (Issue mode) with the issue number
    - This handles existing branch detection, checkout, and new branch creation
    - See `_shared/branch/SKILL.md` for full procedure
-3. **Load design artifacts** (if exists) - Read `docs/design/#{issue_number}/` for design decisions, API spec, and workflow
+3. **Load design artifacts** - Read both layers of the design corpus:
+   - **Shared layer**: `docs/design/shared/architecture.md`, `data-model.md`, `api-spec.md`, `class.md`, `sequence.md`, and any `shared/research/*.md` (skip files that do not exist — `shared/` may be empty for the very first issue)
+   - **Per-issue layer**: `docs/design/#{issue_number}/design.md`, `api-spec.md`, `workflow.md`, `flowchart.md`, `research.md` (skip files that do not exist)
+   - The shared layer is the cumulative project truth maintained by `/design`. The per-issue layer is the self-contained delta for this issue.
 4. **Load `/erd:index-repo` and follow inline** - `Read(".claude/commands/erd/index-repo.md")`:
    - Map relevant modules and their relationships
    - Identify files that need modification
