@@ -1,13 +1,20 @@
 ---
 name: design
-description: Design architecture and generate design artifacts for a GitHub Issue with UML diagrams. Uses erd commands (erd:research, erd:design, erd:workflow) and saves all artifacts to docs/design/.
+description: Design architecture and generate design artifacts for a GitHub Issue with UML diagrams. Uses erd commands (erd:research, erd:design, erd:workflow) and saves artifacts to docs/design/shared/ (cumulative project truth) and docs/design/#{issue_number}/ (per-issue delta).
 argument-hint: "[issue_number]"
 disable-model-invocation: true
 ---
 
 # Skill: Design
 
-Design skill for projects. Handles issue review, branch creation, architecture design, workflow planning, and UML diagram generation. All design artifacts are persisted to `docs/design/#{issue_number}/` for traceability.
+Design skill for projects. Handles issue review, branch creation, architecture design, workflow planning, and UML diagram generation.
+
+Design artifacts are split across two layers:
+
+- **`docs/design/shared/`** — Cumulative project-wide truth, regenerated as a snapshot on every `/design` invocation. Read by both `/design` and `/implement` to ground new work in the current state.
+- **`docs/design/#{issue_number}/`** — Self-contained per-issue delta, frozen after the issue closes. Useful for auditing what a specific issue changed.
+
+This split keeps the read cost of `/design` and `/implement` constant with respect to the number of completed issues, instead of growing linearly.
 
 ## Usage
 
@@ -39,53 +46,91 @@ Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the ent
 2. **Create branch** - Follow `_shared/branch` procedure (Issue mode) with the issue number
    - This handles branch naming, existing branch detection, and checkout/creation
    - See `_shared/branch/SKILL.md` for full procedure
-3. **Create docs directory** - Create `docs/design/#{issue_number}/` directory structure
+3. **Create per-issue docs directory** - Create `docs/design/#{issue_number}/` directory structure
 
-### Phase 2: Research (if needed)
+### Phase 1.5: Migration check (one-shot bootstrap)
 
-4. **Load `/erd:research` and follow inline** (conditional) - `Read(".claude/commands/erd/research.md")`:
+4. **Check for missing shared layer** - If `docs/design/shared/` does not exist (or is empty) AND any `docs/design/#{old_issue}/` (or legacy `docs/design/{old_issue}/` without the `#` prefix) directories exist with `design.md` files, follow the procedure in `_shared/design-migration/SKILL.md` to bootstrap the shared layer from existing per-issue artifacts.
+   - See `_shared/design-migration/SKILL.md` for full procedure.
+   - The migration is idempotent — it may be re-run safely.
+   - Existing per-issue files MUST NOT be modified.
+   - If no prior `#{old_issue}/` directories exist either, skip the migration. The shared layer will be created lazily during Phase 6 of this issue.
+
+### Phase 2: Load shared layer
+
+5. **Read `docs/design/shared/*` into context** - Read all of the following (skip any that do not yet exist):
+   - `docs/design/shared/architecture.md` — Project-wide module structure, layer boundaries, tech choices
+   - `docs/design/shared/data-model.md` — Domain entities, type definitions, schemas
+   - `docs/design/shared/api-spec.md` — Public API / interface specifications
+   - `docs/design/shared/class.md` — Cumulative class diagram (Mermaid)
+   - `docs/design/shared/sequence.md` — Cumulative sequence/state diagram (Mermaid)
+   - `docs/design/shared/research/*.md` — Cross-cutting external library research (if any)
+6. **Load `/erd:index-repo` and follow inline** (optional but recommended) - `Read(".claude/commands/erd/index-repo.md")`:
+   - Use this to verify the shared layer matches the actual codebase before designing
+   - Skip if the issue scope is small and well-understood
+
+### Phase 3: Research (if needed)
+
+7. **Load `/erd:research` and follow inline** (conditional) - `Read(".claude/commands/erd/research.md")`:
    - When the issue involves unfamiliar libraries or third-party integrations
    - When architectural decisions require understanding of external documentation
    - Skip if the issue scope is well-understood and internal-only
-   - **Save findings to `docs/design/#{issue_number}/research.md`** (if executed)
+8. **Decide research destination**:
+   - **Issue-specific** (the library is only relevant to this issue) → save to `docs/design/#{issue_number}/research.md`
+   - **Cross-cutting** (the library is or will be used by multiple issues) → save to `docs/design/shared/research/<library-name>.md`
+   - When in doubt, save to the issue-specific location. It can be promoted to shared later.
 
-### Phase 3: Architecture Design
+### Phase 4: Architecture Design
 
-5. **Load `/erd:design` and follow inline** - `Read(".claude/commands/erd/design.md")`:
+9. **Load `/erd:design` and follow inline** - `Read(".claude/commands/erd/design.md")`:
    - Module structure and organization
    - Interface/API design
    - Type definitions and data models
    - Error handling strategy
-   - **Save output to `docs/design/#{issue_number}/design.md`**
-6. **Generate API/Interface Specification** (if applicable):
-   - Endpoint or function signatures
-   - Input/output schemas with types and constraints
-   - Error response definitions
-   - **Save output to `docs/design/#{issue_number}/api-spec.md`**
+10. **Author per-issue design** - **Save to `docs/design/#{issue_number}/design.md`**:
+    - Include a self-contained `## Context` section near the top, summarizing the slice of `shared/architecture.md` and `shared/data-model.md` that this issue acts on. Intentional duplication for standalone readability.
+    - Describe the **delta** the issue introduces: new modules, changed interfaces, new types, new flows.
+    - Reference shared docs by relative path where appropriate (e.g., `../shared/api-spec.md`).
+11. **Generate API/Interface Specification** (if applicable):
+    - Endpoint or function signatures introduced or changed by this issue
+    - Input/output schemas with types and constraints
+    - Error response definitions
+    - **Save to `docs/design/#{issue_number}/api-spec.md`**
 
-### Phase 4: Workflow Planning
+### Phase 5: Workflow Planning
 
-7. **Load `/erd:workflow` and follow inline** - `Read(".claude/commands/erd/workflow.md")`:
-   - Organize task dependencies
-   - Determine implementation order
-   - Test strategy
-   - **Save output to `docs/design/#{issue_number}/workflow.md`**
+12. **Load `/erd:workflow` and follow inline** - `Read(".claude/commands/erd/workflow.md")`:
+    - Organize task dependencies
+    - Determine implementation order
+    - Test strategy
+    - **Save to `docs/design/#{issue_number}/workflow.md`**
 
-### Phase 5: UML Diagram Generation
+### Phase 6: UML Diagram Generation
 
-8. **Auto-detect required diagrams** - Analyze issue complexity to determine which UML diagrams are needed:
-   - **Sequence diagram**: When the issue involves multi-component interactions or complex workflows
-   - **Class diagram**: When the issue involves new types, data models, or entity relationships
-   - **Flowchart**: When the issue involves branching logic, decision trees, or state transitions
-9. **Generate Mermaid UML diagrams** - Create diagrams in Mermaid format:
-   - **Save to `docs/design/#{issue_number}/sequence.md`** (if applicable)
-   - **Save to `docs/design/#{issue_number}/class.md`** (if applicable)
-   - **Save to `docs/design/#{issue_number}/flowchart.md`** (if applicable)
+13. **Auto-detect required diagrams** - Analyze issue complexity to determine which UML diagrams are needed (see "UML Auto-Detection Logic" below).
+14. **Generate Mermaid UML diagrams** with proper destination per type:
+    - **Sequence diagram** — If the issue introduces or changes a system-wide flow, **update `docs/design/shared/sequence.md`** in snapshot mode (Phase 7 will re-write it). If the flow is purely internal to a single issue's logic, save to `docs/design/#{issue_number}/sequence.md` (rare; usually shared).
+    - **Class diagram** — Class additions/changes always belong to the cumulative `docs/design/shared/class.md` (Phase 7 will re-write it).
+    - **Flowchart** — Issue-local control flow / decision tree → save to `docs/design/#{issue_number}/flowchart.md`. System-wide state machines belong in `shared/sequence.md` instead.
 
-### Phase 6: Commit and Report
+### Phase 7: Snapshot regeneration of shared layer
 
-10. **Commit design artifacts** - Commit all generated docs
-11. **Report results** - Present branch name, docs location, and summary
+15. **Regenerate `docs/design/shared/*` as a complete snapshot** - For each shared file affected by this issue's design, **overwrite** the file with the merged latest state (existing shared content + this issue's contributions):
+    - `docs/design/shared/architecture.md`
+    - `docs/design/shared/data-model.md`
+    - `docs/design/shared/api-spec.md`
+    - `docs/design/shared/class.md`
+    - `docs/design/shared/sequence.md`
+16. **CRITICAL — Snapshot discipline (NFR-1)**:
+    - DO **overwrite** each shared file with the fully merged latest content.
+    - DO **remove** entries that no longer reflect the current truth (git history retains prior state).
+    - DO **NOT** append a `## Issue #N — changes` section. Append-style updates re-introduce the bloat this skill is designed to avoid.
+    - DO **NOT** keep stale entries from prior snapshots when they are no longer accurate.
+
+### Phase 8: Commit and Report
+
+17. **Commit design artifacts** - Single commit covering both `docs/design/shared/*` and `docs/design/#{issue_number}/*` changes.
+18. **Report results** - Present branch name, files written (per layer), and summary.
 
 ## Branch Naming Convention
 
@@ -110,15 +155,15 @@ Examples:
 Use the following MCP tools for efficient codebase analysis and library research:
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `list_dir` — for understanding existing architecture, finding related symbols, and navigating the codebase
-- **context7**: `resolve-library-id`, `query-docs` — for researching external libraries and frameworks referenced in the issue
-- **context7**: `resolve-library-id`, `query-docs` — for researching library APIs and patterns when design involves external dependencies
+- **context7**: `resolve-library-id`, `query-docs` — for researching external libraries and frameworks referenced in the issue, and for design involving external dependencies
 
 ## erd Skills Used
 
 | Skill | Purpose | Output |
 | --- | --- | --- |
-| `/erd:research` | Research external libraries, APIs, patterns (conditional) | `docs/design/#{issue_number}/research.md` |
-| `/erd:design` | Architecture and interface design | `docs/design/#{issue_number}/design.md` |
+| `/erd:index-repo` | (optional) Ground shared layer against actual codebase | (none — context only) |
+| `/erd:research` | Research external libraries, APIs, patterns (conditional) | `docs/design/#{issue_number}/research.md` or `docs/design/shared/research/<library>.md` |
+| `/erd:design` | Architecture and interface design | `docs/design/#{issue_number}/design.md` (delta) + updates to `docs/design/shared/*` (Phase 7) |
 | `/erd:workflow` | Implementation step generation | `docs/design/#{issue_number}/workflow.md` |
 
 ## Leveraging erd:research
@@ -132,27 +177,30 @@ Use `/erd:research` when the issue involves external dependencies:
 
 **Decision rule**: If the issue references external libraries, APIs, or patterns that are not already established in the codebase, execute erd:research. Otherwise, skip.
 
+**Destination rule**: If the research is reusable across issues, save to `docs/design/shared/research/<library-name>.md`. Otherwise, save to `docs/design/#{issue_number}/research.md`.
+
 ## Leveraging erd:design
 
-Use `/erd:design` to design the following and **save to `docs/design/#{issue_number}/design.md`**:
+Use `/erd:design` to design the issue. Two output destinations:
+
+### Per-issue file: `docs/design/#{issue_number}/design.md`
 
 ```markdown
 # Design: #{issue_number} {title}
 
-## Architecture Overview
+## Context
 
-Brief description of the overall approach.
+<Self-contained summary of the slice of shared/architecture.md and shared/data-model.md that this delta acts on. Intentional duplication for standalone readability.>
 
-## Module Structure
+## Architecture Overview (delta)
 
-project/
-├── existing/        # Existing module (modified)
-│   └── file.ext     # Changes: <brief description>
-└── new_module/      # New module
-    ├── mod.ext      # Module entry point
-    └── types.ext    # Type definitions
+<What this issue changes, in 1-3 paragraphs.>
 
-## Interface Design
+## Module Structure (delta)
+
+<Only the changed/added directories and files.>
+
+## Interface Design (delta)
 
 ### Public API / Functions
 
@@ -160,19 +208,18 @@ project/
 | --- | --- | --- |
 | function_name | (args) -> ReturnType | Description |
 
-### Type Definitions
+### Type Definitions (delta)
 
 - New types, structs, interfaces, enums
 - Validation rules and constraints
 
 ## Data Flow
 
-How data moves through the system.
+<How this issue's logic moves data, with reference to shared sequence diagrams if relevant.>
 
 ## Error Handling
 
-- Error types and hierarchy
-- Recovery strategies
+<Issue-specific errors; cross-link to shared error policy.>
 
 ## Implementation Notes
 
@@ -181,6 +228,10 @@ How data moves through the system.
 - Performance considerations
 ```
 
+### Shared files: `docs/design/shared/*`
+
+Phase 7 regenerates the affected shared files as snapshots. See "Phase 7: Snapshot regeneration" above for the destination schemas. The shared file templates are documented in `_shared/design-migration/SKILL.md`.
+
 ## API/Interface Specification Template
 
 Generate the following and **save to `docs/design/#{issue_number}/api-spec.md`** (if the issue involves API or interface changes):
@@ -188,7 +239,7 @@ Generate the following and **save to `docs/design/#{issue_number}/api-spec.md`**
 ```markdown
 # API Specification: #{issue_number} {title}
 
-## Endpoints / Functions
+## Endpoints / Functions (delta)
 
 | Name | Method/Signature | Description |
 | --- | --- | --- |
@@ -209,6 +260,8 @@ Generate the following and **save to `docs/design/#{issue_number}/api-spec.md`**
 | Error | Code/Type | Description |
 | --- | --- | --- |
 ```
+
+The cumulative project-wide API spec lives in `docs/design/shared/api-spec.md` and is regenerated in Phase 7.
 
 ## Leveraging erd:workflow
 
@@ -242,11 +295,11 @@ Use `/erd:workflow` to generate implementation steps and **save to `docs/design/
 
 Analyze the issue content and determine which diagrams are needed:
 
-| Diagram | When to Generate |
-| --- | --- |
-| **Sequence** | Multi-component interactions, API calls, request/response flows |
-| **Class** | New types, data models, entity relationships |
-| **Flowchart** | Branching logic, decision trees, state transitions, complex algorithms |
+| Diagram | Destination | When to Generate |
+| --- | --- | --- |
+| **Sequence** | `docs/design/shared/sequence.md` (snapshot) | Multi-component interactions, system-wide flows, request/response, state transitions |
+| **Class** | `docs/design/shared/class.md` (snapshot) | New types, data models, entity relationships |
+| **Flowchart** | `docs/design/#{issue_number}/flowchart.md` | Issue-local branching logic, decision trees, complex algorithms |
 
 **Rules**:
 - Always generate at least one diagram
@@ -258,10 +311,12 @@ Analyze the issue content and determine which diagrams are needed:
 
 All UML diagrams use Mermaid format for GitHub native rendering.
 
-### Sequence Diagram Example
+### Sequence Diagram (in `shared/sequence.md`)
 
 ````markdown
-# Sequence Diagram: #{issue_number} {title}
+# Sequence Diagram (System-wide)
+
+## <Flow Name>
 
 ```mermaid
 sequenceDiagram
@@ -276,10 +331,12 @@ sequenceDiagram
 ```
 ````
 
-### Class Diagram Example
+Each named flow is a top-level `##` section. State-machine-like flows belong here too.
+
+### Class Diagram (in `shared/class.md`)
 
 ````markdown
-# Class Diagram: #{issue_number} {title}
+# Class Diagram (Project-wide)
 
 ```mermaid
 classDiagram
@@ -296,7 +353,7 @@ classDiagram
 ```
 ````
 
-### Flowchart Example
+### Flowchart (in `#{issue_number}/flowchart.md`)
 
 ````markdown
 # Flowchart: #{issue_number} {title}
@@ -315,14 +372,21 @@ graph TD
 ## docs/ Directory Structure
 
 ```
-docs/design/#{issue_number}/
-├── research.md      # External research findings (erd:research, if applicable)
-├── design.md        # Architecture and interface design (erd:design output)
-├── api-spec.md      # API/interface specification (if applicable)
-├── workflow.md       # Implementation steps and plan (erd:workflow output)
-├── sequence.md       # Mermaid sequence diagram (if applicable)
-├── class.md          # Mermaid class diagram (if applicable)
-└── flowchart.md      # Mermaid flowchart (if applicable)
+docs/design/
+├── shared/                          # Cumulative project truth (snapshot, NFR-1)
+│   ├── architecture.md              # Project-wide module structure
+│   ├── data-model.md                # Project-wide types/entities/schemas
+│   ├── api-spec.md                  # Project-wide API spec
+│   ├── class.md                     # Cumulative class diagram (Mermaid)
+│   ├── sequence.md                  # Cumulative sequence/state diagrams (Mermaid)
+│   └── research/
+│       └── <library-name>.md        # Cross-cutting research (per library, not per issue)
+└── #{issue_number}/                 # Per-issue delta (frozen on close)
+    ├── design.md                    # Self-contained delta description (option b)
+    ├── api-spec.md                  # API delta (if applicable)
+    ├── workflow.md                  # Implementation steps and plan
+    ├── flowchart.md                 # Issue-local control flow (if applicable)
+    └── research.md                  # Issue-specific external research (if applicable)
 ```
 
 ## Design Workflow
@@ -332,30 +396,30 @@ graph TD
     A[Review Issue] --> B0{Existing branch for issue?}
     B0 -->|Yes| B1[Checkout or merge existing branch]
     B0 -->|No| B[Create new branch]
-    B1 --> C[Create docs directory]
+    B1 --> C[Create #{issue}/ directory]
     B --> C
-    C --> D{External dependencies?}
-    D -->|Yes| D1[Execute erd:research]
-    D1 --> D2[Save research.md]
-    D2 --> E[Execute erd:design]
-    D -->|No| E
-    E --> E2[Save design.md]
+    C --> M{shared/ missing AND<br/>prior #{issue}/ exist?}
+    M -->|Yes| M1[Run _shared/design-migration<br/>to bootstrap shared/]
+    M1 --> P2
+    M -->|No| P2[Read shared/* into context]
+    P2 --> D{External dependencies?}
+    D -->|Yes| D1[Run erd:research]
+    D1 --> D2{Reusable across issues?}
+    D2 -->|Yes| D3[Save shared/research/<lib>.md]
+    D2 -->|No| D4[Save #{issue}/research.md]
+    D3 --> E
+    D4 --> E
+    D -->|No| E[Run erd:design]
+    E --> E2[Save #{issue}/design.md - self-contained delta]
     E2 --> E3{API/interface changes?}
-    E3 -->|Yes| E4[Generate api-spec.md]
+    E3 -->|Yes| E4[Save #{issue}/api-spec.md]
     E3 -->|No| F
-    E4 --> F[Execute erd:workflow]
-    F --> F2[Save workflow.md]
+    E4 --> F[Run erd:workflow]
+    F --> F2[Save #{issue}/workflow.md]
     F2 --> G[Auto-detect UML types]
-    G --> H{Sequence needed?}
-    H -->|Yes| H2[Generate sequence.md]
-    H -->|No| I{Class needed?}
-    H2 --> I
-    I -->|Yes| I2[Generate class.md]
-    I -->|No| J{Flowchart needed?}
-    I2 --> J
-    J -->|Yes| J2[Generate flowchart.md]
-    J -->|No| K[Commit design artifacts]
-    J2 --> K
+    G --> G2[Generate diagrams<br/>class -> shared/class.md<br/>sequence -> shared/sequence.md<br/>flowchart -> #{issue}/flowchart.md]
+    G2 --> S[Phase 7: Regenerate shared/* snapshots<br/>NFR-1: overwrite, never append]
+    S --> K[Single commit: shared/* + #{issue}/*]
     K --> L[Report completion]
 ```
 
@@ -365,40 +429,51 @@ graph TD
 docs: add design documents for #{issue_number}
 ```
 
+The commit covers both `docs/design/shared/*` (snapshot regeneration) and `docs/design/#{issue_number}/*` (new delta) in one commit.
+
 ## Output Format
 
 ```
 Design Complete
 
-Branch: feature/username/#123/add-feature
-Issue: #123
+Branch: refactor/username/#257/separate-shared-and-issue-specific-design
+Issue: #257
 
-Design Artifacts:
-  docs/design/#123/research.md    - External research findings (if applicable)
-  docs/design/#123/design.md      - Architecture and interface design
-  docs/design/#123/api-spec.md    - API/interface specification (if applicable)
-  docs/design/#123/workflow.md    - Implementation steps and plan
-  docs/design/#123/sequence.md    - Sequence diagram
-  docs/design/#123/class.md       - Class diagram
+Per-issue artifacts:
+  docs/design/#257/design.md       — Self-contained delta description
+  docs/design/#257/api-spec.md     — API/interface delta (if applicable)
+  docs/design/#257/workflow.md     — Implementation steps
+  docs/design/#257/flowchart.md    — Issue-local control flow (if applicable)
+  docs/design/#257/research.md     — Issue-specific research (if applicable)
+
+Shared layer (snapshot):
+  docs/design/shared/architecture.md     — Updated
+  docs/design/shared/data-model.md       — Updated
+  docs/design/shared/api-spec.md         — Updated
+  docs/design/shared/class.md            — Updated
+  docs/design/shared/sequence.md         — Updated
+  docs/design/shared/research/<lib>.md   — Updated (if applicable)
 
 Summary:
-- Research: Libraries and patterns documented (if applicable)
-- Design: Module structure and interfaces documented
-- Implementation workflow: N steps planned
-- UML diagrams generated
+- Migration: <ran/skipped>
+- Shared layer read at start (Phase 2): N files
+- Shared layer regenerated at end (Phase 7): M files
+- Per-issue artifacts: K files
+- UML diagrams: <list>
 
-Ready for /implement 123
+Ready for /implement 257
 ```
 
 ## Best Practices
 
 - **Issue Understanding**: Thoroughly read and understand the issue before designing
-- **Research First**: Investigate external dependencies before making design decisions
-- **Design Completeness**: Address all aspects relevant to the issue scope
-- **UML Clarity**: Diagrams should be clear and focused on the specific issue scope
-- **Branch Reuse**: The branch created here will be reused by `/implement`
-- **Existing Branch Detection**: Always check for existing branches for the same issue and merge them to avoid orphaned artifacts
-- **Artifact Co-location**: All design artifacts for an issue are stored together
+- **Read Shared First**: Always read `docs/design/shared/*` before designing — this grounds the new work in current truth and prevents reinventing existing structure
+- **Self-contained `#{issue}/design.md`**: Each issue's `design.md` should be readable on its own (option b). Some duplication with `shared/*` is intentional.
+- **Snapshot Discipline (NFR-1)**: Always overwrite `shared/*` files. Never append `## Issue #N` sections.
+- **Research Promotion**: When research becomes reusable across issues, move it from `#{issue}/research.md` to `shared/research/<library>.md`.
+- **UML Destination**: Class and system-wide sequence diagrams go to `shared/`. Issue-local flowcharts stay in `#{issue}/`.
+- **Single Commit**: Both layers committed together to keep the snapshot atomic with the delta.
+- **Branch Reuse**: The branch created here will be reused by `/implement`.
 
 ## Integration
 
