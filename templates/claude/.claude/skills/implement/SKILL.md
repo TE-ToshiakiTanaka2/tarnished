@@ -21,6 +21,16 @@ Example:
 /implement 42
 ```
 
+## erd Command Invocation
+
+All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
+
+```
+Read(".claude/commands/erd/<command>.md") → follow instructions inline
+```
+
+Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
+
 ## What This Skill Does
 
 ### Phase 1: Preparation
@@ -29,15 +39,18 @@ Example:
 2. **Detect or create branch** - Follow `_shared/branch` procedure (Issue mode) with the issue number
    - This handles existing branch detection, checkout, and new branch creation
    - See `_shared/branch/SKILL.md` for full procedure
-3. **Load design artifacts** (if exists) - Read `docs/design/#{issue_number}/` for design decisions, API spec, and workflow
-4. **Execute `/erd:index-repo`** - Efficient repository indexing for codebase understanding:
+3. **Load design artifacts** - Read both layers of the design corpus:
+   - **Shared layer**: `docs/design/shared/architecture.md`, `data-model.md`, `api-spec.md`, `class.md`, `sequence.md`, and any `shared/research/*.md` (skip files that do not exist — `shared/` may be empty for the very first issue)
+   - **Per-issue layer**: `docs/design/#{issue_number}/design.md`, `api-spec.md`, `workflow.md`, `flowchart.md`, `research.md` (skip files that do not exist)
+   - The shared layer is the cumulative project truth maintained by `/design`. The per-issue layer is the self-contained delta for this issue.
+4. **Load `/erd:index-repo` and follow inline** - `Read(".claude/commands/erd/index-repo.md")`:
    - Map relevant modules and their relationships
    - Identify files that need modification
    - Understand existing patterns and conventions
 
 ### Phase 2: Implementation
 
-5. **Execute `/erd:implement`** - Feature implementation with persona activation:
+5. **Load `/erd:implement` and follow inline** - `Read(".claude/commands/erd/implement.md")`:
    - Follow design artifacts from `/design` (if available)
    - Follow language best practices
    - Proper error handling
@@ -46,11 +59,11 @@ Example:
 
 ### Phase 3: Build and Test
 
-7. **Execute `/erd:build`** - Build verification with error handling:
+7. **Load `/erd:build` and follow inline** - `Read(".claude/commands/erd/build.md")`:
    - Run language-specific linters and formatters
    - Run type checkers
    - Fix build errors iteratively
-8. **Execute `/erd:test`** - Test execution with coverage analysis:
+8. **Load `/erd:test` and follow inline** - `Read(".claude/commands/erd/test.md")`:
    - Unit tests
    - Integration tests (if applicable)
    - E2E tests (if applicable)
@@ -58,21 +71,21 @@ Example:
 
 ### Phase 4: Quality Assurance
 
-9. **Execute `/erd:analyze`** - Comprehensive code analysis:
+9. **Load `/erd:analyze` and follow inline** - `Read(".claude/commands/erd/analyze.md")`:
    - Code quality: readability, maintainability, DRY
    - Security: input validation, injection risks, auth checks
    - Performance: inefficient patterns, unnecessary allocations
    - Architecture: module design, layer separation
-10. **Execute `/erd:improve`** - Fix discovered issues:
+10. **Load `/erd:improve` and follow inline** - `Read(".claude/commands/erd/improve.md")`:
     - Code quality improvements
     - Pattern standardization
     - Type safety enhancements
     - Error handling improvements
-11. **Re-run `/erd:build`** and **`/erd:test`** - Verify improvements don't break anything
+11. **Re-load `/erd:build`** and **`/erd:test`** and follow inline - Verify improvements don't break anything
 
 ### Phase 5: Error Recovery (if needed)
 
-12. **Execute `/erd:troubleshoot`** (conditional) - When build or test failures persist:
+12. **Load `/erd:troubleshoot` and follow inline** (conditional) - `Read(".claude/commands/erd/troubleshoot.md")`:
     - Diagnose root cause of failures
     - Identify dependency issues
     - Resolve configuration problems
