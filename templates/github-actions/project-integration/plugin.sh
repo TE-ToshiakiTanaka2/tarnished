@@ -1345,6 +1345,9 @@ plugin_copy() {
 
                 # Replace __ERD_REF__ placeholder with actual ref
                 sed "s/__ERD_REF__/${ERD_REF:-develop}/g" "$workflow" > "$target_file"
+                # Output bypasses copy_with_confirm; register for manifest
+                # tracking (#265).
+                manifest_track_file "$target_file"
                 print_success "Created $workflow_name (using @${ERD_REF:-develop})"
             fi
         done

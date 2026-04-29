@@ -61,6 +61,157 @@ print_section() {
 }
 
 # =============================================================================
+# Hashing
+# =============================================================================
+
+# Cross-platform sha256 wrapper. Picks sha256sum (Linux/devcontainer default)
+# or shasum -a 256 (BSD/macOS default), extracts the leading 64-hex digest,
+# and emits "sha256:<lowercase-hex>" on stdout. The "sha256:" prefix
+# reserves space for future algorithm migrations (e.g., "blake3:") without
+# rewriting old manifests (#265).
+#
+# Usage: sha256_file <path>
+# Returns: 0 on success ("sha256:<hex>" on stdout); 1 on missing tool, missing
+#          file, or malformed digest.
+sha256_file() {
+    local path="$1"
+
+    if [[ ! -f "$path" ]]; then
+        print_error "sha256_file: file not found: $path"
+        return 1
+    fi
+
+    local hex
+    if command -v sha256sum &> /dev/null; then
+        hex=$(sha256sum "$path" | cut -d' ' -f1)
+    elif command -v shasum &> /dev/null; then
+        hex=$(shasum -a 256 "$path" | cut -d' ' -f1)
+    else
+        print_error "sha256_file: neither sha256sum nor shasum is available"
+        return 1
+    fi
+
+    if [[ ${#hex} -ne 64 ]] || [[ ! "$hex" =~ ^[0-9a-f]+$ ]]; then
+        print_error "sha256_file: malformed digest for $path"
+        return 1
+    fi
+
+    printf 'sha256:%s' "$hex"
+}
+
+# =============================================================================
+# Manifest Recording (#265)
+# =============================================================================
+#
+# Manifest recording lets `setup.sh --upgrade` discover which files plugins
+# would emit by intercepting copy_with_confirm and storing each successful
+# copy in a global associative array. Recording is OFF by default; pre-#265
+# callers see byte-equivalent behavior (NFR-1).
+
+# Recording state. Defaults to off so a plain `setup.sh` run records nothing.
+MANIFEST_RECORDING="${MANIFEST_RECORDING:-false}"
+# Absolute path used to compute the relative key inside MANIFEST_TRACKED.
+MANIFEST_RECORDING_ROOT="${MANIFEST_RECORDING_ROOT:-}"
+# Map: <repo-relative-path> → "sha256:<hex>". Declared lazily by
+# manifest_recording_start to avoid `declare -gA` errors on older bash.
+declare -gA MANIFEST_TRACKED 2>/dev/null || true
+
+# Globs (relative to MANIFEST_RECORDING_ROOT) that must NOT be tracked. Per
+# FR-3 of #265: merge files, dynamic files, and user-owned files are excluded
+# even though they may flow through copy_with_confirm during scaffolding.
+# Defined here (in addition to manifest.sh) so that copy_with_confirm can
+# consult it without sourcing manifest.sh first; manifest.sh re-exports the
+# same list for its own use.
+if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
+    MANIFEST_EXCLUDE_GLOBS=(
+        ".gitignore"
+        ".tarnished-manifest.json"
+        "modules.json"
+        "docker-compose.yml"
+        "CLAUDE.md"
+        "AGENTS.md"
+        "README.md"
+        ".claude/settings.json"
+        ".claude/settings.local.json"
+        ".devcontainer/devcontainer.json"
+        ".codex/config.local.toml"
+    )
+fi
+
+# Begin recording into MANIFEST_TRACKED. Clears prior state. The given root
+# becomes the base for relative-path keys.
+# Usage: manifest_recording_start <root_dir>
+manifest_recording_start() {
+    local root="$1"
+    if [[ -z "$root" ]]; then
+        print_error "manifest_recording_start: root_dir required"
+        return 1
+    fi
+    MANIFEST_RECORDING_ROOT="$(cd "$root" && pwd)"
+    MANIFEST_RECORDING=true
+    # Clear prior state.
+    unset MANIFEST_TRACKED
+    declare -gA MANIFEST_TRACKED
+}
+
+# Stop recording. Does not clear MANIFEST_TRACKED; the snapshot remains
+# readable until the next manifest_recording_start.
+manifest_recording_stop() {
+    MANIFEST_RECORDING=false
+}
+
+# Internal: test whether a relative path matches MANIFEST_EXCLUDE_GLOBS.
+# Usage: _manifest_path_excluded <rel_path>
+# Returns: 0 if excluded, 1 otherwise.
+_manifest_path_excluded() {
+    local rel="$1"
+    local pat
+    for pat in "${MANIFEST_EXCLUDE_GLOBS[@]}"; do
+        # shellcheck disable=SC2053
+        [[ "$rel" == $pat ]] && return 0
+    done
+    return 1
+}
+
+# Public: register an already-written file for manifest tracking. Plugins
+# that emit files via `sed`, `awk`, `cat`, or other redirects that bypass
+# copy_with_confirm should call this with the absolute (or relative)
+# destination path *after* the file is written. When MANIFEST_RECORDING
+# is off, this is a no-op, so it is safe to call unconditionally.
+# Usage: manifest_track_file <dest>
+manifest_track_file() {
+    _record_tracked_copy "$(_abs_path "$1")"
+}
+
+# Internal: record one tracked copy. Called by copy_with_confirm after a
+# successful cp when MANIFEST_RECORDING=true.
+# Usage: _record_tracked_copy <abs_dest>
+_record_tracked_copy() {
+    local abs_dest="$1"
+    [[ "$MANIFEST_RECORDING" != true ]] && return 0
+    [[ -z "$MANIFEST_RECORDING_ROOT" ]] && return 0
+
+    # Skip destinations outside the recording root (defensive — plugins
+    # could write to /tmp for unrelated reasons).
+    case "$abs_dest" in
+        "$MANIFEST_RECORDING_ROOT"/*) ;;
+        *) return 0 ;;
+    esac
+
+    local rel="${abs_dest#${MANIFEST_RECORDING_ROOT}/}"
+
+    if _manifest_path_excluded "$rel"; then
+        return 0
+    fi
+
+    local hash
+    if ! hash=$(sha256_file "$abs_dest"); then
+        return 0
+    fi
+    MANIFEST_TRACKED["$rel"]="$hash"
+}
+
+# =============================================================================
 # File Copy Utility Functions
 # =============================================================================
 
@@ -77,17 +228,22 @@ copy_with_confirm() {
     # If destination doesn't exist, copy directly
     if [[ ! -e "$dest" ]]; then
         cp "$src" "$dest"
+        _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
     # Handle existing file based on flags
     if [[ "$OVERWRITE_ALL" == true ]]; then
         cp "$src" "$dest"
+        _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
     if [[ "$skip_confirm" == true ]]; then
         print_warning "Skipped: $dest (already exists)"
+        # Even when we skipped the write, the existing file still represents
+        # the canonical content for upgrade purposes; record its current hash.
+        _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
@@ -95,6 +251,7 @@ copy_with_confirm() {
     if [[ ! -e /dev/tty ]] || ! : < /dev/tty 2>/dev/null; then
         # Non-interactive environment: skip by default
         print_warning "Skipped: $dest (already exists, non-interactive)"
+        _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
@@ -106,6 +263,22 @@ copy_with_confirm() {
         cp "$src" "$dest"
     else
         print_warning "Skipped: $dest (already exists)"
+    fi
+    # Record either way — the destination now exists with some content
+    # (either the freshly copied source or the user's original).
+    _record_tracked_copy "$(_abs_path "$dest")"
+}
+
+# Internal: resolve a (possibly relative) path to absolute. Used by the
+# manifest-recording hook so it can compute paths relative to
+# MANIFEST_RECORDING_ROOT regardless of how the caller spelled the
+# destination.
+_abs_path() {
+    local p="$1"
+    if [[ "$p" = /* ]]; then
+        printf '%s' "$p"
+    else
+        printf '%s/%s' "$(pwd)" "$p"
     fi
 }
 

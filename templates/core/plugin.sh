@@ -90,7 +90,11 @@ core_seed_modules_json() {
     if [[ ! -f "${target_dir}/modules.json" ]]; then
         local template="${PLUGIN_DIR}/modules.json.template"
         if [[ -f "$template" ]]; then
-            cp "$template" "${target_dir}/modules.json"
+            # modules.json itself is excluded from manifest tracking
+            # (it is mutated by add_module_entry, not a verbatim file),
+            # but routing the seed through copy_with_confirm keeps the
+            # convention uniform across plugins (#265 NFR-5).
+            copy_with_confirm "$template" "${target_dir}/modules.json"
             print_success "Seeded modules.json"
         else
             # Fallback: minimal inline template if the file is missing.

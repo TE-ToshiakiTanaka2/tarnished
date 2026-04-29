@@ -125,6 +125,17 @@ ADD_MODULE_NAME=""
 ADD_MODULE_LANG=""
 declare -a MODULES=()
 
+# Manifest modes (#265). Mutually exclusive with each other and with the
+# scaffold modes (single / monorepo init / add-module).
+CREATE_MANIFEST_MODE=false
+UPGRADE_MODE=false
+FROM_VERSION=""
+TARGET_VERSION=""
+FORCE=false
+PRUNE_ENABLED=false
+SHARED_ONLY=false
+declare -a UPGRADE_MODULES=()
+
 # Core plugins that are always loaded
 declare -a CORE_PLUGINS=("core" "claude")
 
@@ -162,6 +173,32 @@ Options:
     --celery            Include Celery task queue (auto-enables Redis, requires Python)
     --github-actions    Include GitHub Project integration (requires erd CLI)
     --overwrite         Overwrite existing files without confirmation
+    --create-manifest   Bootstrap a .tarnished-manifest.json from the current
+                        state of files in this directory. Required as a one-shot
+                        for legacy projects before their first --upgrade. (#265)
+    --from-version <ref>
+                        Recorded as `tarnished_version` in the new manifest
+                        (defaults to "unknown"). Use this to pin the originating
+                        tarnished version for projects scaffolded before the
+                        manifest format existed. Only valid with --create-manifest. (#265)
+    --upgrade           Refresh tracked files of an existing scaffolded project
+                        to the latest (or --target-version-pinned) tarnished
+                        version. User-edited files are skipped automatically. (#265)
+    --target-version <ref>
+                        Target git ref (tag, branch, or commit) of upstream
+                        tarnished for --upgrade. When omitted: under remote
+                        execution (curl|bash) the bootstrap clone of
+                        ${REMOTE_BRANCH} HEAD is used; under local execution
+                        the current SCRIPT_DIR checkout is used. Pass an
+                        explicit ref for deterministic behavior. (#265)
+    --shared-only       Restrict --upgrade to the root-level (shared) manifest.
+                        Has no effect on single-mode targets. (#265)
+    --prune             Delete tracked files removed upstream and unedited
+                        locally. Without this flag, such files are left in
+                        place and reported as a warning. (#265)
+    --force             Bypass --upgrade's clean-tree precondition. Use with
+                        care — uncommitted edits to unedited files may be
+                        overwritten. (#265)
 
 Arguments:
     PROJECT_NAME        Name for your project (optional, will prompt if not provided)
@@ -200,6 +237,19 @@ Examples:
     # Add module to an existing monorepo (#263)
     ./setup.sh --add-module anisette --lang python -y
     ./setup.sh                              # Auto-detected if CWD has modules.json
+
+    # Bootstrap a manifest for an existing project (#265)
+    ./setup.sh --create-manifest --from-version v0.0.74 -y
+    ./setup.sh --create-manifest -y         # tarnished_version recorded as "unknown"
+
+    # Upgrade an existing scaffolded project (#265)
+    ./setup.sh --upgrade -y                 # Latest develop
+    ./setup.sh --upgrade --target-version v0.0.76 -y
+    ./setup.sh --upgrade --dry-run          # Preview without writes
+    ./setup.sh --upgrade --shared-only -y   # Monorepo: only shared assets
+    ./setup.sh --upgrade --module backend -y
+    ./setup.sh --upgrade --prune -y         # Also delete files removed upstream
+    ./setup.sh --upgrade --force -y         # Bypass clean-tree check
 
 Generated Files:
     .devcontainer/
@@ -837,15 +887,19 @@ parse_arguments() {
                 ;;
             --module)
                 if [[ -z "${2:-}" ]]; then
-                    print_error "--module requires a value (format: <name>:<lang>)"
+                    print_error "--module requires a value (format: <name>:<lang> or <name>)"
                     exit 1
                 fi
-                if [[ "$2" != *:* ]]; then
-                    print_error "--module value must be <name>:<lang> (got: '$2')"
-                    exit 1
+                # Disambiguate the two valid forms (#263 monorepo init takes
+                # <name>:<lang>; #265 --upgrade scope filter takes <name>).
+                # Both are routed to MODULES here; validate_argument_combinations
+                # checks that the form matches the mode.
+                if [[ "$2" == *:* ]]; then
+                    MODULES+=("$2")
+                    MONOREPO_MODE=true
+                else
+                    UPGRADE_MODULES+=("$2")
                 fi
-                MODULES+=("$2")
-                MONOREPO_MODE=true
                 shift 2
                 ;;
             --add-module)
@@ -894,6 +948,42 @@ parse_arguments() {
                 OVERWRITE_ALL=true
                 shift
                 ;;
+            --create-manifest)
+                CREATE_MANIFEST_MODE=true
+                shift
+                ;;
+            --from-version)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--from-version requires a value (e.g., v0.0.74 or 'unknown')"
+                    exit 1
+                fi
+                FROM_VERSION="$2"
+                shift 2
+                ;;
+            --upgrade)
+                UPGRADE_MODE=true
+                shift
+                ;;
+            --target-version)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--target-version requires a value (tag, branch, or commit)"
+                    exit 1
+                fi
+                TARGET_VERSION="$2"
+                shift 2
+                ;;
+            --shared-only)
+                SHARED_ONLY=true
+                shift
+                ;;
+            --prune)
+                PRUNE_ENABLED=true
+                shift
+                ;;
+            --force)
+                FORCE=true
+                shift
+                ;;
             -*)
                 print_error "Unknown option: $1"
                 echo "Use --help for usage information"
@@ -914,9 +1004,102 @@ parse_arguments() {
     validate_argument_combinations
 }
 
-# Reject mutually-exclusive flag combinations and other invalid mixes (#263).
-# Documented in docs/design/shared/api-spec.md :: Setup / Plugin Surface.
+# Reject mutually-exclusive flag combinations and other invalid mixes
+# (#263, #265). Documented in docs/design/shared/api-spec.md ::
+# Setup / Plugin Surface.
 validate_argument_combinations() {
+    # Manifest modes (#265) are mutually exclusive with each other.
+    if [[ "$CREATE_MANIFEST_MODE" == true ]] && [[ "$UPGRADE_MODE" == true ]]; then
+        print_error "--create-manifest and --upgrade are mutually exclusive"
+        exit 1
+    fi
+
+    # --create-manifest is exclusive with every scaffold/upgrade flag (#265).
+    if [[ "$CREATE_MANIFEST_MODE" == true ]]; then
+        if [[ "$MONOREPO_MODE" == true ]]; then
+            print_error "--create-manifest is mutually exclusive with --monorepo / --module"
+            exit 1
+        fi
+        if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+            print_error "--create-manifest is mutually exclusive with --add-module"
+            exit 1
+        fi
+        if [[ ${#UPGRADE_MODULES[@]} -gt 0 ]]; then
+            print_error "--create-manifest is mutually exclusive with --module <name>"
+            exit 1
+        fi
+        if [[ ${#SELECTED_LANGUAGES[@]} -gt 0 ]]; then
+            print_error "--create-manifest does not accept --lang (no scaffold work is done)"
+            exit 1
+        fi
+        if [[ ${#SELECTED_SERVICES[@]} -gt 0 ]]; then
+            print_error "--create-manifest does not accept service flags (--postgresql, --mysql, --redis, --celery)"
+            exit 1
+        fi
+        if [[ "$CODEX_ENABLED" == true ]] || [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
+            print_error "--create-manifest does not accept feature flags (--codex, --github-actions)"
+            exit 1
+        fi
+        if [[ "$SHARED_ONLY" == true ]] || [[ "$PRUNE_ENABLED" == true ]] || [[ "$FORCE" == true ]] || [[ -n "$TARGET_VERSION" ]]; then
+            print_error "--shared-only / --prune / --force / --target-version are upgrade-only flags"
+            exit 1
+        fi
+        return 0
+    fi
+
+    # --upgrade is exclusive with the scaffold modes (#265).
+    if [[ "$UPGRADE_MODE" == true ]]; then
+        # Order matters: check --module <n>:<l> before the generic
+        # --monorepo check, because the parser sets MONOREPO_MODE=true
+        # whenever --module foo:bar is seen.
+        if [[ ${#MODULES[@]} -gt 0 ]]; then
+            print_error "--upgrade does not accept --module <name>:<lang>; use --module <name> instead"
+            exit 1
+        fi
+        if [[ "$MONOREPO_MODE" == true ]]; then
+            print_error "--upgrade is mutually exclusive with --monorepo"
+            exit 1
+        fi
+        if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+            print_error "--upgrade is mutually exclusive with --add-module"
+            exit 1
+        fi
+        if [[ ${#SELECTED_LANGUAGES[@]} -gt 0 ]]; then
+            print_error "--upgrade does not accept --lang (the manifest records languages)"
+            exit 1
+        fi
+        if [[ ${#SELECTED_SERVICES[@]} -gt 0 ]]; then
+            print_error "--upgrade does not accept service flags"
+            exit 1
+        fi
+        if [[ "$CODEX_ENABLED" == true ]] || [[ "$GITHUB_ACTIONS_ENABLED" == true ]] || [[ "$AUTO_TAG_ENABLED" == true ]]; then
+            print_error "--upgrade does not accept feature flags (--codex, --github-actions, --auto-tag)"
+            exit 1
+        fi
+        if [[ -n "$FROM_VERSION" ]]; then
+            print_error "--from-version is only valid with --create-manifest"
+            exit 1
+        fi
+        return 0
+    fi
+
+    # --from-version is only meaningful with --create-manifest.
+    if [[ -n "$FROM_VERSION" ]]; then
+        print_error "--from-version is only valid with --create-manifest"
+        exit 1
+    fi
+
+    # --target-version / --shared-only / --prune / --force / --module <name>
+    # are upgrade-only.
+    if [[ -n "$TARGET_VERSION" ]] || [[ "$SHARED_ONLY" == true ]] || [[ "$PRUNE_ENABLED" == true ]] || [[ "$FORCE" == true ]]; then
+        print_error "--target-version / --shared-only / --prune / --force are only valid with --upgrade"
+        exit 1
+    fi
+    if [[ ${#UPGRADE_MODULES[@]} -gt 0 ]]; then
+        print_error "--module <name> (no :lang) is only valid with --upgrade; use --module <name>:<lang> for monorepo init"
+        exit 1
+    fi
+
     # --add-module is exclusive with monorepo init flags
     if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
         if [[ "$MONOREPO_MODE" == true ]] && [[ ${#MODULES[@]} -gt 0 ]]; then
@@ -1247,6 +1430,751 @@ service_overlay_collides_with_target() {
 }
 
 # =============================================================================
+# Manifest Modes (#265)
+# =============================================================================
+
+# Infer the scaffold_options object as a JSON string from filesystem evidence
+# in <target_dir>. Used by --create-manifest to fill the manifest's
+# scaffold_options field for legacy projects that have no recorded scaffold
+# parameters.
+#
+# Usage: infer_scaffold_options <target_dir> <monorepo_bool> [<single_lang>]
+#   <single_lang> overrides languages[] when set (used by per-module
+#   manifests where the module's language is known from modules.json).
+infer_scaffold_options() {
+    local target_dir="$1"
+    local monorepo_flag="$2"
+    local single_lang="${3:-}"
+
+    local languages_json='[]'
+    if [[ -n "$single_lang" ]]; then
+        languages_json=$(printf '%s' "$single_lang" | jq -Rs 'split("\n") | map(select(length>0))')
+    elif [[ "$monorepo_flag" == true ]] && [[ -f "$target_dir/modules.json" ]]; then
+        languages_json=$(jq '[.modules[].language] | unique' "$target_dir/modules.json" 2>/dev/null || echo '[]')
+    else
+        # Single mode: probe for the per-language marker files emitted by
+        # each language plugin's plugin_post_copy.
+        local langs=()
+        [[ -f "$target_dir/Cargo.toml" ]] && langs+=(rust)
+        [[ -f "$target_dir/pyproject.toml" ]] && langs+=(python)
+        [[ -f "$target_dir/package.json" ]] && langs+=(node)
+        [[ -f "$target_dir/deno.json" || -f "$target_dir/deno.jsonc" ]] && langs+=(deno)
+        # LaTeX has no canonical root manifest; the build-pdf workflow is
+        # the cleanest indicator.
+        [[ -f "$target_dir/.github/workflows/build-pdf.yml" ]] && langs+=(latex)
+        if [[ ${#langs[@]} -eq 0 ]]; then
+            languages_json='[]'
+        else
+            languages_json=$(printf '%s\n' "${langs[@]}" | jq -Rs 'split("\n") | map(select(length>0))')
+        fi
+    fi
+
+    # Services: scan docker-compose.yml for top-level service ids that match
+    # the well-known plugin names. Per-module manifests do not carry services
+    # (services are project-wide).
+    local services_json='[]'
+    if [[ -z "$single_lang" ]] && [[ -f "$target_dir/docker-compose.yml" ]]; then
+        local svcs=()
+        # Service names use the {{PROJECT_NAME}}-<svc> convention; check for
+        # the `<...>-db|redis|celery-worker` shapes.
+        local compose="$target_dir/docker-compose.yml"
+        grep -qE '^  [a-z][a-z0-9_-]*-db:[[:space:]]*$' "$compose" 2>/dev/null && {
+            # disambiguate db type by the image
+            if grep -q "image: postgres" "$compose"; then svcs+=(postgresql); fi
+            if grep -q "image: mysql" "$compose"; then svcs+=(mysql); fi
+        }
+        grep -qE '^  [a-z][a-z0-9_-]*-redis:[[:space:]]*$' "$compose" 2>/dev/null && svcs+=(redis)
+        grep -qE '^  [a-z][a-z0-9_-]*-celery-worker:[[:space:]]*$' "$compose" 2>/dev/null && svcs+=(celery)
+        if [[ ${#svcs[@]} -gt 0 ]]; then
+            services_json=$(printf '%s\n' "${svcs[@]}" | jq -Rs 'split("\n") | map(select(length>0))')
+        fi
+    fi
+
+    local gha=false ata=false codex=false
+    [[ -f "$target_dir/.github/workflows/project-integration.yml" ]] && gha=true
+    [[ -f "$target_dir/.github/workflows/auto-tag.yml" ]] && ata=true
+    [[ -f "$target_dir/.codex/config.toml" ]] && codex=true
+
+    jq -n \
+        --argjson languages "$languages_json" \
+        --argjson services "$services_json" \
+        --argjson gha "$gha" \
+        --argjson ata "$ata" \
+        --argjson codex "$codex" \
+        --argjson monorepo "$monorepo_flag" \
+        '{
+            languages: $languages,
+            services: $services,
+            github_actions_enabled: $gha,
+            auto_tag_enabled: $ata,
+            codex_enabled: $codex,
+            monorepo: $monorepo
+        }'
+}
+
+# Walk a directory and load its current contents into MANIFEST_TRACKED so
+# manifest_write can persist them. Used by --create-manifest.
+#
+# Usage: load_manifest_from_walk <root> [<additional_skip_prefix>...]
+load_manifest_from_walk() {
+    local root="$1"
+    shift
+    manifest_recording_start "$root"
+    local rel hash
+    while IFS=$'\t' read -r rel hash; do
+        [[ -z "$rel" ]] && continue
+        MANIFEST_TRACKED["$rel"]="$hash"
+    done < <(manifest_walk_directory "$root" "$@")
+    manifest_recording_stop
+}
+
+# Bootstrap a manifest for an existing project. Detects single vs monorepo
+# by the presence of modules.json. In monorepo mode, writes a root manifest
+# (covering shared assets) and one manifest per registered module.
+#
+# Usage: run_create_manifest <target_dir>
+# Returns: 0 on success.
+run_create_manifest() {
+    local target_dir="$1"
+
+    if [[ ! -d "$target_dir" ]]; then
+        print_error "create-manifest: target directory not found: $target_dir"
+        return 1
+    fi
+
+    local from_version="${FROM_VERSION:-unknown}"
+    local commit=""
+
+    print_section "Creating Manifest"
+    print_info "target: $target_dir"
+    print_info "tarnished_version: $from_version"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "(dry-run: no manifest will be written)"
+    fi
+
+    if detect_existing_monorepo "$target_dir"; then
+        print_info "monorepo target detected (modules.json present)"
+
+        # Collect module names so we can both skip them in the root walk and
+        # iterate them for per-module manifests.
+        local modules=()
+        local m
+        while IFS= read -r m; do
+            [[ -n "$m" ]] && modules+=("$m")
+        done < <(list_module_names "$target_dir")
+
+        # Root manifest: walk root, skipping every module subtree.
+        local opts
+        opts="$(infer_scaffold_options "$target_dir" true)"
+        load_manifest_from_walk "$target_dir" "${modules[@]}"
+        if [[ "$DRY_RUN" != true ]]; then
+            manifest_write "$target_dir" "$from_version" "$commit" "$opts"
+            print_success "wrote $(manifest_path "$target_dir")"
+        else
+            print_info "would write root manifest with ${#MANIFEST_TRACKED[@]} file entries"
+        fi
+
+        # Per-module manifests.
+        local module
+        for module in "${modules[@]}"; do
+            local module_dir="$target_dir/$module"
+            if [[ ! -d "$module_dir" ]]; then
+                print_warning "module '$module' has no directory at $module_dir; skipping"
+                continue
+            fi
+            local lang
+            lang=$(jq -r --arg n "$module" '.modules[] | select(.name == $n) | .language' "$target_dir/modules.json" 2>/dev/null)
+            local module_opts
+            module_opts="$(infer_scaffold_options "$module_dir" false "$lang")"
+            load_manifest_from_walk "$module_dir"
+            if [[ "$DRY_RUN" != true ]]; then
+                manifest_write "$module_dir" "$from_version" "$commit" "$module_opts"
+                print_success "wrote $(manifest_path "$module_dir")"
+            else
+                print_info "would write $module manifest with ${#MANIFEST_TRACKED[@]} file entries"
+            fi
+        done
+    else
+        print_info "single-mode target detected"
+        local opts
+        opts="$(infer_scaffold_options "$target_dir" false)"
+        load_manifest_from_walk "$target_dir"
+        if [[ "$DRY_RUN" != true ]]; then
+            manifest_write "$target_dir" "$from_version" "$commit" "$opts"
+            print_success "wrote $(manifest_path "$target_dir")"
+        else
+            print_info "would write manifest with ${#MANIFEST_TRACKED[@]} file entries"
+        fi
+    fi
+
+    return 0
+}
+
+# =============================================================================
+# Upgrade Mode (#265 Phase 3)
+# =============================================================================
+
+# FR-9: refuse to run --upgrade against a dirty git tree (without --force).
+# A non-git target is treated as clean (with a warning) — manifest tracking
+# does not require git, but the safety net of "you can `git checkout` if
+# something goes wrong" is missing.
+#
+# Usage: check_git_clean <target_dir>
+# Returns: 0 if safe to proceed, 1 if dirty without --force.
+check_git_clean() {
+    local target_dir="$1"
+
+    if [[ "$FORCE" == true ]]; then
+        return 0
+    fi
+
+    if ! git -C "$target_dir" rev-parse --is-inside-work-tree &>/dev/null; then
+        print_warning "Target is not a git repository — proceeding without clean-tree check"
+        return 0
+    fi
+
+    if git -C "$target_dir" diff-index --quiet HEAD -- 2>/dev/null; then
+        return 0
+    fi
+
+    print_error "Target git tree has uncommitted changes."
+    print_error "Commit or stash your changes, or pass --force to override."
+    return 1
+}
+
+# Resolve the upstream tarnished source for --upgrade. When --target-version
+# is empty, use SCRIPT_DIR (the in-process tarnished checkout) directly to
+# avoid a redundant clone. When set, clone tarnished@<ref> into a fresh
+# temp dir.
+#
+# Sets UPSTREAM_DIR, UPSTREAM_VERSION, UPSTREAM_COMMIT.
+# Caller is responsible for cleaning UPSTREAM_DIR if it differs from
+# SCRIPT_DIR.
+#
+# Usage: resolve_target_version
+# Returns: 0 on success, 1 on clone failure.
+resolve_target_version() {
+    if [[ -z "$TARGET_VERSION" ]]; then
+        UPSTREAM_DIR="$SCRIPT_DIR"
+        UPSTREAM_VERSION=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo "${REMOTE_BRANCH:-develop}")
+        UPSTREAM_COMMIT=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        return 0
+    fi
+
+    UPSTREAM_DIR=$(mktemp -d)/upstream
+    print_info "Cloning upstream tarnished@${TARGET_VERSION}..."
+    if ! git clone --depth 1 --branch "$TARGET_VERSION" --quiet "$REMOTE_REPO_URL" "$UPSTREAM_DIR" 2>/dev/null; then
+        # Branch / tag not found; try as a commit by cloning then checking out.
+        rm -rf "$UPSTREAM_DIR" 2>/dev/null
+        if ! git clone --quiet "$REMOTE_REPO_URL" "$UPSTREAM_DIR" 2>/dev/null; then
+            print_error "Failed to clone upstream tarnished from $REMOTE_REPO_URL"
+            return 1
+        fi
+        if ! git -C "$UPSTREAM_DIR" checkout --quiet "$TARGET_VERSION" 2>/dev/null; then
+            print_error "Failed to resolve --target-version: $TARGET_VERSION"
+            return 1
+        fi
+    fi
+
+    UPSTREAM_VERSION="$TARGET_VERSION"
+    UPSTREAM_COMMIT=$(git -C "$UPSTREAM_DIR" rev-parse HEAD 2>/dev/null || echo "")
+    return 0
+}
+
+# Cleanup helper for resolve_target_version's tmp clone.
+cleanup_upstream_dir() {
+    if [[ -n "${UPSTREAM_DIR:-}" ]] && [[ "$UPSTREAM_DIR" != "$SCRIPT_DIR" ]] && [[ -d "$UPSTREAM_DIR" ]]; then
+        case "$UPSTREAM_DIR" in
+            /tmp/*) rm -rf "$(dirname "$UPSTREAM_DIR")" 2>/dev/null || true ;;
+        esac
+    fi
+}
+
+# Run the loaded plugin pipeline (copies + dockerfile + post-copy) against a
+# scratch staging directory. The recording wrapper in copy_with_confirm
+# populates MANIFEST_TRACKED with each emitted file. When this returns,
+# MANIFEST_TRACKED holds the new-version hashes for the active scope.
+#
+# Usage: stage_plugin_run <upstream_dir> <staging_dir>
+stage_plugin_run() {
+    local upstream_dir="$1"
+    local staging_dir="$2"
+
+    # Pre-seed the staging tree so plugins can append to expected files
+    # (Dockerfile.dev / post.sh / devcontainer.json).
+    mkdir -p "$staging_dir/.devcontainer/scripts"
+    mkdir -p "$staging_dir/.claude"
+    mkdir -p "$staging_dir/.github/workflows"
+    mkdir -p "$staging_dir/docker"
+
+    manifest_recording_start "$staging_dir"
+    # The execute_plugin_* helpers source plugins from LOADED_PLUGINS and
+    # call plugin_copy / plugin_dockerfile / plugin_post_copy. We need to
+    # temporarily point LOADED_PLUGINS at the upstream's templates so
+    # SOURCE files are read from there.
+    #
+    # The plugins themselves discover their own files via PLUGIN_DIR (set
+    # at the top of each plugin.sh from BASH_SOURCE), so re-sourcing them
+    # from upstream recomputes PLUGIN_DIR correctly.
+    local saved_templates="$TEMPLATES_DIR"
+    TEMPLATES_DIR="${upstream_dir}/templates"
+    load_selected_plugins
+    execute_plugin_copies "$staging_dir"
+    execute_plugin_dockerfiles "$staging_dir"
+    execute_plugin_post_copies "$staging_dir"
+    TEMPLATES_DIR="$saved_templates"
+    manifest_recording_stop
+
+    # Backstop for review.md Critical #1: plugins emit some files via
+    # `sed > target`, `cat > target`, or `touch target` rather than
+    # copy_with_confirm — these bypass the recording wrapper. After the
+    # staged run, walk the staging tree and merge any files we missed
+    # into MANIFEST_TRACKED so NEW_HASHES is the complete set of files
+    # the upgraded templates produce. Honors MANIFEST_EXCLUDE_GLOBS.
+    local rel hash
+    while IFS=$'\t' read -r rel hash; do
+        [[ -z "$rel" ]] && continue
+        # Only fill in entries the recorder didn't already capture.
+        [[ -n "${MANIFEST_TRACKED[$rel]:-}" ]] && continue
+        MANIFEST_TRACKED["$rel"]="$hash"
+    done < <(manifest_walk_directory "$staging_dir")
+}
+
+# Per-module variant of stage_plugin_run. Bypasses the monorepo dispatch
+# in execute_plugin_post_copies (which doubles up plugin_post_copy_shared
+# at the wrong root and nests plugin_post_copy_module under <root>/<name>
+# — review.md Critical #2). Instead, sources the language plugin
+# directly and calls plugin_post_copy_module(staging_dir, module_name)
+# so the emitted relative paths line up with the per-module manifest's
+# keys.
+#
+# Usage: stage_plugin_run_for_module <upstream_dir> <staging_dir> <lang> <module_name>
+stage_plugin_run_for_module() {
+    local upstream_dir="$1"
+    local staging_dir="$2"
+    local lang="$3"
+    local module_name="$4"
+
+    if [[ -z "$lang" ]]; then
+        print_error "stage_plugin_run_for_module: language required"
+        return 1
+    fi
+
+    local plugin_path="${upstream_dir}/templates/languages/${lang}/plugin.sh"
+    if [[ ! -f "$plugin_path" ]]; then
+        print_error "language plugin not found: $plugin_path"
+        return 1
+    fi
+
+    manifest_recording_start "$staging_dir"
+    unset_plugin_functions
+    # shellcheck disable=SC1090
+    source "$plugin_path"
+    if declare -f plugin_post_copy_module > /dev/null; then
+        plugin_post_copy_module "$staging_dir" "$module_name"
+    elif declare -f plugin_post_copy > /dev/null; then
+        # Fallback for plugins that haven't been split yet (#263 contract
+        # supports the legacy single plugin_post_copy as a back-compat
+        # shim). In that case the plugin treats its argument as the
+        # module's working directory directly.
+        plugin_post_copy "$staging_dir"
+    fi
+    unset_plugin_functions
+    manifest_recording_stop
+
+    # Backstop for review.md Critical #1 (sed/cat/touch emissions).
+    local rel hash
+    while IFS=$'\t' read -r rel hash; do
+        [[ -z "$rel" ]] && continue
+        [[ -n "${MANIFEST_TRACKED[$rel]:-}" ]] && continue
+        MANIFEST_TRACKED["$rel"]="$hash"
+    done < <(manifest_walk_directory "$staging_dir")
+}
+
+# Re-run plugin_post_copy hooks against the user's real target tree (not
+# the staging area). FR-5: merge logic is idempotent and reapplying it
+# absorbs any new whitelist blocks / merge entries from the upgraded
+# templates. Verbatim files have already been resolved by the lifecycle
+# loop; this pass only mutates merge/append targets.
+#
+# Usage: rerun_post_copy_on_target <upstream_dir> <target_dir>
+rerun_post_copy_on_target() {
+    local upstream_dir="$1"
+    local target_dir="$2"
+
+    local saved_templates="$TEMPLATES_DIR"
+    TEMPLATES_DIR="${upstream_dir}/templates"
+    # Reload plugin functions from upstream so PLUGIN_DIR is correct.
+    load_selected_plugins
+    # Recording is OFF here — we don't want plugin_post_copy's mutations
+    # entering the manifest.
+    execute_plugin_post_copies "$target_dir"
+    TEMPLATES_DIR="$saved_templates"
+}
+
+# Drive a single upgrade scope. Reads the existing manifest, stages plugins
+# at the upstream, dispatches the FR-4 lifecycle per file, and writes the
+# new manifest.
+#
+# Usage: apply_decisions_for_scope <scope_root> <staging_dir> <scope_label>
+# Returns: 0 on success.
+apply_decisions_for_scope() {
+    local scope_root="$1"
+    local staging_dir="$2"
+    local scope_label="$3"
+
+    if ! manifest_exists "$scope_root"; then
+        print_error "no manifest at $scope_root — run 'setup.sh --create-manifest' first"
+        return 1
+    fi
+
+    local old_json
+    if ! old_json=$(manifest_read "$scope_root"); then
+        return 1
+    fi
+
+    # Snapshot old hashes into a local map.
+    declare -A OLD_HASHES=()
+    while IFS=$'\t' read -r path hash; do
+        [[ -z "$path" ]] && continue
+        OLD_HASHES["$path"]="$hash"
+    done < <(echo "$old_json" | jq -r '.files | to_entries[] | "\(.key)\t\(.value)"')
+
+    # Snapshot new hashes from the staged run that just populated
+    # MANIFEST_TRACKED. Copy now because subsequent operations may clear
+    # the global.
+    declare -A NEW_HASHES=()
+    local k
+    for k in "${!MANIFEST_TRACKED[@]}"; do
+        NEW_HASHES["$k"]="${MANIFEST_TRACKED[$k]}"
+    done
+
+    # Reset tallies for this scope.
+    manifest_tally_reset
+
+    # Build the union of paths to consider.
+    declare -A ALL_PATHS=()
+    for k in "${!OLD_HASHES[@]}"; do
+        ALL_PATHS["$k"]=1
+    done
+    for k in "${!NEW_HASHES[@]}"; do
+        ALL_PATHS["$k"]=1
+    done
+
+    local rel old current new staging_path target_path decision
+    local apply_failures=0
+    for rel in "${!ALL_PATHS[@]}"; do
+        old="${OLD_HASHES[$rel]:-}"
+        new="${NEW_HASHES[$rel]:-}"
+        target_path="${scope_root}/${rel}"
+        staging_path="${staging_dir}/${rel}"
+        if [[ -f "$target_path" ]]; then
+            current=$(sha256_file "$target_path")
+        else
+            current=""
+        fi
+        decision=$(manifest_decide "$old" "$current" "$new")
+        # Per review.md Critical #4: do NOT swallow manifest_apply
+        # failures — a partial cp/rm corrupts the lifecycle invariant.
+        # Count failures and abort before the manifest is rewritten.
+        if ! manifest_apply "$decision" "$rel" "$staging_path" "$target_path"; then
+            print_error "manifest_apply failed for: $rel (decision=$decision)"
+            ((apply_failures++)) || true
+        fi
+    done
+
+    if [[ "$apply_failures" -gt 0 ]]; then
+        print_error "Aborting upgrade for scope '${scope_label:-shared}': $apply_failures file(s) failed to apply."
+        print_error "Manifest has NOT been rewritten; the target tree may be in a partially-updated state."
+        return 1
+    fi
+
+    # Re-run plugin_post_copy on the real target so merge logic / new
+    # whitelist blocks land (FR-5). Recording is OFF.
+    if [[ "${DRY_RUN:-false}" != true ]]; then
+        rerun_post_copy_on_target "$UPSTREAM_DIR" "$scope_root"
+    fi
+
+    # Write the new manifest. NEW_HASHES holds the new hashes from the
+    # staged run; transfer to MANIFEST_TRACKED and write.
+    if [[ "${DRY_RUN:-false}" != true ]]; then
+        # Reset MANIFEST_TRACKED to the new-hashes set (drop NEW_HASHES
+        # entries that the user has rejected with SKIP_NEW_CONFLICT —
+        # they belong to the user, not the manifest).
+        unset MANIFEST_TRACKED
+        declare -gA MANIFEST_TRACKED
+        for k in "${!NEW_HASHES[@]}"; do
+            local skipped=false
+            local sk
+            for sk in "${SKIPPED_NEW_CONFLICT_FILES[@]}"; do
+                if [[ "$sk" == "$k" ]]; then
+                    skipped=true
+                    break
+                fi
+            done
+            [[ "$skipped" == true ]] && continue
+            MANIFEST_TRACKED["$k"]="${NEW_HASHES[$k]}"
+        done
+
+        # Per review.md Suggestion #2: preserve scaffold_options from the
+        # existing manifest rather than re-inferring from the (mutated)
+        # filesystem — the manifest is the source of truth for what was
+        # originally selected, and re-inference can drop entries when
+        # users delete language marker files.
+        local opts
+        opts="$(echo "$old_json" | jq -c '.scaffold_options')"
+        manifest_write "$scope_root" "$UPSTREAM_VERSION" "$UPSTREAM_COMMIT" "$opts"
+    fi
+
+    manifest_summary_print "$(echo "$old_json" | jq -r .tarnished_version)" "$UPSTREAM_VERSION" "$scope_label"
+}
+
+# Top-level orchestrator for `setup.sh --upgrade`. Computes the set of
+# scopes to process based on --shared-only / --module / target's monorepo
+# state, then drives each scope through apply_decisions_for_scope.
+#
+# Usage: run_upgrade <target_dir>
+# Returns: 0 on success.
+run_upgrade() {
+    local target_dir="$1"
+
+    if [[ ! -d "$target_dir" ]]; then
+        print_error "upgrade: target directory not found: $target_dir"
+        return 1
+    fi
+
+    if ! manifest_exists "$target_dir"; then
+        print_error "no .tarnished-manifest.json at $target_dir"
+        print_error "Run 'setup.sh --create-manifest' first to bootstrap the manifest."
+        return 1
+    fi
+
+    if ! check_git_clean "$target_dir"; then
+        return 1
+    fi
+
+    if ! resolve_target_version; then
+        return 1
+    fi
+    trap cleanup_upstream_dir EXIT
+
+    local is_monorepo=false
+    if detect_existing_monorepo "$target_dir"; then
+        is_monorepo=true
+    fi
+
+    if [[ "$SHARED_ONLY" == true ]] && [[ "$is_monorepo" != true ]]; then
+        print_warning "--shared-only has no effect on single-mode targets; ignoring"
+        SHARED_ONLY=false
+    fi
+
+    if [[ ${#UPGRADE_MODULES[@]} -gt 0 ]] && [[ "$is_monorepo" != true ]]; then
+        print_error "--module is monorepo-only; this target has no modules.json"
+        return 1
+    fi
+
+    print_section "Upgrade"
+    print_info "target: $target_dir"
+    print_info "tarnished_version → ${UPSTREAM_VERSION}"
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "(dry-run: no files will be modified)"
+    fi
+
+    local old_root_json old_version
+    old_root_json=$(manifest_read "$target_dir") || return 1
+    old_version=$(echo "$old_root_json" | jq -r '.tarnished_version')
+
+    # Print the top-of-summary header once for the entire run; per-scope
+    # sections are appended via manifest_summary_print(scope_label).
+    {
+        printf '\n'
+        printf 'Tarnished upgrade summary (%s → %s)\n' "$old_version" "$UPSTREAM_VERSION"
+        printf '─────────────────────────────────────────────\n'
+    } >&2
+
+    # Drive scopes.
+    if [[ "$is_monorepo" == true ]]; then
+        # Determine which modules to touch.
+        local modules=()
+        local m
+        while IFS= read -r m; do
+            [[ -n "$m" ]] && modules+=("$m")
+        done < <(list_module_names "$target_dir")
+
+        if [[ ${#UPGRADE_MODULES[@]} -gt 0 ]]; then
+            # Validate each requested module exists.
+            local req
+            for req in "${UPGRADE_MODULES[@]}"; do
+                local found=false
+                for m in "${modules[@]}"; do
+                    [[ "$m" == "$req" ]] && { found=true; break; }
+                done
+                if [[ "$found" != true ]]; then
+                    print_error "module '$req' not found in modules.json"
+                    return 1
+                fi
+            done
+            # Limit modules to the requested set (and disable shared
+            # processing implicitly unless --shared-only is also given).
+            modules=("${UPGRADE_MODULES[@]}")
+        fi
+
+        # --- Shared (root) scope --------------------------------------
+        # Process shared when:
+        #   (a) no scope filters at all (default — process everything), OR
+        #   (b) --shared-only is set (with or without --module: design
+        #       allows both; review.md W2), OR
+        #   (c) --shared-only is set AND no --module given.
+        # Skip shared when --module foo is given without --shared-only
+        # (the user explicitly asked for a module-only refresh).
+        local process_shared=true
+        if [[ ${#UPGRADE_MODULES[@]} -gt 0 ]] && [[ "$SHARED_ONLY" != true ]]; then
+            process_shared=false
+        fi
+
+        if [[ "$process_shared" == true ]]; then
+            # Set up plugin selection from the old manifest's
+            # scaffold_options so the staged run reproduces the original
+            # scaffold flavor.
+            populate_setup_state_from_manifest "$old_root_json" true
+            local stage_dir
+            stage_dir=$(mktemp -d)/stage-shared
+            mkdir -p "$stage_dir"
+            stage_plugin_run "$UPSTREAM_DIR" "$stage_dir"
+            apply_decisions_for_scope "$target_dir" "$stage_dir" "shared" || return 1
+            rm -rf "$(dirname "$stage_dir")" 2>/dev/null || true
+        fi
+
+        # Per-module scopes. Process when either:
+        #   - --module foo[ ...] was given (process the named modules), OR
+        #   - no scope filters at all (process all modules).
+        # Skip when --shared-only is set and no --module was given.
+        local process_modules=true
+        if [[ "$SHARED_ONLY" == true ]] && [[ ${#UPGRADE_MODULES[@]} -eq 0 ]]; then
+            process_modules=false
+        fi
+
+        if [[ "$process_modules" == true ]]; then
+            # --- Per-module scopes ----------------------------------------
+            local module_scope_root module_old_json module_lang
+            for m in "${modules[@]}"; do
+                module_scope_root="$target_dir/$m"
+                if ! manifest_exists "$module_scope_root"; then
+                    print_warning "module '$m' has no manifest — skipping (run --create-manifest to bootstrap)"
+                    continue
+                fi
+                module_old_json=$(manifest_read "$module_scope_root") || continue
+                module_lang=$(echo "$module_old_json" | jq -r '.scaffold_options.languages[0] // empty')
+                if [[ -z "$module_lang" ]]; then
+                    print_warning "module '$m' has no language in scaffold_options — skipping"
+                    continue
+                fi
+
+                local mstage
+                mstage=$(mktemp -d)/stage-"$m"
+                mkdir -p "$mstage"
+                # Per review.md Critical #2: do NOT route per-module
+                # staging through the standard execute_plugin_post_copies
+                # monorepo dispatch — that would write shared edits to
+                # the module dir and nest plugin_post_copy_module under
+                # <module>/<module>. Use the dedicated direct-dispatch
+                # helper instead.
+                stage_plugin_run_for_module "$UPSTREAM_DIR" "$mstage" "$module_lang" "$m"
+                apply_decisions_for_scope "$module_scope_root" "$mstage" "$m" || return 1
+                rm -rf "$(dirname "$mstage")" 2>/dev/null || true
+            done
+        fi
+    else
+        # Single-mode target.
+        populate_setup_state_from_manifest "$old_root_json" false
+        local stage_dir
+        stage_dir=$(mktemp -d)/stage
+        mkdir -p "$stage_dir"
+        stage_plugin_run "$UPSTREAM_DIR" "$stage_dir"
+        apply_decisions_for_scope "$target_dir" "$stage_dir" ""
+        rm -rf "$(dirname "$stage_dir")" 2>/dev/null || true
+    fi
+
+    {
+        printf '─────────────────────────────────────────────\n'
+        if [[ "$DRY_RUN" == true ]]; then
+            printf '  Dry-run; no files were modified.\n'
+        else
+            printf '  Manifest updated.\n'
+        fi
+    } >&2
+
+    return 0
+}
+
+# Populate setup.sh's plugin/option globals from a manifest's
+# scaffold_options so that load_selected_plugins picks the same flavors
+# the project was originally scaffolded with.
+#
+# Usage: populate_setup_state_from_manifest <manifest_json> <is_root_scope> [<single_lang>] [<module_name>]
+populate_setup_state_from_manifest() {
+    local manifest_json="$1"
+    local is_root_scope="$2"
+    local single_lang="${3:-}"
+    local module_name="${4:-}"
+
+    # Reset per-run selections.
+    SELECTED_LANGUAGES=()
+    SELECTED_SERVICES=()
+    POSTGRESQL_ENABLED=false
+    MYSQL_ENABLED=false
+    REDIS_ENABLED=false
+    CELERY_ENABLED=false
+    GITHUB_ACTIONS_ENABLED=false
+    AUTO_TAG_ENABLED=false
+    CODEX_ENABLED=false
+    LOADED_PLUGINS=()
+    PLUGIN_NAMES=()
+
+    if [[ -n "$single_lang" ]]; then
+        SELECTED_LANGUAGES+=("$single_lang")
+    else
+        local lang
+        while IFS= read -r lang; do
+            [[ -n "$lang" ]] && SELECTED_LANGUAGES+=("$lang")
+        done < <(echo "$manifest_json" | jq -r '.scaffold_options.languages[]?')
+    fi
+
+    local svc
+    while IFS= read -r svc; do
+        case "$svc" in
+            postgresql) POSTGRESQL_ENABLED=true; SELECTED_SERVICES+=("postgresql") ;;
+            mysql)      MYSQL_ENABLED=true;      SELECTED_SERVICES+=("mysql") ;;
+            redis)      REDIS_ENABLED=true;      SELECTED_SERVICES+=("redis") ;;
+            celery)     CELERY_ENABLED=true;     SELECTED_SERVICES+=("celery") ;;
+        esac
+    done < <(echo "$manifest_json" | jq -r '.scaffold_options.services[]?')
+
+    GITHUB_ACTIONS_ENABLED=$(echo "$manifest_json" | jq -r '.scaffold_options.github_actions_enabled // false')
+    AUTO_TAG_ENABLED=$(echo "$manifest_json" | jq -r '.scaffold_options.auto_tag_enabled // false')
+    CODEX_ENABLED=$(echo "$manifest_json" | jq -r '.scaffold_options.codex_enabled // false')
+    MONOREPO_MODE=$(echo "$manifest_json" | jq -r '.scaffold_options.monorepo // false')
+
+    # In monorepo per-module scopes we want the language plugins to take
+    # the _module path, not _shared. Easiest way: pretend we're in
+    # add-module mode for that module.
+    if [[ "$is_root_scope" != true ]] && [[ -n "$module_name" ]]; then
+        IS_ADD_MODULE_MODE=true
+        ADD_MODULE_NAME="$module_name"
+        ADD_MODULE_LANG="$single_lang"
+        MODULES=("${module_name}:${single_lang}")
+    else
+        IS_ADD_MODULE_MODE=false
+        ADD_MODULE_NAME=""
+        ADD_MODULE_LANG=""
+        MODULES=()
+    fi
+
+    PROJECT_NAME="$(basename "$(pwd)")"
+}
+
+# =============================================================================
 # Main Setup Flow
 # =============================================================================
 
@@ -1260,6 +2188,23 @@ main() {
 
     # Parse arguments
     parse_arguments "$@"
+
+    # Manifest modes (#265) short-circuit before any scaffold work. They
+    # operate on existing project trees and have nothing to do with
+    # project name, language selection, or plugin pipelines.
+    if [[ "$CREATE_MANIFEST_MODE" == true ]]; then
+        # shellcheck disable=SC1091
+        source "${SCRIPT_DIR}/scripts/lib/manifest.sh"
+        run_create_manifest "$(pwd)"
+        exit $?
+    fi
+
+    if [[ "$UPGRADE_MODE" == true ]]; then
+        # shellcheck disable=SC1091
+        source "${SCRIPT_DIR}/scripts/lib/manifest.sh"
+        run_upgrade "$(pwd)"
+        exit $?
+    fi
 
     # Get project name
     if [[ -z "$PROJECT_NAME" ]]; then
@@ -1438,6 +2383,41 @@ main() {
 
     # Update .gitignore
     update_gitignore "$TARGET_DIR"
+
+    # Per review.md Critical #5: write a manifest at the end of every
+    # successful scaffold so newly-created projects can use --upgrade
+    # without first running --create-manifest. Skipped for --dry-run
+    # (no files were written) and for add-module (which only adds to an
+    # existing project; the existing manifest still applies).
+    if [[ "$DRY_RUN" != true ]] && [[ "$IS_ADD_MODULE_MODE" != true ]]; then
+        # shellcheck disable=SC1091
+        source "${SCRIPT_DIR}/scripts/lib/manifest.sh"
+        local scaffold_version=""
+        scaffold_version=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo "${REMOTE_BRANCH:-develop}")
+        local scaffold_commit=""
+        scaffold_commit=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        FROM_VERSION="$scaffold_version"
+        # Use the same logic as --create-manifest: detect monorepo,
+        # write root manifest (and per-module manifests), inferring
+        # scaffold_options from filesystem evidence (#265).
+        # Non-fatal: a failure here does not abort the scaffold.
+        if ! run_create_manifest "$TARGET_DIR" 2>&1 | sed 's/^/  /'; then
+            print_warning "Failed to write .tarnished-manifest.json (scaffold otherwise succeeded)"
+        fi
+        # Override the version we just wrote with the actual git ref +
+        # commit so legacy "unknown" only applies to bootstrap of
+        # pre-existing projects.
+        if manifest_exists "$TARGET_DIR"; then
+            local tmp_manifest="${TARGET_DIR}/.tarnished-manifest.json.tmp"
+            if jq --arg v "$scaffold_version" --arg c "$scaffold_commit" \
+                '.tarnished_version = $v | .tarnished_commit = $c' \
+                "${TARGET_DIR}/.tarnished-manifest.json" > "$tmp_manifest"; then
+                mv "$tmp_manifest" "${TARGET_DIR}/.tarnished-manifest.json"
+            else
+                rm -f "$tmp_manifest"
+            fi
+        fi
+    fi
 
     # Setup GitHub repository
     print_section "GitHub Repository Setup"

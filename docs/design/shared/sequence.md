@@ -330,6 +330,123 @@ sequenceDiagram
     Setup-->>User: completion message
 ```
 
+## `setup.sh --create-manifest` — bootstrap a manifest for an existing project (#265)
+
+One-shot mode that scans the current state of an already-scaffolded project and writes `.tarnished-manifest.json` (root + per-module if monorepo). Required before the first `--upgrade` on legacy projects. Idempotent — safe to re-run.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Setup as setup.sh
+    participant Common as scripts/lib/common.sh
+    participant Manifest as scripts/lib/manifest.sh
+    participant Target as <project>/
+    participant ManFile as <project>/.tarnished-manifest.json
+    participant ModSubDir as <project>/<module>/
+
+    User->>Setup: ./setup.sh --create-manifest --from-version v0.0.74 -y
+    Setup->>Setup: parse_arguments → CREATE_MANIFEST_MODE=true, FROM_VERSION="v0.0.74"
+    Setup->>Common: detect_existing_monorepo(target_dir)
+    alt monorepo target (modules.json present)
+        Common-->>Setup: yes
+        Setup->>Manifest: manifest_walk_directory(target_dir)
+        Note over Manifest,Target: skip MANIFEST_EXCLUDE_GLOBS<br/>skip <module>/ subtrees<br/>hash every other file
+        Manifest-->>Setup: <rel_path, sha> lines (root scope)
+        Setup->>Manifest: manifest_write(target_dir, FROM_VERSION, "", scaffold_options{monorepo: true})
+        Manifest->>ManFile: atomic write (tmp + mv)
+
+        loop each module in modules.json
+            Setup->>Manifest: manifest_walk_directory(target_dir/<module>)
+            Manifest-->>Setup: <rel_path, sha> lines (module scope)
+            Setup->>Manifest: manifest_write(target_dir/<module>, FROM_VERSION, "", scaffold_options{monorepo: false, languages: [<module_lang>]})
+            Manifest->>ModSubDir: <module>/.tarnished-manifest.json
+        end
+    else single-mode target
+        Common-->>Setup: no
+        Setup->>Manifest: manifest_walk_directory(target_dir)
+        Manifest-->>Setup: <rel_path, sha> lines
+        Setup->>Manifest: manifest_write(target_dir, FROM_VERSION, "", scaffold_options{monorepo: false})
+        Manifest->>ManFile: atomic write
+    end
+
+    Setup-->>User: completion: "Manifest created"
+```
+
+## `setup.sh --upgrade` — refresh tracked files of an existing project (#265)
+
+The core upgrade flow. Loads the existing manifest, clones upstream tarnished at `--target-version`, runs the same plugin pipeline against a per-scope staging directory with `MANIFEST_RECORDING` enabled, then dispatches the FR-4 lifecycle decision per file. The 8-case `manifest_decide` state machine is detailed in `docs/design/#265/flowchart.md`. Only verbatim-copy files participate in tracking; merge logic (`update_gitignore`, JSON merges) is re-applied directly to the target by re-running `plugin_post_copy` (FR-5).
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Setup as setup.sh
+    participant Common as scripts/lib/common.sh
+    participant Manifest as scripts/lib/manifest.sh
+    participant Git as git
+    participant Tmp as TMP_DIR (cloned tarnished)
+    participant Plugins as plugin pipeline
+    participant Stage as STAGING_DIR
+    participant Target as <project>/
+    participant ManFile as .tarnished-manifest.json
+
+    User->>Setup: ./setup.sh --upgrade --target-version v0.0.76 -y
+    Setup->>Setup: parse_arguments → UPGRADE_MODE=true, TARGET_VERSION="v0.0.76"
+    Setup->>Manifest: manifest_exists(target_dir)
+    alt manifest absent
+        Manifest-->>Setup: no
+        Setup-->>User: error 1 — "run --create-manifest first"
+    else manifest present
+        Manifest-->>Setup: yes
+        Setup->>Setup: check_git_clean(target_dir)
+        alt dirty + no --force
+            Setup-->>User: error 1 — "commit/stash or --force"
+        else clean OR --force
+            Setup->>Manifest: manifest_read(target_dir)
+            Manifest-->>Setup: OLD_MANIFEST {tarnished_version, scaffold_options, files}
+            Setup->>Setup: compute_upgrade_scopes (--shared-only / --module filtering)
+
+            Setup->>Git: clone --depth 1 --branch <ref> upstream/tarnished
+            Git->>Tmp: TMP_DIR populated
+            Tmp-->>Setup: ok
+
+            loop each scope (shared, then per-module)
+                Setup->>Manifest: manifest_recording_start(STAGING_DIR_<scope>)
+                Setup->>Plugins: execute_plugin_copies(STAGING_DIR_<scope>)
+                Setup->>Plugins: execute_plugin_dockerfiles(STAGING_DIR_<scope>)
+                Setup->>Plugins: execute_plugin_post_copies(STAGING_DIR_<scope>)
+                Note over Plugins,Stage: copy_with_confirm intercept records<br/>(rel_path, sha256) into MANIFEST_TRACKED
+                Setup->>Manifest: manifest_recording_stop
+                Note over Setup,Manifest: NEW_HASHES := MANIFEST_TRACKED snapshot
+
+                loop each path in OLD_MANIFEST.files ∪ NEW_HASHES
+                    Setup->>Common: sha256_file(target/path)
+                    Common-->>Setup: current_h (or "" if missing)
+                    Setup->>Manifest: manifest_decide(old_h, current_h, new_h)
+                    Manifest-->>Setup: decision (NOOP/UPDATE/SKIP_EDITED/NEW/...)
+                    Setup->>Manifest: manifest_apply(decision, stage_path, target_path)
+                    alt --dry-run
+                        Note over Manifest,Target: skip mutation; tally only
+                    else live run
+                        Manifest->>Target: cp / rm per decision
+                    end
+                end
+
+                Setup->>Plugins: rerun plugin_post_copy on Target (FR-5: merge logic)
+                Note over Plugins,Target: idempotent re-application of<br/>update_gitignore / merge_devcontainer_json /<br/>merge_claude_settings_hooks
+                Setup->>Manifest: manifest_write(scope_root, TARGET_VERSION, target_commit, scaffold_options)
+                alt --dry-run
+                    Note over Manifest,ManFile: skip write
+                else live run
+                    Manifest->>ManFile: update manifest with new version + hashes
+                end
+            end
+
+            Setup->>Manifest: manifest_summary_print(old, new)
+            Manifest-->>User: Updated/Skipped/New/Removed/...  summary
+        end
+    end
+```
+
 ## `setup.sh --add-module` — incremental add to existing monorepo (#263)
 
 Detects an existing `modules.json` in CWD (or accepts `--add-module` flag) and adds a single module. Idempotent against shared assets via marker-guarded blocks and JSON merge helpers.

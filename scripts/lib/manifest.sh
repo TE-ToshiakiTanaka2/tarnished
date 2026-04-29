@@ -1,0 +1,551 @@
+#!/bin/bash
+# =============================================================================
+# Manifest Module — for setup.sh --create-manifest / --upgrade (#265)
+# =============================================================================
+# This library provides:
+#   - Manifest read/write (.tarnished-manifest.json)
+#   - Per-file lifecycle decisions (manifest_decide — the FR-4 8-case state
+#     machine)
+#   - manifest_apply (mutate the target tree per decision)
+#   - manifest_walk_directory (compute hashes from current state, used by
+#     --create-manifest)
+#   - manifest_summary_print (FR-11 end-of-run summary)
+#
+# Sourced by setup.sh in --create-manifest and --upgrade modes only. The
+# scaffold modes (single, monorepo init, add-module) do not need this file.
+#
+# Depends on scripts/lib/common.sh for:
+#   - sha256_file
+#   - print_error / print_warning / print_info / print_success
+#   - MANIFEST_TRACKED / MANIFEST_EXCLUDE_GLOBS / manifest_recording_*
+# =============================================================================
+
+# Guard against multiple sourcing.
+[[ -n "${_MANIFEST_SH_LOADED:-}" ]] && return
+_MANIFEST_SH_LOADED=1
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+readonly MANIFEST_FILENAME=".tarnished-manifest.json"
+readonly MANIFEST_SUPPORTED_VERSION=1
+
+# MANIFEST_EXCLUDE_GLOBS is defined in scripts/lib/common.sh so that
+# copy_with_confirm can consult it without sourcing manifest.sh. This file
+# relies on the same array.
+
+# =============================================================================
+# Path / existence helpers
+# =============================================================================
+
+# Echo the manifest path for a given scope root.
+# Usage: manifest_path <scope_root>
+manifest_path() {
+    local scope_root="$1"
+    printf '%s/%s' "$scope_root" "$MANIFEST_FILENAME"
+}
+
+# Check whether the scope's manifest file exists.
+# Usage: manifest_exists <scope_root>
+# Returns: 0 if present, 1 if absent.
+manifest_exists() {
+    local scope_root="$1"
+    [[ -f "$(manifest_path "$scope_root")" ]]
+}
+
+# =============================================================================
+# Read / write
+# =============================================================================
+
+# Read and validate the manifest at <scope_root>. Streams the parsed JSON to
+# stdout. Rejects unknown major manifest_version values.
+# Usage: manifest_read <scope_root>
+# Returns: 0 on success (object on stdout), 1 on missing file / parse error /
+#          unsupported version.
+manifest_read() {
+    local scope_root="$1"
+    local file
+    file="$(manifest_path "$scope_root")"
+
+    if [[ ! -f "$file" ]]; then
+        print_error "manifest not found: $file"
+        return 1
+    fi
+
+    local version
+    if ! version=$(jq -r '.manifest_version // 0' "$file" 2>/dev/null); then
+        print_error "manifest parse failed (invalid JSON): $file"
+        return 1
+    fi
+
+    if ! [[ "$version" =~ ^[0-9]+$ ]] || [[ "$version" -lt 1 ]]; then
+        print_error "manifest missing required 'manifest_version' field: $file"
+        return 1
+    fi
+
+    if [[ "$version" -gt "$MANIFEST_SUPPORTED_VERSION" ]]; then
+        print_error "Unsupported manifest_version: $version (max supported: $MANIFEST_SUPPORTED_VERSION). Upgrade setup.sh."
+        return 1
+    fi
+
+    cat "$file"
+}
+
+# Write a manifest at <scope_root> from the global MANIFEST_TRACKED snapshot.
+# Atomic: writes to a tmp file then mv's it into place so a SIGINT mid-write
+# leaves any prior manifest intact.
+#
+# Usage: manifest_write <scope_root> <tarnished_version> <tarnished_commit> <scaffold_options_json>
+# Where <scaffold_options_json> is a JSON object string, e.g.:
+#   '{"languages":["rust"],"services":[],"github_actions_enabled":false,
+#     "auto_tag_enabled":false,"codex_enabled":false,"monorepo":false}'
+# Returns: 0 on success, 1 on jq / IO error.
+manifest_write() {
+    local scope_root="$1"
+    local tarnished_version="$2"
+    local tarnished_commit="$3"
+    local scaffold_options_json="$4"
+
+    if [[ -z "$scope_root" ]]; then
+        print_error "manifest_write: scope_root required"
+        return 1
+    fi
+
+    local file tmp
+    file="$(manifest_path "$scope_root")"
+    tmp="${file}.tmp"
+
+    local created_at
+    created_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+    # Build the {path: hash, ...} object from MANIFEST_TRACKED. Sort keys
+    # for stable diffs.
+    local files_json
+    if ! files_json=$(_manifest_files_to_json); then
+        print_error "manifest_write: failed to serialize files map"
+        return 1
+    fi
+
+    if ! jq -n \
+        --argjson manifest_version "$MANIFEST_SUPPORTED_VERSION" \
+        --arg tarnished_version "$tarnished_version" \
+        --arg tarnished_commit "$tarnished_commit" \
+        --arg created_at "$created_at" \
+        --argjson scaffold_options "$scaffold_options_json" \
+        --argjson files "$files_json" \
+        '{
+            manifest_version: $manifest_version,
+            tarnished_version: $tarnished_version,
+            tarnished_commit: $tarnished_commit,
+            created_at: $created_at,
+            scaffold_options: $scaffold_options,
+            files: $files
+        }' > "$tmp"; then
+        rm -f "$tmp"
+        print_error "manifest_write: jq build failed"
+        return 1
+    fi
+
+    mv "$tmp" "$file"
+}
+
+# Internal: serialize MANIFEST_TRACKED to a sorted JSON object.
+_manifest_files_to_json() {
+    if [[ ${#MANIFEST_TRACKED[@]} -eq 0 ]]; then
+        printf '{}'
+        return 0
+    fi
+    local key
+    {
+        printf '{'
+        local first=true
+        for key in $(printf '%s\n' "${!MANIFEST_TRACKED[@]}" | LC_ALL=C sort); do
+            if [[ "$first" == true ]]; then
+                first=false
+            else
+                printf ','
+            fi
+            # jq -Rs encodes both key and value safely.
+            printf '%s:%s' \
+                "$(printf '%s' "$key" | jq -Rs .)" \
+                "$(printf '%s' "${MANIFEST_TRACKED[$key]}" | jq -Rs .)"
+        done
+        printf '}'
+    }
+}
+
+# =============================================================================
+# Directory walk (used by --create-manifest)
+# =============================================================================
+
+# Walk <root>, hashing every file that is not in MANIFEST_EXCLUDE_GLOBS.
+# Emits one line per file: "<rel_path>\t<sha256:hex>".
+# Honors an optional list of additional path prefixes to skip (e.g. monorepo
+# module sub-trees when walking the root scope).
+#
+# Usage: manifest_walk_directory <root> [<additional_skip_prefix>...]
+manifest_walk_directory() {
+    local root="$1"
+    shift
+    local skip_prefixes=("$@")
+
+    if [[ ! -d "$root" ]]; then
+        print_error "manifest_walk_directory: not a directory: $root"
+        return 1
+    fi
+
+    local abs_root
+    abs_root="$(cd "$root" && pwd)"
+
+    while IFS= read -r -d '' path; do
+        local rel="${path#${abs_root}/}"
+
+        # Skip excluded globs.
+        if _manifest_path_excluded "$rel"; then
+            continue
+        fi
+
+        # Skip caller-provided prefixes (used to omit module subtrees from
+        # the root walk in monorepo mode).
+        local skip=false
+        local prefix
+        for prefix in "${skip_prefixes[@]}"; do
+            if [[ "$rel" == "${prefix}/"* ]] || [[ "$rel" == "$prefix" ]]; then
+                skip=true
+                break
+            fi
+        done
+        [[ "$skip" == true ]] && continue
+
+        local hash
+        if ! hash=$(sha256_file "$path"); then
+            continue
+        fi
+        printf '%s\t%s\n' "$rel" "$hash"
+        # find -prune below already excludes .git, .serena, target/, node_modules,
+        # .venv, and dist — they are user-tooling/build artifacts and never part
+        # of the tarnished-managed surface.
+    done < <(find "$abs_root" \
+        \( -type d \( -name .git -o -name .serena -o -name target -o -name node_modules -o -name .venv -o -name dist -o -name __pycache__ \) -prune \) -o \
+        -type f -print0)
+}
+
+# =============================================================================
+# Lifecycle decisions
+# =============================================================================
+#
+# manifest_decide is the single function that interprets "did the user edit
+# this file" — the predicate is `current_hash == old_hash`. Every other
+# upgrade-time behavior flows from the decision it emits.
+#
+# Inputs (each may be the empty string "" to denote "absent"):
+#   <old_hash>      hash from the existing on-disk manifest
+#   <current_hash>  hash of the user's current target file (or "" if missing)
+#   <new_hash>      hash of the staging-area file produced by re-running plugins
+#                   (or "" if the new tarnished version no longer emits this path)
+#
+# Output (one of):
+#   NOOP                  unchanged & unedited (or impossible-to-occur void case)
+#   UPDATE                upstream changed; user file matches old → safe to overwrite
+#   SKIP_EDITED           user file diverged from old → preserve user edit
+#   NEW                   not in old manifest; not in current target → create
+#   SKIP_NEW_CONFLICT     not in old manifest; user already has the path → warn + skip
+#   LEAVE_REMOVED         in old manifest; absent from new manifest → leave by default
+#   PRUNE                 LEAVE_REMOVED + PRUNE_ENABLED=true → delete
+#   SKIP_USER_DELETED     in old & new manifests; user file absent → respect deletion
+#
+# PRUNE_ENABLED is read from a global; it is set from --prune.
+manifest_decide() {
+    local old="${1:-}"
+    local current="${2:-}"
+    local new="${3:-}"
+
+    local has_old=false has_current=false has_new=false
+    [[ -n "$old" ]]     && has_old=true
+    [[ -n "$current" ]] && has_current=true
+    [[ -n "$new" ]]     && has_new=true
+
+    if [[ "$has_new" == true ]]; then
+        if [[ "$has_old" == false ]]; then
+            # Not in old manifest — the new tarnished version added this file.
+            if [[ "$has_current" == true ]]; then
+                printf 'SKIP_NEW_CONFLICT'
+            else
+                printf 'NEW'
+            fi
+            return 0
+        fi
+        # In old manifest.
+        if [[ "$has_current" == false ]]; then
+            printf 'SKIP_USER_DELETED'
+            return 0
+        fi
+        # Both old and current present.
+        if [[ "$current" == "$old" ]]; then
+            # Unedited locally.
+            if [[ "$new" == "$old" ]]; then
+                printf 'NOOP'
+            else
+                printf 'UPDATE'
+            fi
+        else
+            # User edited locally.
+            printf 'SKIP_EDITED'
+        fi
+        return 0
+    fi
+
+    # has_new == false → file was removed upstream.
+    if [[ "$has_old" == false ]]; then
+        # Total-function safety: not in old, not in new, possibly not in
+        # current either. Treat as a no-op.
+        printf 'NOOP'
+        return 0
+    fi
+    if [[ "$has_current" == false ]]; then
+        printf 'SKIP_USER_DELETED'
+        return 0
+    fi
+    if [[ "$current" != "$old" ]]; then
+        # User has edits to a file that is no longer shipped — always leave.
+        printf 'LEAVE_REMOVED'
+        return 0
+    fi
+    # Unedited and removed upstream — prune iff explicitly requested.
+    if [[ "${PRUNE_ENABLED:-false}" == true ]]; then
+        printf 'PRUNE'
+    else
+        printf 'LEAVE_REMOVED'
+    fi
+}
+
+# =============================================================================
+# Apply decisions (Phase 3)
+# =============================================================================
+#
+# manifest_apply tally globals — declared here so callers (run_upgrade) can
+# zero them once per scope. Each holds a count; a parallel array per
+# decision holds the affected paths for the end-of-run summary.
+
+declare -gi TALLY_NOOP=0
+declare -gi TALLY_UPDATED=0
+declare -gi TALLY_SKIPPED_EDITED=0
+declare -gi TALLY_NEW=0
+declare -gi TALLY_SKIPPED_NEW_CONFLICT=0
+declare -gi TALLY_LEAVE_REMOVED=0
+declare -gi TALLY_PRUNED=0
+declare -gi TALLY_SKIPPED_USER_DELETED=0
+
+declare -ga UPDATED_FILES=()
+declare -ga SKIPPED_EDITED_FILES=()
+declare -ga SKIPPED_EDITED_DIFFS=()        # parallel array, same indices
+declare -ga NEW_FILES=()
+declare -ga SKIPPED_NEW_CONFLICT_FILES=()
+declare -ga LEAVE_REMOVED_FILES=()
+declare -ga PRUNED_FILES=()
+declare -ga SKIPPED_USER_DELETED_FILES=()
+
+# Reset tallies and file lists. Called by run_upgrade at the start of each
+# scope so monorepo per-scope summaries are clean.
+manifest_tally_reset() {
+    TALLY_NOOP=0
+    TALLY_UPDATED=0
+    TALLY_SKIPPED_EDITED=0
+    TALLY_NEW=0
+    TALLY_SKIPPED_NEW_CONFLICT=0
+    TALLY_LEAVE_REMOVED=0
+    TALLY_PRUNED=0
+    TALLY_SKIPPED_USER_DELETED=0
+    UPDATED_FILES=()
+    SKIPPED_EDITED_FILES=()
+    SKIPPED_EDITED_DIFFS=()
+    NEW_FILES=()
+    SKIPPED_NEW_CONFLICT_FILES=()
+    LEAVE_REMOVED_FILES=()
+    PRUNED_FILES=()
+    SKIPPED_USER_DELETED_FILES=()
+}
+
+# Apply a lifecycle decision to the target tree.
+#   <decision>: one of NOOP / UPDATE / SKIP_EDITED / NEW / SKIP_NEW_CONFLICT /
+#               LEAVE_REMOVED / PRUNE / SKIP_USER_DELETED
+#   <rel_path>: scope-relative path (used for tally entries)
+#   <staging_path>: absolute path of the file in the staging area (or "" if
+#                   no staging file exists, e.g. LEAVE_REMOVED)
+#   <target_path>: absolute path of the destination file under the user's tree
+#
+# Honors the global DRY_RUN to suppress filesystem mutations while still
+# updating tallies — this is what powers --dry-run's preview output.
+#
+# Usage: manifest_apply <decision> <rel_path> <staging_path> <target_path>
+manifest_apply() {
+    local decision="$1"
+    local rel_path="$2"
+    local staging_path="$3"
+    local target_path="$4"
+
+    case "$decision" in
+        NOOP)
+            ((TALLY_NOOP++)) || true
+            ;;
+        UPDATE)
+            if [[ "${DRY_RUN:-false}" != true ]]; then
+                mkdir -p "$(dirname "$target_path")"
+                cp "$staging_path" "$target_path" || return 1
+            fi
+            ((TALLY_UPDATED++)) || true
+            UPDATED_FILES+=("$rel_path")
+            ;;
+        SKIP_EDITED)
+            local diff
+            diff=$(manifest_diff_summary "$staging_path" "$target_path" 2>/dev/null || echo '')
+            ((TALLY_SKIPPED_EDITED++)) || true
+            SKIPPED_EDITED_FILES+=("$rel_path")
+            SKIPPED_EDITED_DIFFS+=("$diff")
+            ;;
+        NEW)
+            if [[ "${DRY_RUN:-false}" != true ]]; then
+                mkdir -p "$(dirname "$target_path")"
+                cp "$staging_path" "$target_path" || return 1
+            fi
+            ((TALLY_NEW++)) || true
+            NEW_FILES+=("$rel_path")
+            ;;
+        SKIP_NEW_CONFLICT)
+            ((TALLY_SKIPPED_NEW_CONFLICT++)) || true
+            SKIPPED_NEW_CONFLICT_FILES+=("$rel_path")
+            ;;
+        LEAVE_REMOVED)
+            ((TALLY_LEAVE_REMOVED++)) || true
+            LEAVE_REMOVED_FILES+=("$rel_path")
+            ;;
+        PRUNE)
+            if [[ "${DRY_RUN:-false}" != true ]]; then
+                rm -f "$target_path" || return 1
+                # Try to clean up empty parent dirs (best-effort, non-fatal).
+                local d
+                d="$(dirname "$target_path")"
+                while [[ "$d" != "/" ]] && [[ "$d" != "." ]] && [[ -d "$d" ]]; do
+                    rmdir "$d" 2>/dev/null || break
+                    d="$(dirname "$d")"
+                done
+            fi
+            ((TALLY_PRUNED++)) || true
+            PRUNED_FILES+=("$rel_path")
+            ;;
+        SKIP_USER_DELETED)
+            ((TALLY_SKIPPED_USER_DELETED++)) || true
+            SKIPPED_USER_DELETED_FILES+=("$rel_path")
+            ;;
+        *)
+            print_error "manifest_apply: unknown decision: $decision"
+            return 1
+            ;;
+    esac
+}
+
+# Compact "(~K +N -M)" summary line used in the SKIP_EDITED rows.
+#   ~K : lines that differ between staging and target
+#   +N : lines in staging not in target (additions if applied)
+#   -M : lines in target not in staging (removals if applied)
+#
+# Bounds the diff at 999 in each direction so a giant divergence doesn't
+# blow the column width of the summary block.
+#
+# Usage: manifest_diff_summary <staging_path> <target_path>
+manifest_diff_summary() {
+    local staging="$1"
+    local target="$2"
+
+    if [[ ! -f "$staging" ]] || [[ ! -f "$target" ]]; then
+        printf '(diff unavailable)'
+        return 0
+    fi
+
+    # `diff -u` line tally; ignore the "+++"/"---" header lines.
+    local added removed
+    added=$(diff "$target" "$staging" | grep -c '^>' || true)
+    removed=$(diff "$target" "$staging" | grep -c '^<' || true)
+
+    local changed
+    changed=$(( added < removed ? added : removed ))
+    local pure_add=$(( added - changed ))
+    local pure_rm=$(( removed - changed ))
+
+    [[ $changed  -gt 999 ]] && changed=999
+    [[ $pure_add -gt 999 ]] && pure_add=999
+    [[ $pure_rm  -gt 999 ]] && pure_rm=999
+
+    printf '(~%d +%d -%d)' "$changed" "$pure_add" "$pure_rm"
+}
+
+# Print the FR-11 end-of-run summary block to stderr.
+#
+# Usage: manifest_summary_print <old_version> <new_version> [<scope_label>]
+# When <scope_label> is set (monorepo per-scope output), the section is
+# preceded by `[<scope_label>]`.
+manifest_summary_print() {
+    local old_version="$1"
+    local new_version="$2"
+    local scope_label="${3:-}"
+
+    {
+        if [[ -n "$scope_label" ]]; then
+            printf '[%s]\n' "$scope_label"
+        else
+            printf 'Tarnished upgrade summary (%s → %s)\n' "$old_version" "$new_version"
+            printf '─────────────────────────────────────────────\n'
+        fi
+        printf '  Updated:                  %4d file(s)\n' "$TALLY_UPDATED"
+        local f
+        for f in "${UPDATED_FILES[@]}"; do
+            printf '    %s\n' "$f"
+        done
+
+        printf '  Skipped (edited):         %4d file(s)\n' "$TALLY_SKIPPED_EDITED"
+        local i=0
+        while [[ $i -lt ${#SKIPPED_EDITED_FILES[@]} ]]; do
+            printf '    %s %s\n' "${SKIPPED_EDITED_FILES[$i]}" "${SKIPPED_EDITED_DIFFS[$i]}"
+            ((i++)) || true
+        done
+
+        printf '  New:                      %4d file(s)\n' "$TALLY_NEW"
+        for f in "${NEW_FILES[@]}"; do
+            printf '    %s\n' "$f"
+        done
+
+        if [[ "${PRUNE_ENABLED:-false}" == true ]]; then
+            printf '  Pruned:                   %4d file(s)\n' "$TALLY_PRUNED"
+            for f in "${PRUNED_FILES[@]}"; do
+                printf '    %s\n' "$f"
+            done
+        else
+            printf '  Removed (would prune):    %4d file(s)\n' "$TALLY_LEAVE_REMOVED"
+            for f in "${LEAVE_REMOVED_FILES[@]}"; do
+                printf '    %s\n' "$f"
+            done
+        fi
+
+        printf '  Skipped (deleted by user):%4d file(s)\n' "$TALLY_SKIPPED_USER_DELETED"
+        for f in "${SKIPPED_USER_DELETED_FILES[@]}"; do
+            printf '    %s\n' "$f"
+        done
+
+        if [[ "$TALLY_SKIPPED_NEW_CONFLICT" -gt 0 ]]; then
+            printf '  Skipped (new conflict):   %4d file(s)\n' "$TALLY_SKIPPED_NEW_CONFLICT"
+            for f in "${SKIPPED_NEW_CONFLICT_FILES[@]}"; do
+                printf '    %s\n' "$f"
+            done
+        fi
+
+        if [[ -z "$scope_label" ]]; then
+            printf '─────────────────────────────────────────────\n'
+            if [[ "${DRY_RUN:-false}" == true ]]; then
+                printf '  Dry-run; no files were modified.\n'
+            else
+                printf '  Manifest updated.\n'
+            fi
+        fi
+    } >&2
+}
