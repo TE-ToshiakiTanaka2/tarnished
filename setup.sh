@@ -1007,6 +1007,13 @@ resolve_setup_mode() {
             exit 1
         fi
 
+        # Validate the registry NOW, before any plugin writes — fail fast
+        # on malformed JSON or unsupported `version` (Critical #2 from
+        # the #263 review).
+        if ! read_modules_json "$target_dir" >/dev/null; then
+            exit 1
+        fi
+
         # Module name validated already; need the language too.
         if [[ -z "$ADD_MODULE_LANG" ]]; then
             if check_tty_available; then
@@ -1040,6 +1047,10 @@ resolve_setup_mode() {
     # If the user just ran `./setup.sh` in a directory that already contains
     # modules.json, offer to add a module rather than re-init from scratch.
     if [[ "$MONOREPO_MODE" != true ]] && detect_existing_monorepo "$target_dir"; then
+        # Validate before offering anything (Critical #2 from #263 review).
+        if ! read_modules_json "$target_dir" >/dev/null; then
+            exit 1
+        fi
         if check_tty_available; then
             echo "" > /dev/tty
             print_info "Existing monorepo detected (modules.json present)."
