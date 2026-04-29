@@ -118,6 +118,13 @@ CELERY_ENABLED=false
 DRY_RUN=false
 SKIP_CONFIRM=false
 
+# Monorepo mode (#263)
+MONOREPO_MODE=false
+IS_ADD_MODULE_MODE=false
+ADD_MODULE_NAME=""
+ADD_MODULE_LANG=""
+declare -a MODULES=()
+
 # Core plugins that are always loaded
 declare -a CORE_PLUGINS=("core" "claude")
 
@@ -141,7 +148,13 @@ Options:
     -h, --help          Show this help message
     -d, --dry-run       Preview files without creating them
     -y, --yes           Skip confirmation prompts
-    --lang <language>   Select language template (can be specified multiple times)
+    --lang <language>   Select language template (can be specified multiple times in
+                        single mode; in monorepo mode use --module instead)
+    --monorepo          Enable monorepo mode for fresh init (#263)
+    --module <name>:<lang>
+                        Define a monorepo module. Repeatable. Implies --monorepo. (#263)
+    --add-module <name> Add a single module to an existing monorepo. Pair with --lang.
+                        Auto-detected when CWD already contains modules.json. (#263)
     --codex             Include OpenAI Codex CLI integration (code review)
     --postgresql        Include PostgreSQL database service
     --mysql             Include MySQL database service
@@ -166,20 +179,27 @@ Available Services:
     celery              Celery Worker + Beat task queue (requires Python + Redis)
 
 Examples:
+    # Single-project mode (default)
     ./setup.sh                              # Interactive mode
     ./setup.sh my-project                   # Create project named 'my-project'
     ./setup.sh --dry-run my-app             # Preview what would be created
     ./setup.sh --lang rust                  # Rust only
-    ./setup.sh --lang python                # Python only
     ./setup.sh --lang rust --lang python    # Rust + Python
-    ./setup.sh --lang rust --codex          # Rust with Codex CLI code review
     ./setup.sh --lang rust --postgresql     # Rust with PostgreSQL
-    ./setup.sh --lang rust --mysql          # Rust with MySQL
-    ./setup.sh --lang python --redis       # Python with Redis
-    ./setup.sh --lang python --celery      # Python with Celery + Redis (auto-enabled)
+    ./setup.sh --lang python --celery       # Python with Celery + Redis (auto-enabled)
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
-    ./setup.sh --overwrite                  # Overwrite existing files
+
+    # Monorepo mode (#263)
+    ./setup.sh --monorepo                   # Interactive: define modules in a loop
+    ./setup.sh --monorepo --module jing:python --module kir:node
+                                            # Two-module init (Python + Node)
+    ./setup.sh --monorepo --module foo:python --postgresql --redis -y
+                                            # Init with shared services
+
+    # Add module to an existing monorepo (#263)
+    ./setup.sh --add-module anisette --lang python -y
+    ./setup.sh                              # Auto-detected if CWD has modules.json
 
 Generated Files:
     .devcontainer/
@@ -756,6 +776,32 @@ parse_arguments() {
                     exit 1
                 fi
                 ;;
+            --monorepo)
+                MONOREPO_MODE=true
+                shift
+                ;;
+            --module)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--module requires a value (format: <name>:<lang>)"
+                    exit 1
+                fi
+                if [[ "$2" != *:* ]]; then
+                    print_error "--module value must be <name>:<lang> (got: '$2')"
+                    exit 1
+                fi
+                MODULES+=("$2")
+                MONOREPO_MODE=true
+                shift 2
+                ;;
+            --add-module)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--add-module requires a value (module name)"
+                    exit 1
+                fi
+                IS_ADD_MODULE_MODE=true
+                ADD_MODULE_NAME="$2"
+                shift 2
+                ;;
             --codex)
                 CODEX_ENABLED=true
                 shift
@@ -809,6 +855,76 @@ parse_arguments() {
                 ;;
         esac
     done
+
+    validate_argument_combinations
+}
+
+# Reject mutually-exclusive flag combinations and other invalid mixes (#263).
+# Documented in docs/design/shared/api-spec.md :: Setup / Plugin Surface.
+validate_argument_combinations() {
+    # --add-module is exclusive with monorepo init flags
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        if [[ "$MONOREPO_MODE" == true ]] && [[ ${#MODULES[@]} -gt 0 ]]; then
+            print_error "--module cannot be combined with --add-module (--module is init-only)"
+            exit 1
+        fi
+        if [[ ${#MODULES[@]} -gt 0 ]]; then
+            print_error "--module cannot be combined with --add-module"
+            exit 1
+        fi
+        # --add-module via CLI requires --lang to specify the new module's language
+        if [[ ${#SELECTED_LANGUAGES[@]} -gt 0 ]]; then
+            ADD_MODULE_LANG="${SELECTED_LANGUAGES[0]}"
+            if [[ ${#SELECTED_LANGUAGES[@]} -gt 1 ]]; then
+                print_error "--add-module accepts a single --lang (got ${#SELECTED_LANGUAGES[@]})"
+                exit 1
+            fi
+            if ! validate_language "$ADD_MODULE_LANG"; then
+                exit 1
+            fi
+        fi
+        # --monorepo + --add-module (without --module) is also rejected as a redundant
+        # signal — --add-module already implies "operate on an existing monorepo".
+        if [[ "$MONOREPO_MODE" == true ]]; then
+            print_error "--monorepo and --add-module are mutually exclusive"
+            exit 1
+        fi
+        return 0
+    fi
+
+    # In monorepo init mode, --lang at the root level is invalid; languages
+    # come from --module entries.
+    if [[ "$MONOREPO_MODE" == true ]] && [[ ${#SELECTED_LANGUAGES[@]} -gt 0 ]]; then
+        print_error "--lang is not allowed in monorepo mode; use --module <name>:<lang> instead"
+        exit 1
+    fi
+
+    # Validate languages embedded in --module entries.
+    local entry name lang
+    for entry in "${MODULES[@]}"; do
+        name="${entry%%:*}"
+        lang="${entry#*:}"
+        if ! validate_module_name "$name"; then
+            exit 1
+        fi
+        if ! validate_language "$lang"; then
+            exit 1
+        fi
+    done
+}
+
+# Verify a language id is one of AVAILABLE_LANGUAGES.
+# Usage: validate_language <lang>
+validate_language() {
+    local lang="$1"
+    local available
+    for available in "${AVAILABLE_LANGUAGES[@]}"; do
+        if [[ "$available" == "$lang" ]]; then
+            return 0
+        fi
+    done
+    print_error "Unknown language '$lang' (available: ${AVAILABLE_LANGUAGES[*]})"
+    return 1
 }
 
 # =============================================================================
