@@ -8,6 +8,9 @@
 # - Devcontainer configuration (devcontainer.json, post.sh)
 # - Base Claude Code settings
 #
+# In monorepo mode (#263) plugin_post_copy additionally seeds (or
+# extends) modules.json from the registered MODULES array and writes
+# per-module CLAUDE.md files from module.CLAUDE.md.template.
 # =============================================================================
 
 # Get the directory where this plugin is located
@@ -69,4 +72,86 @@ plugin_post_copy() {
         chmod +x "${target_dir}/.devcontainer/scripts/post.sh"
         print_success "Made post.sh executable"
     fi
+
+    # Monorepo bookkeeping (#263)
+    if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+        _core_seed_modules_json "$target_dir"
+        _core_write_per_module_claude_md "$target_dir"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Internal helpers (#263)
+# -----------------------------------------------------------------------------
+
+# Seed modules.json from the template if missing, then add or replace each
+# MODULES entry in turn. Replace path is taken when the module already
+# exists — by which point the orchestrator has already prompted/honored
+# the overwrite decision (FR-9).
+_core_seed_modules_json() {
+    local target_dir="$1"
+
+    if [[ ! -f "${target_dir}/modules.json" ]]; then
+        local template="${PLUGIN_DIR}/modules.json.template"
+        if [[ -f "$template" ]]; then
+            cp "$template" "${target_dir}/modules.json"
+            print_success "Seeded modules.json"
+        else
+            # Fallback: minimal inline template if file missing.
+            echo '{"version": 1, "modules": []}' > "${target_dir}/modules.json"
+            print_warning "modules.json.template missing; wrote inline default"
+        fi
+    fi
+
+    local entry name lang
+    for entry in "${MODULES[@]}"; do
+        name="${entry%%:*}"
+        lang="${entry#*:}"
+
+        if find_module_by_name "$target_dir" "$name"; then
+            replace_module_entry "$target_dir" "$name" "$lang" ""
+            print_success "Updated modules.json entry: $name"
+        else
+            local rc=0
+            add_module_entry "$target_dir" "$name" "$lang" "" || rc=$?
+            if [[ $rc -eq 0 ]]; then
+                print_success "Added modules.json entry: $name"
+            else
+                print_warning "Could not register module '$name' (rc=$rc)"
+            fi
+        fi
+    done
+}
+
+# Write a CLAUDE.md stub for each module, substituting MODULE_NAME,
+# MODULE_LANGUAGE, and PROJECT_NAME placeholders. Existing files are
+# preserved unless --overwrite is set.
+_core_write_per_module_claude_md() {
+    local target_dir="$1"
+    local template="${PLUGIN_DIR}/module.CLAUDE.md.template"
+
+    if [[ ! -f "$template" ]]; then
+        return
+    fi
+
+    local entry name lang module_dir target_md
+    for entry in "${MODULES[@]}"; do
+        name="${entry%%:*}"
+        lang="${entry#*:}"
+        module_dir="${target_dir}/${name}"
+        target_md="${module_dir}/CLAUDE.md"
+
+        mkdir -p "$module_dir"
+
+        if [[ -f "$target_md" ]] && [[ "${OVERWRITE_ALL:-false}" != true ]]; then
+            print_info "Skipped ${name}/CLAUDE.md (already exists)"
+            continue
+        fi
+
+        sed -e "s|{{MODULE_NAME}}|${name}|g" \
+            -e "s|{{MODULE_LANGUAGE}}|${lang}|g" \
+            -e "s|{{PROJECT_NAME}}|${PROJECT_NAME}|g" \
+            "$template" > "$target_md"
+        print_success "Wrote ${name}/CLAUDE.md"
+    done
 }
