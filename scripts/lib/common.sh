@@ -813,6 +813,30 @@ list_module_names() {
     jq -r '.modules[].name' "$file" 2>/dev/null
 }
 
+# Recover the canonical project name from an existing target's
+# docker-compose.yml. Used by add-module so that the new module's
+# generated content (CLAUDE.md placeholders, service compose
+# substitution, etc.) uses the same name as the original `--monorepo`
+# init even if the user typed a different value or the directory was
+# renamed (Warning #4 from #263 review).
+#
+# The dev container service (always written first by templates/core/
+# docker-compose.yml) has its name unprefixed, so we take the first
+# top-level service key.
+derive_project_name_from_compose() {
+    local target_dir="$1"
+    local file="${target_dir}/docker-compose.yml"
+
+    [[ -f "$file" ]] || return 1
+
+    local first
+    first=$(list_existing_compose_services "$target_dir" | head -1)
+    if [[ -z "$first" ]]; then
+        return 1
+    fi
+    printf '%s' "$first"
+}
+
 # Append a module entry to modules.json. Refuses to overwrite an existing
 # entry — caller must call find_module_by_name + handle the overwrite
 # prompt before invoking this with a colliding name.

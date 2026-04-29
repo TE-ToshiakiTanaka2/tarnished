@@ -1014,6 +1014,19 @@ resolve_setup_mode() {
             exit 1
         fi
 
+        # Anchor PROJECT_NAME to the existing monorepo so the new module's
+        # generated content (CLAUDE.md, service compose substitution, etc.)
+        # matches what was written by the original --monorepo init — even
+        # if the user typed a different name or renamed the directory
+        # (Warning #4 from #263 review).
+        local canonical
+        if canonical=$(derive_project_name_from_compose "$target_dir"); then
+            if [[ "$PROJECT_NAME" != "$canonical" ]]; then
+                print_info "Using existing project name '$canonical' (overrides '$PROJECT_NAME')"
+                PROJECT_NAME="$canonical"
+            fi
+        fi
+
         # Module name validated already; need the language too.
         if [[ -z "$ADD_MODULE_LANG" ]]; then
             if check_tty_available; then
