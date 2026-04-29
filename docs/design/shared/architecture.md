@@ -73,16 +73,20 @@ Design artifacts are split into a shared cumulative layer (this directory) and p
 │   └── #{issue}/                     # Per-issue deltas
 ├── docker/, docker-compose.yml       # Dev environment
 ├── scripts/
-│   └── lib/common.sh                 # Shared shell utilities — output helpers, file copy, JSON merge,
-│                                     #   docker-compose merge, gitignore seeding (#259), TTY detection,
-│                                     #   prompts, modules.json helpers (#263), monorepo prompts (#263).
-│                                     #   Sourced by setup.sh and every plugin.sh.
-├── setup.sh                          # Top-level template-installer entry. Single + monorepo + add-module
-│                                     #   modes (#263, #246: command-list message)
+│   ├── lib/common.sh                 # Shared shell utilities — output helpers, file copy, JSON merge,
+│   │                                 #   docker-compose merge, gitignore seeding (#259), TTY detection,
+│   │                                 #   prompts, modules.json helpers (#263), monorepo prompts (#263),
+│   │                                 #   sha256_file wrapper + manifest-recording extension to
+│   │                                 #   copy_with_confirm (#265). Sourced by setup.sh and every plugin.sh.
+│   └── lib/manifest.sh               # Manifest read/write, lifecycle decisions, summary printer (#265).
+│                                     #   Sourced by setup.sh in --create-manifest and --upgrade modes.
+├── setup.sh                          # Top-level template-installer entry. Five operating modes:
+│                                     #   single + monorepo init + add-module (#263) + create-manifest +
+│                                     #   upgrade (#265). #246: command-list completion message.
 └── tests/                            # Integration tests
 ```
 
-A monorepo target produced by `setup.sh --monorepo` (#263) carries an additional root `modules.json` and per-module sub-directories:
+A monorepo target produced by `setup.sh --monorepo` (#263) carries an additional root `modules.json` and per-module sub-directories. Once `setup.sh --create-manifest` (#265) has been run, each scope also carries a `.tarnished-manifest.json` that records sha256 hashes of every "verbatim copy" file, used by `setup.sh --upgrade` (#265) to distinguish unedited from user-edited files:
 
 ```
 <project>/
@@ -92,12 +96,17 @@ A monorepo target produced by `setup.sh --monorepo` (#263) carries an additional
 ├── docker-compose.yml               # shared; dev service `<project>`, optional `<project>-db`/`-redis`/...
 ├── CLAUDE.md                        # shared; project-wide context
 ├── modules.json                     # registry (FR-4)
+├── .tarnished-manifest.json         # manifest of shared/root verbatim files (#265)
 ├── jing/                            # module — own pyproject.toml/Cargo.toml/package.json + src/ + tests/
-│   └── CLAUDE.md
+│   ├── CLAUDE.md
+│   └── .tarnished-manifest.json     # per-module manifest (#265)
 ├── kir/                             # module
-│   └── CLAUDE.md
+│   ├── CLAUDE.md
+│   └── .tarnished-manifest.json
 └── .gitignore
 ```
+
+Single-mode targets carry one root-level `.tarnished-manifest.json` instead of the per-module split.
 
 ## Layer Boundaries
 
@@ -127,15 +136,19 @@ error.rs (thiserror — common error type)
 
 Templates are independent and have no Rust dependency — they are plain files copied by `setup.sh`.
 
-The shell side (`setup.sh` + `scripts/lib/common.sh` + per-template `plugin.sh`) follows a parallel layered shape:
+The shell side (`setup.sh` + `scripts/lib/{common,manifest}.sh` + per-template `plugin.sh`) follows a parallel layered shape:
 
 ```
-setup.sh (orchestration; flag parsing; mode selection: single | monorepo init | add-module;
-          plugin discovery and post-copy dispatch)
+setup.sh (orchestration; flag parsing; mode selection: single | monorepo init | add-module |
+          create-manifest | upgrade; plugin discovery and post-copy dispatch;
+          upgrade-mode staging area + lifecycle decision loop, #265)
     │
     ▼
 scripts/lib/common.sh (shared utilities — output, copy, merge, gitignore seeding, TTY,
-                       monorepo prompts, modules.json helpers)
+                       monorepo prompts, modules.json helpers, sha256_file (#265),
+                       copy_with_confirm manifest-recording extension (#265))
+scripts/lib/manifest.sh (manifest read/write, manifest_decide lifecycle state machine,
+                         manifest_apply, summary printer — #265)
     │
     ▼
 templates/<flavor>/plugin.sh (per-flavor copy + post-copy hooks: codex, claude, ...)
@@ -148,7 +161,7 @@ templates/<flavor>/plugin.sh (per-flavor copy + post-copy hooks: codex, claude, 
               already use {{PROJECT_NAME}}-<svc> which works in both modes)
 ```
 
-The `setup.sh` orchestrator dispatches the post-copy hook differently based on `MONOREPO_MODE` and the plugin's family (path under `templates/languages/` vs. elsewhere). Single mode dispatch is unchanged from prior to #263.
+The `setup.sh` orchestrator dispatches the post-copy hook differently based on `MONOREPO_MODE` and the plugin's family (path under `templates/languages/` vs. elsewhere). Single mode dispatch is unchanged from prior to #263. In upgrade mode (#265) the same dispatch runs, but with the copy destination redirected into a per-scope staging directory; the lifecycle decision loop then compares (manifest_old, current_target, staging_new) hashes per file and applies the decision to the real target.
 
 ## Technology Choices
 
@@ -182,4 +195,5 @@ Template plugins are POSIX shell. Claude/Codex setup uses `claude plugins instal
 - **Design artifact maintenance**: `/design` reads `docs/design/shared/*` first, regenerates them as a snapshot at the end (NFR-1: never append, always overwrite). `/implement` reads both layers (#257).
 - **Gitignore policy** (#259): Downstream projects' `.gitignore` is seeded by `scripts/lib/common.sh::update_gitignore()` and per-plugin gitignore steps (e.g., `templates/codex/plugin.sh::plugin_post_copy`). The seed is **whitelist-style** for `.claude/` and `.codex/` — `.claude/*` and `.codex/*` are ignored, with explicit allowlist for project-tracked subdirectories (`commands/`, `skills/`, `scripts/`, `agents/`, `rules/`, `hooks/`, `settings.json` for Claude; `config.toml` for Codex). Always-ignore directives cover `.serena/` (Serena MCP working files) and `screenshots/` (manual UI testing). Block-level idempotency: each block is preceded by a stable comment marker; `grep -q` keys on the marker. User-authored lines between or after blocks are preserved. The tarnished workspace itself carries the Codex whitelist block (#261).
 - **Workspace Codex dogfooding** (#261): The tarnished workspace carries its own copy of the artifacts that `templates/codex/` produces for downstream projects — root `AGENTS.md`, `.codex/config.toml`, `.devcontainer/scripts/setup_codex.sh`, the `Bash(codex:*)` Claude permission, and the gitignore whitelist block — so the `/review` skill (which requires `codex` on `$PATH`) can run against this repo. The plugin runtime is **not** invoked against the workspace; the files are hand-applied to preserve existing workspace customizations. `setup_codex()` itself is hooked into `post.sh` after `setup_plugins`, sharing the same `set -e` non-fatal-return-0 contract. Project-level Codex config (`/workspace/.codex/config.toml`) and the template default (`templates/codex/.codex/config.toml`) are kept in sync at the latest model + reasoning-effort settings so new projects inherit the same review quality as the workspace.
-- **`setup.sh` operating mode** (#263): `setup.sh` exposes three orthogonal modes: **single** (today's behavior, default), **monorepo init** (`--monorepo` or `--module`, or interactive "y" answer), and **add-module** (`--add-module`, or auto-detected when CWD already contains `modules.json`). Mode selection happens in `main()` after argument parsing and before language/service selection. Single mode is byte-identical to the pre-#263 flow (NFR-1). Monorepo mode introduces three new invariants: (a) `modules.json` is the source of truth for which modules exist and what languages they use; (b) language plugins partition their `plugin_post_copy` work into `_shared` (root-only writes) and `_module` (per-module writes), dispatched per-mode by the orchestrator; (c) `Dockerfile.dev` and `post.sh` language toolchain blocks become marker-guarded for block-level idempotency so add-module re-runs are safe. Service plugins remain mode-agnostic because their existing `{{PROJECT_NAME}}-<svc>` naming convention naturally produces monorepo-correct service names. Per-module `.devcontainer/<module>/devcontainer.json` (elsur-style "Reopen in Container per module") and GitHub Actions matrix workflows are explicit non-goals of #263, deferred to follow-up issues.
+- **`setup.sh` operating mode** (#263, #265): `setup.sh` exposes five orthogonal modes: **single** (today's behavior, default), **monorepo init** (`--monorepo` or `--module`, or interactive "y" answer), **add-module** (`--add-module`, or auto-detected when CWD already contains `modules.json`), **create-manifest** (`--create-manifest`, #265), and **upgrade** (`--upgrade`, #265). Mode selection happens in `main()` after argument parsing and before language/service selection. Single mode is byte-identical to the pre-#263 flow (NFR-1). Monorepo mode introduces three new invariants: (a) `modules.json` is the source of truth for which modules exist and what languages they use; (b) language plugins partition their `plugin_post_copy` work into `_shared` (root-only writes) and `_module` (per-module writes), dispatched per-mode by the orchestrator; (c) `Dockerfile.dev` and `post.sh` language toolchain blocks become marker-guarded for block-level idempotency so add-module re-runs are safe. Service plugins remain mode-agnostic because their existing `{{PROJECT_NAME}}-<svc>` naming convention naturally produces monorepo-correct service names. Per-module `.devcontainer/<module>/devcontainer.json` (elsur-style "Reopen in Container per module") and GitHub Actions matrix workflows are explicit non-goals of #263, deferred to follow-up issues.
+- **Manifest-driven upgrades** (#265): The single, monorepo-init, and add-module modes scaffold or extend a project. The new create-manifest and upgrade modes are *post-scaffold* — they operate against an existing target. Create-manifest walks the target tree, hashes every "verbatim copy" file (excluding merge/dynamic/user-owned files per FR-3), and writes `.tarnished-manifest.json`. Upgrade reads the manifest, clones upstream tarnished at `--target-version` (default: `${REMOTE_BRANCH}` HEAD), runs the same plugin pipeline against a staging directory with `MANIFEST_RECORDING` enabled, and then applies a per-file lifecycle decision (`manifest_decide` — 8 cases: NOOP / UPDATE / SKIP_EDITED / NEW / SKIP_NEW_CONFLICT / LEAVE_REMOVED / PRUNE / SKIP_USER_DELETED) keyed on `(old_hash, current_hash, new_hash)`. The "did the user edit this file" predicate is `current_hash == old_hash`, evaluated only inside `manifest_decide`. Plugin contract stays unchanged (NFR-1): tracking is achieved by extending `copy_with_confirm` to opportunistically populate a global `MANIFEST_TRACKED` map when recording is enabled. After verbatim-file decisions are applied, `plugin_post_copy` is re-run against the real target to re-apply merge logic (`.gitignore` whitelist blocks, `devcontainer.json` JSON merges, `.claude/settings.json` hooks merge) — this relies on the existing line-/block-/JSON-merge idempotency invariants. Upgrade is gated on a clean git tree (`git diff-index --quiet HEAD --`) unless `--force` is passed; honors `--dry-run` to preview without writing; and supports monorepo scope filters (`--shared-only`, `--module <name>` repeatable) and an opt-in `--prune` flag for files removed upstream.

@@ -19,6 +19,8 @@ This is the cumulative project-wide data model. Per-issue deltas may add or modi
 | `IssueLabel` | `src/github/types.rs` | `{name}` from issue labels payload |
 | `ProjectV2` | `src/github/types.rs` | GraphQL project node info |
 | `ModulesRegistry` (logical) | downstream `<project>/modules.json` (#263) | Monorepo module registry — `{ version, modules: [{ name, path, language, services }] }` |
+| `Manifest` (logical) | downstream `<scope>/.tarnished-manifest.json` (#265) | Hash manifest of "verbatim copy" files for one upgrade scope (root or per-module) — `{ manifest_version, tarnished_version, tarnished_commit, created_at, scaffold_options, files: { path: "sha256:<hex>" } }` |
+| `LifecycleDecision` (internal) | `scripts/lib/manifest.sh` (#265) | Pure enum used by `manifest_decide` to tag each file's upgrade outcome — `NOOP \| UPDATE \| SKIP_EDITED \| NEW \| SKIP_NEW_CONFLICT \| LEAVE_REMOVED \| PRUNE \| SKIP_USER_DELETED` |
 
 ## Type Definitions
 
@@ -111,6 +113,51 @@ JSON file at the root of a monorepo target produced by `setup.sh --monorepo`. Re
 
 **Idempotency**: `add_module_entry <name> ...` returns exit `2` on duplicate `name`, which the caller (interactive add-module flow) translates into the FR-9 overwrite prompt.
 
+### `.tarnished-manifest.json` schema (downstream upgrade manifest, #265)
+
+JSON file at the root of any scope managed by `setup.sh --create-manifest` / `--upgrade`. In single-mode targets there is one root manifest. In monorepo targets there are two tiers: one root manifest covers shared assets (`.devcontainer/`, `.claude/`, `.codex/`, `docker/`, `.github/`) and one per-module manifest under each `<module>/` covers module-specific assets (`pyproject.toml`/`Cargo.toml`/`package.json`, lint configs, `src/`, `tests/`, etc.). All manifests follow the same schema.
+
+```json
+{
+  "manifest_version": 1,
+  "tarnished_version": "v0.0.76",
+  "tarnished_commit": "<40-char-sha-or-empty>",
+  "created_at": "2026-04-29T12:34:56Z",
+  "scaffold_options": {
+    "languages": ["rust"],
+    "services": ["postgresql"],
+    "github_actions_enabled": true,
+    "auto_tag_enabled": false,
+    "codex_enabled": true,
+    "monorepo": false
+  },
+  "files": {
+    ".devcontainer/devcontainer.json": "sha256:abc...",
+    ".claude/commands/erd/build.md": "sha256:def..."
+  }
+}
+```
+
+| Field | Type | Required | Constraints / notes |
+| --- | --- | --- | --- |
+| `manifest_version` | integer | yes | Currently `1`. Readers MUST reject unknown majors. Stored in `MANIFEST_SUPPORTED_VERSION` constant in `scripts/lib/manifest.sh`. |
+| `tarnished_version` | string | yes | git ref of upstream tarnished — tag (`v0.0.76`), branch (`develop`), or `unknown` for legacy bootstrap. |
+| `tarnished_commit` | string | yes | 40-char SHA. May be `""` when `git describe` was unavailable at bootstrap. |
+| `created_at` | string | yes | ISO-8601 UTC second-precision timestamp. |
+| `scaffold_options.languages` | array of string | yes | Language ids selected at scaffold time. Per-module manifests carry a single-element array; root manifests carry the union. |
+| `scaffold_options.services` | array of string | yes | Service ids selected at scaffold time. |
+| `scaffold_options.github_actions_enabled` | boolean | yes | |
+| `scaffold_options.auto_tag_enabled` | boolean | yes | |
+| `scaffold_options.codex_enabled` | boolean | yes | |
+| `scaffold_options.monorepo` | boolean | yes | true for the root manifest in monorepo targets; false for single-mode targets and per-module manifests. |
+| `files` | object | yes | Map of scope-root-relative path → `"sha256:<lowercase-hex>"`. Empty `{}` is valid. |
+
+**Tracked scope (FR-3)**: `files` only contains "verbatim copy" files — those that flow through `copy_with_confirm` during scaffolding. Merge files (`.gitignore`, `devcontainer.json`, `.claude/settings.json`), dynamically generated files (`docker-compose.yml`, `modules.json`), and user-owned files (`CLAUDE.md`, `AGENTS.md`, `README.md`) are deliberately excluded via `MANIFEST_EXCLUDE_GLOBS` in `scripts/lib/manifest.sh`. The same exclusion list governs both `--create-manifest` (which file paths to hash) and `--upgrade` (which destinations recorded by `copy_with_confirm` to persist).
+
+**Forward compatibility**: Readers ignore unknown keys. The `manifest_version` field is the breaking-change escape hatch — bumping to `2` allows incompatible changes that older `setup.sh` versions correctly reject.
+
+**Idempotency**: `--create-manifest` is idempotent — running it twice on the same target produces equivalent manifest content (only `created_at` differs). `--upgrade`'s lifecycle decisions are deterministic: same three-hash inputs always produce the same decision.
+
 ## Relationships
 
 ```mermaid
@@ -139,6 +186,26 @@ erDiagram
         string language
         array services
     }
+    Manifest ||--o{ ManifestFileEntry : "files (path -> hash)"
+    Manifest ||--|| ScaffoldOptions : "scaffold_options"
+    Manifest {
+        int manifest_version
+        string tarnished_version
+        string tarnished_commit
+        string created_at
+    }
+    ScaffoldOptions {
+        array languages
+        array services
+        bool github_actions_enabled
+        bool auto_tag_enabled
+        bool codex_enabled
+        bool monorepo
+    }
+    ManifestFileEntry {
+        string path
+        string sha256
+    }
 ```
 
 ## Schemas / Migrations
@@ -162,6 +229,9 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `modules.json` (downstream monorepo target) | New schema introduced for monorepo support; `version: 1` with a `modules: []` array. Forward-compatible via unknown-key tolerance and a `version` escape hatch. | #263 |
 | Language plugin contract (`templates/languages/<lang>/plugin.sh`) | `plugin_post_copy` split into `plugin_post_copy_shared(target_dir)` + `plugin_post_copy_module(target_dir, module_name)`. Existing `plugin_post_copy` retained as a backward-compat shim. | #263 |
 | `Dockerfile.dev` and `.devcontainer/scripts/post.sh` language toolchain blocks | Now wrapped in marker comments (`# >>> <lang> toolchain >>>` … `<<< <lang> toolchain <<<`) and gated by `grep -q` checks for block-level idempotency, so `setup.sh --add-module` re-runs are no-ops for shared assets. | #263 |
+| `.tarnished-manifest.json` (downstream target) | New schema introduced for upgrade tracking; `manifest_version: 1`. Lives at the scope root (one root manifest in single-mode, root + per-module in monorepo). Forward-compatible via unknown-key tolerance and a `manifest_version` escape hatch. | #265 |
+| `copy_with_confirm` / `copy_dir_with_confirm` (`scripts/lib/common.sh`) | Extended to opportunistically record `(<rel_path>, sha256)` into a global `MANIFEST_TRACKED` map when `MANIFEST_RECORDING=true`. Default off — pre-#265 callers see byte-equivalent behavior (NFR-1). | #265 |
+| `templates/core/plugin.sh` and `templates/languages/<lang>/plugin.sh` | Direct `cp` calls migrated to `copy_with_confirm` so manifest recording captures every verbatim file. The plugin contract itself is unchanged. | #265 |
 
 No SQL, no database migrations — config files, the JSON modules registry, and the seeded `.gitignore` are the only schemas.
 
