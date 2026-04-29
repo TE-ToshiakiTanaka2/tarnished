@@ -223,7 +223,12 @@ manifest_walk_directory() {
             continue
         fi
         printf '%s\t%s\n' "$rel" "$hash"
-    done < <(find "$abs_root" -type f -print0)
+        # find -prune below already excludes .git, .serena, target/, node_modules,
+        # .venv, and dist — they are user-tooling/build artifacts and never part
+        # of the tarnished-managed surface.
+    done < <(find "$abs_root" \
+        \( -type d \( -name .git -o -name .serena -o -name target -o -name node_modules -o -name .venv -o -name dist -o -name __pycache__ \) -prune \) -o \
+        -type f -print0)
 }
 
 # =============================================================================
@@ -316,28 +321,231 @@ manifest_decide() {
 }
 
 # =============================================================================
-# Apply decisions (#265 Phase 3 — stub for now)
+# Apply decisions (Phase 3)
 # =============================================================================
-
-# manifest_apply mutates the target tree per the given decision. Stubbed in
-# Phase 1; full implementation lands in Phase 3 alongside run_upgrade.
 #
-# Usage: manifest_apply <decision> <staging_path> <target_path>
+# manifest_apply tally globals — declared here so callers (run_upgrade) can
+# zero them once per scope. Each holds a count; a parallel array per
+# decision holds the affected paths for the end-of-run summary.
+
+declare -gi TALLY_NOOP=0
+declare -gi TALLY_UPDATED=0
+declare -gi TALLY_SKIPPED_EDITED=0
+declare -gi TALLY_NEW=0
+declare -gi TALLY_SKIPPED_NEW_CONFLICT=0
+declare -gi TALLY_LEAVE_REMOVED=0
+declare -gi TALLY_PRUNED=0
+declare -gi TALLY_SKIPPED_USER_DELETED=0
+
+declare -ga UPDATED_FILES=()
+declare -ga SKIPPED_EDITED_FILES=()
+declare -ga SKIPPED_EDITED_DIFFS=()        # parallel array, same indices
+declare -ga NEW_FILES=()
+declare -ga SKIPPED_NEW_CONFLICT_FILES=()
+declare -ga LEAVE_REMOVED_FILES=()
+declare -ga PRUNED_FILES=()
+declare -ga SKIPPED_USER_DELETED_FILES=()
+
+# Reset tallies and file lists. Called by run_upgrade at the start of each
+# scope so monorepo per-scope summaries are clean.
+manifest_tally_reset() {
+    TALLY_NOOP=0
+    TALLY_UPDATED=0
+    TALLY_SKIPPED_EDITED=0
+    TALLY_NEW=0
+    TALLY_SKIPPED_NEW_CONFLICT=0
+    TALLY_LEAVE_REMOVED=0
+    TALLY_PRUNED=0
+    TALLY_SKIPPED_USER_DELETED=0
+    UPDATED_FILES=()
+    SKIPPED_EDITED_FILES=()
+    SKIPPED_EDITED_DIFFS=()
+    NEW_FILES=()
+    SKIPPED_NEW_CONFLICT_FILES=()
+    LEAVE_REMOVED_FILES=()
+    PRUNED_FILES=()
+    SKIPPED_USER_DELETED_FILES=()
+}
+
+# Apply a lifecycle decision to the target tree.
+#   <decision>: one of NOOP / UPDATE / SKIP_EDITED / NEW / SKIP_NEW_CONFLICT /
+#               LEAVE_REMOVED / PRUNE / SKIP_USER_DELETED
+#   <rel_path>: scope-relative path (used for tally entries)
+#   <staging_path>: absolute path of the file in the staging area (or "" if
+#                   no staging file exists, e.g. LEAVE_REMOVED)
+#   <target_path>: absolute path of the destination file under the user's tree
+#
+# Honors the global DRY_RUN to suppress filesystem mutations while still
+# updating tallies — this is what powers --dry-run's preview output.
+#
+# Usage: manifest_apply <decision> <rel_path> <staging_path> <target_path>
 manifest_apply() {
-    print_error "manifest_apply: not implemented (Phase 3 of #265)"
-    return 1
+    local decision="$1"
+    local rel_path="$2"
+    local staging_path="$3"
+    local target_path="$4"
+
+    case "$decision" in
+        NOOP)
+            ((TALLY_NOOP++)) || true
+            ;;
+        UPDATE)
+            if [[ "${DRY_RUN:-false}" != true ]]; then
+                mkdir -p "$(dirname "$target_path")"
+                cp "$staging_path" "$target_path" || return 1
+            fi
+            ((TALLY_UPDATED++)) || true
+            UPDATED_FILES+=("$rel_path")
+            ;;
+        SKIP_EDITED)
+            local diff
+            diff=$(manifest_diff_summary "$staging_path" "$target_path" 2>/dev/null || echo '')
+            ((TALLY_SKIPPED_EDITED++)) || true
+            SKIPPED_EDITED_FILES+=("$rel_path")
+            SKIPPED_EDITED_DIFFS+=("$diff")
+            ;;
+        NEW)
+            if [[ "${DRY_RUN:-false}" != true ]]; then
+                mkdir -p "$(dirname "$target_path")"
+                cp "$staging_path" "$target_path" || return 1
+            fi
+            ((TALLY_NEW++)) || true
+            NEW_FILES+=("$rel_path")
+            ;;
+        SKIP_NEW_CONFLICT)
+            ((TALLY_SKIPPED_NEW_CONFLICT++)) || true
+            SKIPPED_NEW_CONFLICT_FILES+=("$rel_path")
+            ;;
+        LEAVE_REMOVED)
+            ((TALLY_LEAVE_REMOVED++)) || true
+            LEAVE_REMOVED_FILES+=("$rel_path")
+            ;;
+        PRUNE)
+            if [[ "${DRY_RUN:-false}" != true ]]; then
+                rm -f "$target_path" || return 1
+                # Try to clean up empty parent dirs (best-effort, non-fatal).
+                local d
+                d="$(dirname "$target_path")"
+                while [[ "$d" != "/" ]] && [[ "$d" != "." ]] && [[ -d "$d" ]]; do
+                    rmdir "$d" 2>/dev/null || break
+                    d="$(dirname "$d")"
+                done
+            fi
+            ((TALLY_PRUNED++)) || true
+            PRUNED_FILES+=("$rel_path")
+            ;;
+        SKIP_USER_DELETED)
+            ((TALLY_SKIPPED_USER_DELETED++)) || true
+            SKIPPED_USER_DELETED_FILES+=("$rel_path")
+            ;;
+        *)
+            print_error "manifest_apply: unknown decision: $decision"
+            return 1
+            ;;
+    esac
 }
 
-# manifest_diff_summary emits a compact "(~K +N -M)" summary string used in
-# the SKIP_EDITED rows of the end-of-run summary. Stubbed in Phase 1.
+# Compact "(~K +N -M)" summary line used in the SKIP_EDITED rows.
+#   ~K : lines that differ between staging and target
+#   +N : lines in staging not in target (additions if applied)
+#   -M : lines in target not in staging (removals if applied)
+#
+# Bounds the diff at 999 in each direction so a giant divergence doesn't
+# blow the column width of the summary block.
+#
+# Usage: manifest_diff_summary <staging_path> <target_path>
 manifest_diff_summary() {
-    print_error "manifest_diff_summary: not implemented (Phase 3 of #265)"
-    return 1
+    local staging="$1"
+    local target="$2"
+
+    if [[ ! -f "$staging" ]] || [[ ! -f "$target" ]]; then
+        printf '(diff unavailable)'
+        return 0
+    fi
+
+    # `diff -u` line tally; ignore the "+++"/"---" header lines.
+    local added removed
+    added=$(diff "$target" "$staging" | grep -c '^>' || true)
+    removed=$(diff "$target" "$staging" | grep -c '^<' || true)
+
+    local changed
+    changed=$(( added < removed ? added : removed ))
+    local pure_add=$(( added - changed ))
+    local pure_rm=$(( removed - changed ))
+
+    [[ $changed  -gt 999 ]] && changed=999
+    [[ $pure_add -gt 999 ]] && pure_add=999
+    [[ $pure_rm  -gt 999 ]] && pure_rm=999
+
+    printf '(~%d +%d -%d)' "$changed" "$pure_add" "$pure_rm"
 }
 
-# manifest_summary_print emits the FR-11 end-of-run summary block to stderr.
-# Stubbed in Phase 1.
+# Print the FR-11 end-of-run summary block to stderr.
+#
+# Usage: manifest_summary_print <old_version> <new_version> [<scope_label>]
+# When <scope_label> is set (monorepo per-scope output), the section is
+# preceded by `[<scope_label>]`.
 manifest_summary_print() {
-    print_error "manifest_summary_print: not implemented (Phase 3 of #265)"
-    return 1
+    local old_version="$1"
+    local new_version="$2"
+    local scope_label="${3:-}"
+
+    {
+        if [[ -n "$scope_label" ]]; then
+            printf '[%s]\n' "$scope_label"
+        else
+            printf 'Tarnished upgrade summary (%s → %s)\n' "$old_version" "$new_version"
+            printf '─────────────────────────────────────────────\n'
+        fi
+        printf '  Updated:                  %4d file(s)\n' "$TALLY_UPDATED"
+        local f
+        for f in "${UPDATED_FILES[@]}"; do
+            printf '    %s\n' "$f"
+        done
+
+        printf '  Skipped (edited):         %4d file(s)\n' "$TALLY_SKIPPED_EDITED"
+        local i=0
+        while [[ $i -lt ${#SKIPPED_EDITED_FILES[@]} ]]; do
+            printf '    %s %s\n' "${SKIPPED_EDITED_FILES[$i]}" "${SKIPPED_EDITED_DIFFS[$i]}"
+            ((i++)) || true
+        done
+
+        printf '  New:                      %4d file(s)\n' "$TALLY_NEW"
+        for f in "${NEW_FILES[@]}"; do
+            printf '    %s\n' "$f"
+        done
+
+        if [[ "${PRUNE_ENABLED:-false}" == true ]]; then
+            printf '  Pruned:                   %4d file(s)\n' "$TALLY_PRUNED"
+            for f in "${PRUNED_FILES[@]}"; do
+                printf '    %s\n' "$f"
+            done
+        else
+            printf '  Removed (would prune):    %4d file(s)\n' "$TALLY_LEAVE_REMOVED"
+            for f in "${LEAVE_REMOVED_FILES[@]}"; do
+                printf '    %s\n' "$f"
+            done
+        fi
+
+        printf '  Skipped (deleted by user):%4d file(s)\n' "$TALLY_SKIPPED_USER_DELETED"
+        for f in "${SKIPPED_USER_DELETED_FILES[@]}"; do
+            printf '    %s\n' "$f"
+        done
+
+        if [[ "$TALLY_SKIPPED_NEW_CONFLICT" -gt 0 ]]; then
+            printf '  Skipped (new conflict):   %4d file(s)\n' "$TALLY_SKIPPED_NEW_CONFLICT"
+            for f in "${SKIPPED_NEW_CONFLICT_FILES[@]}"; do
+                printf '    %s\n' "$f"
+            done
+        fi
+
+        if [[ -z "$scope_label" ]]; then
+            printf '─────────────────────────────────────────────\n'
+            if [[ "${DRY_RUN:-false}" == true ]]; then
+                printf '  Dry-run; no files were modified.\n'
+            else
+                printf '  Manifest updated.\n'
+            fi
+        fi
+    } >&2
 }
