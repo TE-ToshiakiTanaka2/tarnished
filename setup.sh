@@ -435,15 +435,23 @@ load_plugin() {
     return 0
 }
 
-# Load selected plugins in correct order
+# Load selected plugins in correct order. In add-module mode (#263) we skip
+# the plugins that own the shared root assets (core, claude, codex,
+# github-actions) — those were already installed during the original
+# `setup.sh --monorepo` run, and re-running their plugin_copy hooks would
+# overwrite user customizations and language-toolchain marker blocks.
 load_selected_plugins() {
     LOADED_PLUGINS=()
     PLUGIN_NAMES=()
 
     local -a load_order=()
+    local skip_root_plugins=false
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        skip_root_plugins=true
+    fi
 
-    # 1. Core plugin first
-    if [[ -f "${TEMPLATES_DIR}/core/plugin.sh" ]]; then
+    # 1. Core plugin first (skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ -f "${TEMPLATES_DIR}/core/plugin.sh" ]]; then
         load_order+=("${TEMPLATES_DIR}/core/plugin.sh")
     fi
 
@@ -463,13 +471,13 @@ load_selected_plugins() {
         fi
     done
 
-    # 4. Claude plugin
-    if [[ -f "${TEMPLATES_DIR}/claude/plugin.sh" ]]; then
+    # 4. Claude plugin (skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ -f "${TEMPLATES_DIR}/claude/plugin.sh" ]]; then
         load_order+=("${TEMPLATES_DIR}/claude/plugin.sh")
     fi
 
-    # 5. Codex plugin (if enabled)
-    if [[ "$CODEX_ENABLED" == true ]]; then
+    # 5. Codex plugin (if enabled — skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ "$CODEX_ENABLED" == true ]]; then
         local codex_path="${TEMPLATES_DIR}/codex/plugin.sh"
         if [[ -f "$codex_path" ]]; then
             load_order+=("$codex_path")
@@ -478,8 +486,8 @@ load_selected_plugins() {
         fi
     fi
 
-    # 6. GitHub Actions plugins (if enabled)
-    if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
+    # 6. GitHub Actions plugins (skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
         local github_actions_path="${TEMPLATES_DIR}/github-actions/project-integration/plugin.sh"
         if [[ -f "$github_actions_path" ]]; then
             load_order+=("$github_actions_path")
@@ -488,14 +496,18 @@ load_selected_plugins() {
         fi
     fi
 
-    # 7. Auto-tag plugin (independent from project-integration)
-    if [[ "$AUTO_TAG_ENABLED" == true ]]; then
+    # 7. Auto-tag plugin (independent from project-integration; skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ "$AUTO_TAG_ENABLED" == true ]]; then
         local auto_tag_path="${TEMPLATES_DIR}/github-actions/auto-tag/plugin.sh"
         if [[ -f "$auto_tag_path" ]]; then
             load_order+=("$auto_tag_path")
         else
             print_warning "Auto-tag plugin not found, skipping"
         fi
+    fi
+
+    if [[ "$skip_root_plugins" == true ]]; then
+        print_info "add-module mode: skipping core/claude/codex/github-actions (already installed)"
     fi
 
     # Load plugins
@@ -1098,6 +1110,39 @@ derive_selected_languages_from_modules() {
     done
 }
 
+# In add-module mode, fail fast (or prompt) when the requested module name
+# already exists in modules.json. Honors --overwrite (-y also bypasses the
+# prompt). Exits 0 on a clean decline.
+check_add_module_conflict() {
+    local target_dir entry name
+    target_dir="$(pwd)"
+
+    for entry in "${MODULES[@]}"; do
+        name="${entry%%:*}"
+        if ! find_module_by_name "$target_dir" "$name"; then
+            continue
+        fi
+
+        if [[ "$OVERWRITE_ALL" == true ]]; then
+            print_warning "Module '$name' exists; will overwrite (--overwrite)"
+            continue
+        fi
+
+        if check_tty_available; then
+            if confirm "Module '$name' already exists. Overwrite?" "n"; then
+                OVERWRITE_ALL=true
+                print_info "Overwriting module '$name' on user confirmation"
+            else
+                print_info "Skipped: $name"
+                exit 0
+            fi
+        else
+            print_error "Module '$name' exists. Re-run with --overwrite to replace."
+            exit 1
+        fi
+    done
+}
+
 # Reduce AVAILABLE_SERVICES to only the services that are NOT yet defined in
 # the existing docker-compose.yml (FR-10). Service names in compose follow
 # the `<project>-<service>` convention, so we strip the project prefix when
@@ -1190,6 +1235,12 @@ main() {
     # MONOREPO_MODE, IS_ADD_MODULE_MODE, MODULES, and SELECTED_LANGUAGES.
     # Single mode (the only mode in pre-#263 setup.sh) is the no-op default.
     resolve_setup_mode
+
+    # In add-module mode, check for module-name collisions before doing any
+    # work so the user can decline without partial writes (FR-9).
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        check_add_module_conflict
+    fi
 
     # Select language if not specified (single-mode only — monorepo derives
     # SELECTED_LANGUAGES from MODULES inside resolve_setup_mode).
@@ -1293,6 +1344,20 @@ main() {
     # Execute post-copy processing
     print_section "Post-Processing"
     execute_plugin_post_copies "$TARGET_DIR"
+
+    # Monorepo registry maintenance (#263). Decoupled from the plugin
+    # pipeline so that add-module mode (which skips core plugin) still
+    # writes modules.json + per-module CLAUDE.md.
+    if [[ "$MONOREPO_MODE" == true ]] || [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        print_info "Updating monorepo registry..."
+        # Source core plugin once to expose the registry helpers — cheap and
+        # avoids duplicating the implementation in setup.sh itself.
+        unset_plugin_functions
+        source "${TEMPLATES_DIR}/core/plugin.sh"
+        core_seed_modules_json "$TARGET_DIR"
+        core_write_per_module_claude_md "$TARGET_DIR"
+        unset_plugin_functions
+    fi
 
     # Replace placeholders
     replace_placeholders "$TARGET_DIR" "$PROJECT_NAME"

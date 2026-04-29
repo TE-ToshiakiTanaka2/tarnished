@@ -72,23 +72,19 @@ plugin_post_copy() {
         chmod +x "${target_dir}/.devcontainer/scripts/post.sh"
         print_success "Made post.sh executable"
     fi
-
-    # Monorepo bookkeeping (#263)
-    if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
-        _core_seed_modules_json "$target_dir"
-        _core_write_per_module_claude_md "$target_dir"
-    fi
 }
 
-# -----------------------------------------------------------------------------
-# Internal helpers (#263)
-# -----------------------------------------------------------------------------
+# Monorepo registry helpers (#263). Invoked directly by setup.sh after the
+# orchestrator finishes, NOT through the plugin_post_copy hook — this keeps
+# the registry-maintenance logic decoupled from the plugin pipeline so
+# add-module mode can skip the entire core plugin without losing the
+# modules.json update.
 
 # Seed modules.json from the template if missing, then add or replace each
 # MODULES entry in turn. Replace path is taken when the module already
-# exists — by which point the orchestrator has already prompted/honored
-# the overwrite decision (FR-9).
-_core_seed_modules_json() {
+# exists — by which point setup.sh::check_add_module_conflict has already
+# prompted/honored the overwrite decision (FR-9).
+core_seed_modules_json() {
     local target_dir="$1"
 
     if [[ ! -f "${target_dir}/modules.json" ]]; then
@@ -97,7 +93,7 @@ _core_seed_modules_json() {
             cp "$template" "${target_dir}/modules.json"
             print_success "Seeded modules.json"
         else
-            # Fallback: minimal inline template if file missing.
+            # Fallback: minimal inline template if the file is missing.
             echo '{"version": 1, "modules": []}' > "${target_dir}/modules.json"
             print_warning "modules.json.template missing; wrote inline default"
         fi
@@ -126,7 +122,7 @@ _core_seed_modules_json() {
 # Write a CLAUDE.md stub for each module, substituting MODULE_NAME,
 # MODULE_LANGUAGE, and PROJECT_NAME placeholders. Existing files are
 # preserved unless --overwrite is set.
-_core_write_per_module_claude_md() {
+core_write_per_module_claude_md() {
     local target_dir="$1"
     local template="${PLUGIN_DIR}/module.CLAUDE.md.template"
 
