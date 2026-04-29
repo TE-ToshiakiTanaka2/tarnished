@@ -133,10 +133,14 @@ EOF
 
     local gitignore="${target_dir}/.gitignore"
     if [[ -f "$gitignore" ]]; then
-        if ! grep -q "^\.codex/config\.local\.toml$" "$gitignore" 2>/dev/null; then
-            echo "" >> "$gitignore"
-            echo "# Codex CLI local settings (personal preferences, API keys)" >> "$gitignore"
-            echo ".codex/config.local.toml" >> "$gitignore"
+        # Block 4: Codex CLI whitelist — ignore .codex/* and allow shared config only
+        if ! grep -q "^# Codex CLI (track shared config only)$" "$gitignore" 2>/dev/null; then
+            {
+                echo ""
+                echo "# Codex CLI (track shared config only)"
+                echo ".codex/*"
+                echo "!.codex/config.toml"
+            } >> "$gitignore"
         fi
     fi
 }
