@@ -774,15 +774,18 @@ read_modules_json() {
 
 # Atomically rewrite modules.json by passing the current contents through a
 # jq filter and replacing the file. Uses tmp + mv so a SIGINT mid-write
-# leaves the original intact.
-# Usage: write_modules_json <target_dir> <jq_filter>
+# leaves the original intact. Extra arguments (e.g. `--arg`, `--argjson`)
+# are forwarded to jq for safe value injection (Suggestion #7 from #263
+# review).
+# Usage: write_modules_json <target_dir> <jq_filter> [<extra_jq_args>...]
 write_modules_json() {
     local target_dir="$1"
     local jq_filter="$2"
+    shift 2
     local file="${target_dir}/modules.json"
     local tmp="${file}.tmp"
 
-    if ! jq "$jq_filter" "$file" > "$tmp"; then
+    if ! jq "$@" "$jq_filter" "$file" > "$tmp"; then
         print_error "Failed to apply jq filter to modules.json"
         rm -f "$tmp"
         return 1
@@ -859,10 +862,14 @@ add_module_entry() {
     fi
 
     write_modules_json "$target_dir" \
-        ".modules += [{name: \"$name\", path: \"$name\", language: \"$lang\", services: $services_json}]"
+        '.modules += [{name: $name, path: $name, language: $lang, services: $svcs}]' \
+        --arg name "$name" --arg lang "$lang" --argjson svcs "$services_json"
 }
 
-# Replace an existing module entry in-place (overwrite path).
+# Replace an existing module entry in-place. Updates only the known fields
+# (`path`, `language`, `services`) so any forward-compatible per-module
+# keys the user may have added (e.g. `commands`, `version_file`) are
+# preserved across the rewrite (Warning #6 from #263 review).
 # Usage: replace_module_entry <target_dir> <name> <lang> [<services_csv>]
 # Returns: 0 on success, 1 on error.
 replace_module_entry() {
@@ -876,8 +883,11 @@ replace_module_entry() {
         services_json=$(printf '%s' "$services_csv" | jq -R 'split(",") | map(select(length > 0))')
     fi
 
+    # `. + {…}` merges the right-hand object onto the existing entry,
+    # overwriting only the listed keys. Unknown keys in `.` are kept.
     write_modules_json "$target_dir" \
-        ".modules |= map(if .name == \"$name\" then {name: \"$name\", path: \"$name\", language: \"$lang\", services: $services_json} else . end)"
+        '.modules |= map(if .name == $name then . + {path: $name, language: $lang, services: $svcs} else . end)' \
+        --arg name "$name" --arg lang "$lang" --argjson svcs "$services_json"
 }
 
 # List the docker-compose service ids currently defined in the target's
