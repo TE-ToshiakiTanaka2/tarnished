@@ -514,7 +514,7 @@ load_selected_plugins() {
 
 # Unset plugin functions to prevent carryover between plugins
 unset_plugin_functions() {
-    unset -f plugin_name plugin_description plugin_copy plugin_post_copy plugin_interactive_setup plugin_dockerfile 2>/dev/null || true
+    unset -f plugin_name plugin_description plugin_copy plugin_post_copy plugin_interactive_setup plugin_dockerfile plugin_post_copy_shared plugin_post_copy_module 2>/dev/null || true
 }
 
 # Execute plugin_copy for all loaded plugins
@@ -564,9 +564,23 @@ execute_plugin_dockerfiles() {
     unset_plugin_functions
 }
 
-# Execute plugin_post_copy for all loaded plugins
+# Execute plugin_post_copy for all loaded plugins.
+#
+# Dispatch (#263):
+#   - Single mode (MONOREPO_MODE=false): call plugin_post_copy(root) for every
+#     plugin. Identical to pre-#263 behavior.
+#   - Monorepo / add-module mode (MONOREPO_MODE=true || IS_ADD_MODULE_MODE=true):
+#     for language plugins (path under templates/languages/) that expose
+#     plugin_post_copy_module, call plugin_post_copy_shared(root) once and
+#     plugin_post_copy_module(root/<module>, <module>) for each module whose
+#     language matches this plugin. Non-language plugins (and language plugins
+#     missing the new hook) fall back to plugin_post_copy(root).
 execute_plugin_post_copies() {
     local target_dir="$1"
+    local monorepo_dispatch=false
+    if [[ "$MONOREPO_MODE" == true ]] || [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        monorepo_dispatch=true
+    fi
 
     for plugin_path in "${LOADED_PLUGINS[@]}"; do
         # Unset previous plugin functions
@@ -581,8 +595,37 @@ execute_plugin_post_copies() {
             plugin_interactive_setup
         fi
 
-        # Execute plugin_post_copy if it exists (after interactive setup)
-        if declare -f plugin_post_copy > /dev/null; then
+        local is_lang=false
+        if [[ "$plugin_path" == */templates/languages/* ]]; then
+            is_lang=true
+        fi
+
+        if [[ "$monorepo_dispatch" == true ]] && [[ "$is_lang" == true ]] \
+            && declare -f plugin_post_copy_module > /dev/null; then
+
+            # Determine this plugin's language id from its parent directory.
+            local plugin_lang
+            plugin_lang="$(basename "$(dirname "$plugin_path")")"
+
+            # Run shared edits once.
+            if declare -f plugin_post_copy_shared > /dev/null; then
+                plugin_post_copy_shared "$target_dir"
+            fi
+
+            # Run per-module edits for every module that uses this language.
+            local entry module_name module_lang
+            for entry in "${MODULES[@]}"; do
+                module_name="${entry%%:*}"
+                module_lang="${entry#*:}"
+                if [[ "$module_lang" != "$plugin_lang" ]]; then
+                    continue
+                fi
+                local module_dir="${target_dir}/${module_name}"
+                mkdir -p "$module_dir"
+                plugin_post_copy_module "$module_dir" "$module_name"
+            done
+        elif declare -f plugin_post_copy > /dev/null; then
+            # Single mode (and non-language / legacy plugins in monorepo mode).
             plugin_post_copy "$target_dir"
         fi
     done
