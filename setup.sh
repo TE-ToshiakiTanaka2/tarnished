@@ -1154,53 +1154,83 @@ check_add_module_conflict() {
     done
 }
 
-# Reduce AVAILABLE_SERVICES to only the services that are NOT yet defined in
-# the existing docker-compose.yml (FR-10). Service names in compose follow
-# the `<project>-<service>` convention, so we strip the project prefix when
-# matching against the AVAILABLE_SERVICES ids (postgresql/mysql/redis/celery).
+# Reduce both the interactive AVAILABLE_SERVICES list and the CLI-flag-set
+# SELECTED_SERVICES list to only those services that would NOT collide with
+# something already defined in the existing docker-compose.yml (FR-10,
+# Critical #3 from #263 review).
+#
+# We compute "would collide" by reading the candidate overlay's own service
+# keys and substituting {{PROJECT_NAME}}, then checking against the target's
+# current top-level service list. This is more accurate than hardcoded
+# suffix tables — postgresql and mysql both produce `<project>-db`, celery
+# produces both `-celery-worker` and `-celery-beat`, etc.
 filter_available_services_for_add_module() {
-    local target_dir existing_services existing_ids svc_id existing
+    local target_dir svc_id
     target_dir="$(pwd)"
 
     if [[ ! -f "${target_dir}/docker-compose.yml" ]]; then
         return 0
     fi
 
-    existing_services=$(list_existing_compose_services "$target_dir")
-
-    # Map compose service names back to AVAILABLE_SERVICES ids.
-    # Single source of truth for the mapping:
-    #   postgresql -> ${PROJECT_NAME}-db
-    #   mysql      -> ${PROJECT_NAME}-mysql
-    #   redis      -> ${PROJECT_NAME}-redis
-    #   celery     -> ${PROJECT_NAME}-celery (worker), -beat
-    declare -A id_to_compose=(
-        [postgresql]="-db"
-        [mysql]="-mysql"
-        [redis]="-redis"
-        [celery]="-celery"
-    )
-
-    declare -a remaining=()
+    # Filter interactive offer list.
+    local -a remaining=()
     for svc_id in "${AVAILABLE_SERVICES[@]}"; do
-        local already_present=false
-        local suffix="${id_to_compose[$svc_id]:-}"
-        if [[ -n "$suffix" ]]; then
-            for existing in $existing_services; do
-                if [[ "$existing" == *"$suffix" ]]; then
-                    already_present=true
-                    break
-                fi
-            done
-        fi
-        if [[ "$already_present" == false ]]; then
-            remaining+=("$svc_id")
+        if service_overlay_collides_with_target "$svc_id" "$target_dir"; then
+            print_info "Service '$svc_id' would collide with existing compose service; will not offer."
         else
-            print_info "Service '$svc_id' already configured; will not offer."
+            remaining+=("$svc_id")
         fi
     done
-
     AVAILABLE_SERVICES=("${remaining[@]}")
+
+    # Scrub the CLI-flag-populated SELECTED_SERVICES list too — without this,
+    # `--add-module foo --lang python --postgresql` against a project that
+    # already has postgres would re-run the postgres plugin and append
+    # duplicate compose services / depends_on / env vars.
+    local -a selected_remaining=()
+    for svc_id in "${SELECTED_SERVICES[@]}"; do
+        if service_overlay_collides_with_target "$svc_id" "$target_dir"; then
+            print_warning "Service '$svc_id' (from CLI flag) would collide with existing compose service; skipping."
+        else
+            selected_remaining+=("$svc_id")
+        fi
+    done
+    SELECTED_SERVICES=("${selected_remaining[@]}")
+}
+
+# Check whether the candidate service plugin's compose overlay would
+# introduce a service key that already exists in the target compose file.
+# Returns 0 (collision) / 1 (no collision).
+service_overlay_collides_with_target() {
+    local svc_id="$1"
+    local target_dir="$2"
+    local overlay="${TEMPLATES_DIR}/services/${svc_id}/docker-compose.${svc_id}.yml"
+
+    [[ -f "$overlay" ]] || return 1
+
+    local existing_services overlay_services
+    existing_services=$(list_existing_compose_services "$target_dir")
+
+    # Substitute {{PROJECT_NAME}} FIRST so the resulting service keys match
+    # the same `^  [a-zA-Z]...` shape as list_existing_compose_services
+    # (raw overlay keys start with `{`, so awk needs the substituted form).
+    overlay_services=$(sed "s|{{PROJECT_NAME}}|${PROJECT_NAME}|g" "$overlay" | awk '
+        /^services:[[:space:]]*$/ { in_services = 1; next }
+        /^[a-zA-Z]/ && !/^[[:space:]]/ { in_services = 0 }
+        in_services && /^  [a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
+            sub(/^  /, ""); sub(/:[[:space:]]*$/, ""); print
+        }
+    ')
+
+    local svc existing
+    for svc in $overlay_services; do
+        for existing in $existing_services; do
+            if [[ "$svc" == "$existing" ]]; then
+                return 0
+            fi
+        done
+    done
+    return 1
 }
 
 # =============================================================================
