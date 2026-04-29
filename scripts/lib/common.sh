@@ -422,11 +422,43 @@ update_gitignore() {
         touch "$gitignore_file"
     fi
 
-    # Add Claude Code settings.local.json if not already present
-    if ! grep -q "^\.claude/settings\.local\.json$" "$gitignore_file" 2>/dev/null; then
+    # Normalize trailing newline so block separators land on their own line
+    if [[ -s "$gitignore_file" ]] && [[ -n "$(tail -c1 "$gitignore_file")" ]]; then
         echo "" >> "$gitignore_file"
-        echo "# Claude Code local settings (personal preferences)" >> "$gitignore_file"
-        echo ".claude/settings.local.json" >> "$gitignore_file"
+    fi
+
+    # Block 1: Claude Code whitelist — ignore .claude/* and allow project-tracked subdirs/files
+    if ! grep -q "^# Claude Code (track project configs only)$" "$gitignore_file" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Claude Code (track project configs only)"
+            echo ".claude/*"
+            echo "!.claude/commands/"
+            echo "!.claude/skills/"
+            echo "!.claude/scripts/"
+            echo "!.claude/agents/"
+            echo "!.claude/rules/"
+            echo "!.claude/hooks/"
+            echo "!.claude/settings.json"
+        } >> "$gitignore_file"
+    fi
+
+    # Block 2: Serena MCP working files
+    if ! grep -q "^# Serena MCP working files$" "$gitignore_file" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Serena MCP working files"
+            echo ".serena/"
+        } >> "$gitignore_file"
+    fi
+
+    # Block 3: Local screenshots (manual UI testing)
+    if ! grep -q "^# Local screenshots (manual UI testing)$" "$gitignore_file" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Local screenshots (manual UI testing)"
+            echo "screenshots/"
+        } >> "$gitignore_file"
     fi
 
     print_success ".gitignore updated"
