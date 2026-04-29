@@ -23,6 +23,54 @@ curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develo
 
 Then open the folder in VS Code and click "Reopen in Container" when prompted.
 
+### Monorepo support
+
+`setup.sh` also supports monorepo layouts where multiple sub-projects live in
+one repository, each with its own language scaffold but sharing the
+`.devcontainer/`, `.claude/`, and `docker-compose.yml` at the root. A central
+`modules.json` registry tracks the modules.
+
+```bash
+# One-shot interactive monorepo init
+mkdir my-monorepo && cd my-monorepo
+curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash
+# Answer "y" to the "Monorepo configuration?" prompt, then enter modules in
+# the dialogue loop. Empty module name finishes.
+
+# Or non-interactively
+curl -fsSL .../setup.sh | bash -s -- \
+  --monorepo \
+  --module backend:python \
+  --module frontend:node \
+  --postgresql -y
+
+# Add a module to an existing monorepo (auto-detected via modules.json,
+# or explicit via --add-module):
+curl -fsSL .../setup.sh | bash -s -- --add-module worker --lang python -y
+```
+
+Resulting layout:
+
+```
+my-monorepo/
+├── .devcontainer/        # shared (one devcontainer for the whole monorepo)
+├── .claude/              # shared
+├── docker/Dockerfile.dev # shared, union of all module-language toolchains
+├── docker-compose.yml    # shared; service names use <project>-<svc>
+├── CLAUDE.md             # project-wide
+├── modules.json          # registry: { "version": 1, "modules": [...] }
+├── backend/              # module — own pyproject.toml, src/backend/, tests/
+│   └── CLAUDE.md
+└── frontend/             # module — own package.json, biome.json, src/, tests/
+    └── CLAUDE.md
+```
+
+Each language plugin's per-module hook generates the language-idiomatic
+scaffold inside the module directory; the shared `.devcontainer/Dockerfile.dev`
+contains the union of every module's language toolchain. Subsequent
+`setup.sh --add-module` invocations are idempotent against the shared root
+files (marker-guarded blocks).
+
 ## Installation
 
 ```bash
