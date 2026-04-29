@@ -22,7 +22,7 @@
 # Get the directory where this plugin is located
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-readonly NODE_POSTSH_MARKER="# >>> node (pnpm) post-create >>>"
+NODE_POSTSH_MARKER="# >>> node (pnpm) post-create >>>"
 
 # =============================================================================
 # Required Functions
@@ -116,15 +116,23 @@ plugin_post_copy_shared() {
         print_success "TypeScript Claude rules copied"
     fi
 
-    # Append Node.js setup commands to post.sh (idempotent via marker, #263).
+    # Append Node.js setup commands to post.sh. Markers + idempotency
+    # check only in monorepo / add-module mode (NFR-1).
     local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
 
     if [[ -f "$target_post_sh" ]]; then
-        if grep -qF "$NODE_POSTSH_MARKER" "$target_post_sh"; then
-            print_info "Node.js post.sh block already present, skipping"
-        else
-            print_info "Adding Node.js setup to post.sh..."
+        local use_marker=false
+        if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+            use_marker=true
+            if grep -qF "$NODE_POSTSH_MARKER" "$target_post_sh"; then
+                print_info "Node.js post.sh block already present, skipping"
+                return
+            fi
+        fi
 
+        print_info "Adding Node.js setup to post.sh..."
+
+        if [[ "$use_marker" == true ]]; then
             cat >> "$target_post_sh" << EOF
 
 ${NODE_POSTSH_MARKER}
@@ -153,9 +161,37 @@ if command -v node &> /dev/null; then
 fi
 # <<< node (pnpm) post-create <<<
 EOF
+        else
+            # Pre-#263 single-mode block (no markers).
+            cat >> "$target_post_sh" << 'EOF'
 
-            print_success "Node.js setup added to post.sh"
+# -----------------------------------------------------------------------------
+# Node.js Development Environment Setup
+# -----------------------------------------------------------------------------
+if command -v node &> /dev/null; then
+    echo "Setting up Node.js development environment..."
+
+    # Install pnpm if not available
+    if ! command -v pnpm &> /dev/null; then
+        echo "  - Installing pnpm..."
+        corepack enable
+        corepack prepare pnpm@latest --activate
+    fi
+
+    # Install dependencies if package.json exists
+    if [[ -f "package.json" ]]; then
+        echo "  - Installing dependencies with pnpm..."
+        pnpm install
+    fi
+
+    echo "Node.js development environment ready."
+    echo "  - Node.js: $(node --version)"
+    echo "  - pnpm: $(pnpm --version)"
+fi
+EOF
         fi
+
+        print_success "Node.js setup added to post.sh"
     fi
 }
 

@@ -23,8 +23,8 @@
 # Get the directory where this plugin is located
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-readonly LATEX_DOCKERFILE_MARKER="# >>> latex (texlive) toolchain >>>"
-readonly LATEX_POSTSH_MARKER="# >>> latex post-create >>>"
+LATEX_DOCKERFILE_MARKER="# >>> latex (texlive) toolchain >>>"
+LATEX_POSTSH_MARKER="# >>> latex post-create >>>"
 
 # =============================================================================
 # Required Functions
@@ -105,8 +105,9 @@ plugin_copy() {
     fi
 }
 
-# Append TeX Live packages and ENV variables to Dockerfile.dev
-# (idempotent via marker, #263).
+# Append TeX Live packages and ENV variables to Dockerfile.dev. Markers +
+# idempotency check only in monorepo / add-module mode (NFR-1 keeps
+# single-mode output byte-identical to pre-#263).
 plugin_dockerfile() {
     local target_dir="$1"
     local dockerfile="${target_dir}/docker/Dockerfile.dev"
@@ -116,35 +117,58 @@ plugin_dockerfile() {
         return
     fi
 
-    if grep -qF "$LATEX_DOCKERFILE_MARKER" "$dockerfile"; then
-        print_info "LaTeX toolchain block already present in Dockerfile, skipping"
-        return
+    local use_marker=false
+    if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+        use_marker=true
+        if grep -qF "$LATEX_DOCKERFILE_MARKER" "$dockerfile"; then
+            print_info "LaTeX toolchain block already present in Dockerfile, skipping"
+            return
+        fi
     fi
 
     print_info "Adding TeX Live packages to Dockerfile..."
 
     local temp_file="${dockerfile}.tmp"
 
-    # Insert TeX Live installation and ENV block before SHELL line.
-    awk -v marker_open="$LATEX_DOCKERFILE_MARKER" \
-        -v marker_close="# <<< latex (texlive) toolchain <<<" '
-    /^SHELL / && !inserted {
-        print ""
-        print marker_open
-        print "# TeX Live environment"
-        print "RUN apt-get update && apt-get install -y --no-install-recommends \\"
-        print "    texlive-full \\"
-        print "    && rm -rf /var/lib/apt/lists/*"
-        print ""
-        print "# LaTeX environment configuration"
-        print "ENV TEXINPUTS='"'"'.//;'"'"'"
-        print "ENV BIBINPUTS='"'"'.//;'"'"'"
-        print marker_close
-        print ""
-        inserted=1
-    }
-    { print }
-    ' "$dockerfile" > "$temp_file"
+    if [[ "$use_marker" == true ]]; then
+        awk -v marker_open="$LATEX_DOCKERFILE_MARKER" \
+            -v marker_close="# <<< latex (texlive) toolchain <<<" '
+        /^SHELL / && !inserted {
+            print ""
+            print marker_open
+            print "# TeX Live environment"
+            print "RUN apt-get update && apt-get install -y --no-install-recommends \\"
+            print "    texlive-full \\"
+            print "    && rm -rf /var/lib/apt/lists/*"
+            print ""
+            print "# LaTeX environment configuration"
+            print "ENV TEXINPUTS='"'"'.//;'"'"'"
+            print "ENV BIBINPUTS='"'"'.//;'"'"'"
+            print marker_close
+            print ""
+            inserted=1
+        }
+        { print }
+        ' "$dockerfile" > "$temp_file"
+    else
+        # Pre-#263 single-mode insertion (no markers).
+        awk '
+        /^SHELL / && !inserted {
+            print ""
+            print "# TeX Live environment"
+            print "RUN apt-get update && apt-get install -y --no-install-recommends \\"
+            print "    texlive-full \\"
+            print "    && rm -rf /var/lib/apt/lists/*"
+            print ""
+            print "# LaTeX environment configuration"
+            print "ENV TEXINPUTS='"'"'.//;'"'"'"
+            print "ENV BIBINPUTS='"'"'.//;'"'"'"
+            print ""
+            inserted=1
+        }
+        { print }
+        ' "$dockerfile" > "$temp_file"
+    fi
 
     mv "$temp_file" "$dockerfile"
     print_success "TeX Live packages and environment variables added to Dockerfile"
@@ -230,15 +254,23 @@ plugin_post_copy_shared() {
         fi
     fi
 
-    # Append LaTeX setup to post.sh (idempotent via marker, #263).
+    # Append LaTeX setup to post.sh. Markers + idempotency check only in
+    # monorepo / add-module mode (NFR-1).
     local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
 
     if [[ -f "$target_post_sh" ]]; then
-        if grep -qF "$LATEX_POSTSH_MARKER" "$target_post_sh"; then
-            print_info "LaTeX post.sh block already present, skipping"
-        else
-            print_info "Adding LaTeX setup to post.sh..."
+        local use_marker=false
+        if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+            use_marker=true
+            if grep -qF "$LATEX_POSTSH_MARKER" "$target_post_sh"; then
+                print_info "LaTeX post.sh block already present, skipping"
+                return
+            fi
+        fi
 
+        print_info "Adding LaTeX setup to post.sh..."
+
+        if [[ "$use_marker" == true ]]; then
             cat >> "$target_post_sh" << EOF
 
 ${LATEX_POSTSH_MARKER}
@@ -256,9 +288,26 @@ else
 fi
 # <<< latex post-create <<<
 EOF
+        else
+            # Pre-#263 single-mode block (no markers).
+            cat >> "$target_post_sh" << 'EOF'
 
-            print_success "LaTeX setup added to post.sh"
+# -----------------------------------------------------------------------------
+# LaTeX Development Environment Setup
+# -----------------------------------------------------------------------------
+if command -v latexmk &> /dev/null; then
+    echo "LaTeX development environment detected."
+    echo "  - TeX distribution: $(latex --version | head -1)"
+    echo "  - latexmk: $(latexmk --version | head -1)"
+    echo "  - Build: latexmk index.tex (in paper directory)"
+    echo "  - Or use Ctrl+Alt+B in VS Code with LaTeX Workshop"
+else
+    echo "Warning: latexmk not found. TeX Live may not be installed correctly."
+fi
+EOF
         fi
+
+        print_success "LaTeX setup added to post.sh"
     fi
 }
 

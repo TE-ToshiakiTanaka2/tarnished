@@ -20,7 +20,7 @@
 # Get the directory where this plugin is located
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-readonly DENO_POSTSH_MARKER="# >>> deno post-create >>>"
+DENO_POSTSH_MARKER="# >>> deno post-create >>>"
 
 # =============================================================================
 # Required Functions
@@ -114,15 +114,23 @@ plugin_post_copy_shared() {
         print_success "Deno Claude rules copied"
     fi
 
-    # Append Deno setup commands to post.sh (idempotent via marker, #263).
+    # Append Deno setup commands to post.sh. Markers + idempotency check
+    # only in monorepo / add-module mode (NFR-1).
     local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
 
     if [[ -f "$target_post_sh" ]]; then
-        if grep -qF "$DENO_POSTSH_MARKER" "$target_post_sh"; then
-            print_info "Deno post.sh block already present, skipping"
-        else
-            print_info "Adding Deno setup to post.sh..."
+        local use_marker=false
+        if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+            use_marker=true
+            if grep -qF "$DENO_POSTSH_MARKER" "$target_post_sh"; then
+                print_info "Deno post.sh block already present, skipping"
+                return
+            fi
+        fi
 
+        print_info "Adding Deno setup to post.sh..."
+
+        if [[ "$use_marker" == true ]]; then
             cat >> "$target_post_sh" << EOF
 
 ${DENO_POSTSH_MARKER}
@@ -143,9 +151,29 @@ if command -v deno &> /dev/null; then
 fi
 # <<< deno post-create <<<
 EOF
+        else
+            # Pre-#263 single-mode block (no markers).
+            cat >> "$target_post_sh" << 'EOF'
 
-            print_success "Deno setup added to post.sh"
+# -----------------------------------------------------------------------------
+# Deno Development Environment Setup
+# -----------------------------------------------------------------------------
+if command -v deno &> /dev/null; then
+    echo "Setting up Deno development environment..."
+
+    # Cache dependencies if deno.json exists
+    if [[ -f "deno.json" ]]; then
+        echo "  - Caching dependencies..."
+        deno install
+    fi
+
+    echo "Deno development environment ready."
+    echo "  - Deno: $(deno --version | head -1)"
+fi
+EOF
         fi
+
+        print_success "Deno setup added to post.sh"
     fi
 }
 

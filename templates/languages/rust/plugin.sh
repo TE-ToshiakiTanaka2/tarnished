@@ -21,7 +21,7 @@
 # Get the directory where this plugin is located
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-readonly RUST_POSTSH_MARKER="# >>> rust (cargo) post-create >>>"
+RUST_POSTSH_MARKER="# >>> rust (cargo) post-create >>>"
 
 # =============================================================================
 # Required Functions
@@ -115,15 +115,23 @@ plugin_post_copy_shared() {
         print_success "Rust Claude rules copied"
     fi
 
-    # Append Rust setup commands to post.sh (idempotent via marker, #263).
+    # Append Rust setup commands to post.sh. Markers + idempotency check
+    # only in monorepo / add-module mode (NFR-1 keeps single-mode bytes).
     local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
 
     if [[ -f "$target_post_sh" ]]; then
-        if grep -qF "$RUST_POSTSH_MARKER" "$target_post_sh"; then
-            print_info "Rust post.sh block already present, skipping"
-        else
-            print_info "Adding Rust setup to post.sh..."
+        local use_marker=false
+        if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+            use_marker=true
+            if grep -qF "$RUST_POSTSH_MARKER" "$target_post_sh"; then
+                print_info "Rust post.sh block already present, skipping"
+                return
+            fi
+        fi
 
+        print_info "Adding Rust setup to post.sh..."
+
+        if [[ "$use_marker" == true ]]; then
             cat >> "$target_post_sh" << EOF
 
 ${RUST_POSTSH_MARKER}
@@ -149,9 +157,34 @@ if command -v cargo &> /dev/null; then
 fi
 # <<< rust (cargo) post-create <<<
 EOF
+        else
+            # Pre-#263 single-mode block (no markers).
+            cat >> "$target_post_sh" << 'EOF'
 
-            print_success "Rust setup added to post.sh"
+# -----------------------------------------------------------------------------
+# Rust Development Tools Setup
+# -----------------------------------------------------------------------------
+if command -v cargo &> /dev/null; then
+    echo "Installing Rust development tools..."
+
+    # Install cargo-watch for auto-rebuild on file changes
+    if ! command -v cargo-watch &> /dev/null; then
+        echo "  - Installing cargo-watch..."
+        cargo install --locked cargo-watch
+    fi
+
+    # Install cargo-edit for easy dependency management (cargo add/rm)
+    if ! cargo add --version &> /dev/null 2>&1; then
+        echo "  - Installing cargo-edit..."
+        cargo install --locked cargo-edit
+    fi
+
+    echo "Rust development tools installed."
+fi
+EOF
         fi
+
+        print_success "Rust setup added to post.sh"
     fi
 }
 

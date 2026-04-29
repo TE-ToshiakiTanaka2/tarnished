@@ -22,9 +22,11 @@
 # Get the directory where this plugin is located
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Marker for the Python toolchain block in Dockerfile.dev (#263 idempotency).
-readonly PYTHON_DOCKERFILE_MARKER="# >>> python (uv) toolchain >>>"
-readonly PYTHON_POSTSH_MARKER="# >>> python (uv) post-create >>>"
+# Markers for idempotent inserts (#263). Plain assignments because plugins
+# may be sourced multiple times by setup.sh — `readonly` would fail on
+# the second source.
+PYTHON_DOCKERFILE_MARKER="# >>> python (uv) toolchain >>>"
+PYTHON_POSTSH_MARKER="# >>> python (uv) post-create >>>"
 
 # =============================================================================
 # Required Functions
@@ -76,7 +78,10 @@ plugin_copy() {
     fi
 }
 
-# Append Python/uv ENV variables to Dockerfile.dev (idempotent via marker, #263).
+# Append Python/uv ENV variables to Dockerfile.dev. In monorepo / add-module
+# mode the inserted block is wrapped with marker comments so re-runs are
+# idempotent (#263). In single mode the legacy unmarkered insertion is
+# preserved verbatim so output stays byte-identical to pre-#263 (NFR-1).
 plugin_dockerfile() {
     local target_dir="$1"
     local dockerfile="${target_dir}/docker/Dockerfile.dev"
@@ -86,39 +91,26 @@ plugin_dockerfile() {
         return
     fi
 
-    # Idempotency: skip if the marker block is already present.
-    if grep -qF "$PYTHON_DOCKERFILE_MARKER" "$dockerfile"; then
-        print_info "Python toolchain block already present in Dockerfile, skipping"
-        return
+    local use_marker=false
+    if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+        use_marker=true
+        if grep -qF "$PYTHON_DOCKERFILE_MARKER" "$dockerfile"; then
+            print_info "Python toolchain block already present in Dockerfile, skipping"
+            return
+        fi
     fi
 
     print_info "Adding Python/uv environment variables to Dockerfile..."
 
     local temp_file="${dockerfile}.tmp"
 
-    # Insert ENV block before SHELL line (or fall back to file end).
-    awk -v marker_open="$PYTHON_DOCKERFILE_MARKER" \
-        -v marker_close="# <<< python (uv) toolchain <<<" '
-    /^SHELL / && !inserted {
-        print ""
-        print marker_open
-        print "# Python/uv environment configuration"
-        print "ENV PYTHONDONTWRITEBYTECODE=1"
-        print "ENV PYTHONUNBUFFERED=1"
-        print "ENV UV_HOME=\"/opt/uv\""
-        print "ENV PATH=\"$UV_HOME/bin:$PATH\""
-        print "ENV UV_COMPILE_BYTECODE=1"
-        print "ENV UV_LINK_MODE=copy"
-        print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
-        print marker_close
-        print ""
-        inserted=1
-    }
-    { print }
-    END {
-        if (!inserted) {
+    if [[ "$use_marker" == true ]]; then
+        awk -v marker_open="$PYTHON_DOCKERFILE_MARKER" \
+            -v marker_close="# <<< python (uv) toolchain <<<" '
+        /^SHELL / && !inserted {
             print ""
             print marker_open
+            print "# Python/uv environment configuration"
             print "ENV PYTHONDONTWRITEBYTECODE=1"
             print "ENV PYTHONUNBUFFERED=1"
             print "ENV UV_HOME=\"/opt/uv\""
@@ -127,9 +119,44 @@ plugin_dockerfile() {
             print "ENV UV_LINK_MODE=copy"
             print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
             print marker_close
+            print ""
+            inserted=1
         }
-    }
-    ' "$dockerfile" > "$temp_file"
+        { print }
+        END {
+            if (!inserted) {
+                print ""
+                print marker_open
+                print "ENV PYTHONDONTWRITEBYTECODE=1"
+                print "ENV PYTHONUNBUFFERED=1"
+                print "ENV UV_HOME=\"/opt/uv\""
+                print "ENV PATH=\"$UV_HOME/bin:$PATH\""
+                print "ENV UV_COMPILE_BYTECODE=1"
+                print "ENV UV_LINK_MODE=copy"
+                print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
+                print marker_close
+            }
+        }
+        ' "$dockerfile" > "$temp_file"
+    else
+        # Pre-#263 single-mode insertion (no markers) — preserves NFR-1.
+        awk '
+        /^SHELL / && !inserted {
+            print ""
+            print "# Python/uv environment configuration"
+            print "ENV PYTHONDONTWRITEBYTECODE=1"
+            print "ENV PYTHONUNBUFFERED=1"
+            print "ENV UV_HOME=\"/opt/uv\""
+            print "ENV PATH=\"$UV_HOME/bin:$PATH\""
+            print "ENV UV_COMPILE_BYTECODE=1"
+            print "ENV UV_LINK_MODE=copy"
+            print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
+            print ""
+            inserted=1
+        }
+        { print }
+        ' "$dockerfile" > "$temp_file"
+    fi
 
     mv "$temp_file" "$dockerfile"
     print_success "Python/uv environment variables added to Dockerfile"
@@ -181,15 +208,24 @@ plugin_post_copy_shared() {
         print_success "Python Claude rules copied"
     fi
 
-    # Append Python setup block to post.sh (idempotent via marker, #263).
+    # Append Python setup block to post.sh. Markers + idempotency check
+    # only apply in monorepo / add-module mode (NFR-1 keeps single-mode
+    # output byte-identical to pre-#263).
     local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
 
     if [[ -f "$target_post_sh" ]]; then
-        if grep -qF "$PYTHON_POSTSH_MARKER" "$target_post_sh"; then
-            print_info "Python post.sh block already present, skipping"
-        else
-            print_info "Adding Python setup to post.sh..."
+        local use_marker=false
+        if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+            use_marker=true
+            if grep -qF "$PYTHON_POSTSH_MARKER" "$target_post_sh"; then
+                print_info "Python post.sh block already present, skipping"
+                return
+            fi
+        fi
 
+        print_info "Adding Python setup to post.sh..."
+
+        if [[ "$use_marker" == true ]]; then
             cat >> "$target_post_sh" << EOF
 
 ${PYTHON_POSTSH_MARKER}
@@ -215,9 +251,37 @@ if command -v uv &> /dev/null; then
 fi
 # <<< python (uv) post-create <<<
 EOF
+        else
+            # Pre-#263 single-mode block (no markers, no .venv guard) —
+            # preserves byte-identical output for NFR-1.
+            cat >> "$target_post_sh" << 'EOF'
 
-            print_success "Python setup added to post.sh"
+# -----------------------------------------------------------------------------
+# Python Development Environment Setup
+# -----------------------------------------------------------------------------
+if command -v uv &> /dev/null; then
+    echo "Setting up Python development environment..."
+
+    # Create virtual environment if it doesn't exist
+    if [[ ! -d ".venv" ]]; then
+        echo "  - Creating virtual environment with uv..."
+        uv venv --prompt {{PROJECT_NAME}}
+    fi
+
+    # Install dependencies if pyproject.toml exists
+    if [[ -f "pyproject.toml" ]]; then
+        echo "  - Installing dependencies..."
+        uv pip install -e ".[dev]"
+    fi
+
+    echo "Python development environment ready."
+    echo "  - Virtual environment: .venv"
+    echo "  - Activate: source .venv/bin/activate"
+fi
+EOF
         fi
+
+        print_success "Python setup added to post.sh"
     fi
 }
 
