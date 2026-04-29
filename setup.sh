@@ -928,6 +928,183 @@ validate_language() {
 }
 
 # =============================================================================
+# Mode Resolution (#263)
+# =============================================================================
+
+# Resolve the operating mode based on flags, the pre-existing state of the
+# CWD, and (when interactive) user choice. After this returns, exactly one
+# of three states holds:
+#
+#   1. Single mode:    MONOREPO_MODE=false, IS_ADD_MODULE_MODE=false
+#   2. Monorepo init:  MONOREPO_MODE=true,  IS_ADD_MODULE_MODE=false, MODULES non-empty
+#   3. Add-module:     IS_ADD_MODULE_MODE=true, MODULES has exactly 1 entry
+#
+# In modes 2 and 3, SELECTED_LANGUAGES is populated from MODULES so the
+# downstream language-selection prompt is skipped.
+resolve_setup_mode() {
+    local target_dir
+    target_dir="$(pwd)"
+
+    # --- Add-module path ------------------------------------------------------
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        if ! detect_existing_monorepo "$target_dir"; then
+            print_error "No modules.json found in $target_dir. Run with --monorepo first."
+            exit 1
+        fi
+
+        # Module name validated already; need the language too.
+        if [[ -z "$ADD_MODULE_LANG" ]]; then
+            if check_tty_available; then
+                # Interactive completion of a partial CLI invocation.
+                local lang
+                while true; do
+                    echo -n "Module language for '$ADD_MODULE_NAME' (${AVAILABLE_LANGUAGES[*]}): " > /dev/tty
+                    IFS='' read -r lang < /dev/tty
+                    if validate_language "$lang"; then
+                        ADD_MODULE_LANG="$lang"
+                        break
+                    fi
+                done
+            else
+                print_error "--add-module requires --lang in non-interactive mode"
+                exit 1
+            fi
+        fi
+
+        if ! validate_module_name "$ADD_MODULE_NAME"; then
+            exit 1
+        fi
+
+        MODULES=("${ADD_MODULE_NAME}:${ADD_MODULE_LANG}")
+        SELECTED_LANGUAGES=("$ADD_MODULE_LANG")
+        print_info "Add-module mode: ${ADD_MODULE_NAME} (${ADD_MODULE_LANG})"
+        return 0
+    fi
+
+    # --- Auto-detect existing monorepo (no explicit flag) ---------------------
+    # If the user just ran `./setup.sh` in a directory that already contains
+    # modules.json, offer to add a module rather than re-init from scratch.
+    if [[ "$MONOREPO_MODE" != true ]] && detect_existing_monorepo "$target_dir"; then
+        if check_tty_available; then
+            echo "" > /dev/tty
+            print_info "Existing monorepo detected (modules.json present)."
+            if confirm "Add a new module?" "y"; then
+                IS_ADD_MODULE_MODE=true
+                local entry name lang
+                entry=$(prompt_add_module)
+                name="${entry%%:*}"
+                lang="${entry#*:}"
+                ADD_MODULE_NAME="$name"
+                ADD_MODULE_LANG="$lang"
+                MODULES=("$entry")
+                SELECTED_LANGUAGES=("$lang")
+                print_info "Add-module mode: ${name} (${lang})"
+                return 0
+            fi
+            # User declined; nothing to do.
+            print_info "Nothing to do."
+            exit 0
+        else
+            # Non-interactive run inside an existing monorepo with no flags
+            # is a no-op (avoid accidental re-init in CI).
+            print_info "Existing monorepo detected; no flags given. Use --add-module to add."
+            exit 0
+        fi
+    fi
+
+    # --- Monorepo init path ---------------------------------------------------
+    if [[ "$MONOREPO_MODE" == true ]]; then
+        if [[ ${#MODULES[@]} -eq 0 ]]; then
+            if check_tty_available; then
+                prompt_module_loop
+            else
+                print_error "--monorepo requires --module entries in non-interactive mode"
+                exit 1
+            fi
+        fi
+        derive_selected_languages_from_modules
+        return 0
+    fi
+
+    # --- Default: ask whether to enable monorepo (interactive only) ----------
+    if check_tty_available; then
+        local answer
+        answer=$(prompt_monorepo_mode)
+        if [[ "$answer" == "true" ]]; then
+            MONOREPO_MODE=true
+            prompt_module_loop
+            derive_selected_languages_from_modules
+            return 0
+        fi
+    fi
+
+    # Fall through: single mode (no change).
+}
+
+# Populate SELECTED_LANGUAGES from MODULES (deduplicated, order-preserving).
+derive_selected_languages_from_modules() {
+    local seen entry lang
+    declare -A seen=()
+    SELECTED_LANGUAGES=()
+    for entry in "${MODULES[@]}"; do
+        lang="${entry#*:}"
+        if [[ -z "${seen[$lang]:-}" ]]; then
+            SELECTED_LANGUAGES+=("$lang")
+            seen[$lang]=1
+        fi
+    done
+}
+
+# Reduce AVAILABLE_SERVICES to only the services that are NOT yet defined in
+# the existing docker-compose.yml (FR-10). Service names in compose follow
+# the `<project>-<service>` convention, so we strip the project prefix when
+# matching against the AVAILABLE_SERVICES ids (postgresql/mysql/redis/celery).
+filter_available_services_for_add_module() {
+    local target_dir existing_services existing_ids svc_id existing
+    target_dir="$(pwd)"
+
+    if [[ ! -f "${target_dir}/docker-compose.yml" ]]; then
+        return 0
+    fi
+
+    existing_services=$(list_existing_compose_services "$target_dir")
+
+    # Map compose service names back to AVAILABLE_SERVICES ids.
+    # Single source of truth for the mapping:
+    #   postgresql -> ${PROJECT_NAME}-db
+    #   mysql      -> ${PROJECT_NAME}-mysql
+    #   redis      -> ${PROJECT_NAME}-redis
+    #   celery     -> ${PROJECT_NAME}-celery (worker), -beat
+    declare -A id_to_compose=(
+        [postgresql]="-db"
+        [mysql]="-mysql"
+        [redis]="-redis"
+        [celery]="-celery"
+    )
+
+    declare -a remaining=()
+    for svc_id in "${AVAILABLE_SERVICES[@]}"; do
+        local already_present=false
+        local suffix="${id_to_compose[$svc_id]:-}"
+        if [[ -n "$suffix" ]]; then
+            for existing in $existing_services; do
+                if [[ "$existing" == *"$suffix" ]]; then
+                    already_present=true
+                    break
+                fi
+            done
+        fi
+        if [[ "$already_present" == false ]]; then
+            remaining+=("$svc_id")
+        else
+            print_info "Service '$svc_id' already configured; will not offer."
+        fi
+    done
+
+    AVAILABLE_SERVICES=("${remaining[@]}")
+}
+
+# =============================================================================
 # Main Setup Flow
 # =============================================================================
 
@@ -966,9 +1143,21 @@ main() {
 
     print_info "Project name: $PROJECT_NAME"
 
-    # Select language if not specified
-    if [[ ${#SELECTED_LANGUAGES[@]} -eq 0 ]]; then
+    # Resolve operating mode (single | monorepo init | add-module). Populates
+    # MONOREPO_MODE, IS_ADD_MODULE_MODE, MODULES, and SELECTED_LANGUAGES.
+    # Single mode (the only mode in pre-#263 setup.sh) is the no-op default.
+    resolve_setup_mode
+
+    # Select language if not specified (single-mode only — monorepo derives
+    # SELECTED_LANGUAGES from MODULES inside resolve_setup_mode).
+    if [[ "$MONOREPO_MODE" != true ]] && [[ ${#SELECTED_LANGUAGES[@]} -eq 0 ]]; then
         prompt_language_selection
+    fi
+
+    # In add-module mode, filter the service-selection menu to only the
+    # services not already present in the existing docker-compose.yml.
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        filter_available_services_for_add_module
     fi
 
     # Select services if not specified
@@ -1015,6 +1204,14 @@ main() {
     # Confirm settings
     print_section "Setup Configuration"
     echo "Project name:         $PROJECT_NAME"
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        echo "Mode:                 add-module (${MODULES[0]})"
+    elif [[ "$MONOREPO_MODE" == true ]]; then
+        echo "Mode:                 monorepo init"
+        echo "Modules:              ${MODULES[*]}"
+    else
+        echo "Mode:                 single-project"
+    fi
     echo "Language:             ${SELECTED_LANGUAGES[*]:-none}"
     echo "Services:             ${SELECTED_SERVICES[*]:-none}"
     echo "Codex CLI:            $CODEX_ENABLED"
