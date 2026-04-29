@@ -118,8 +118,22 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `docs/design/shared/*` | New layer for cumulative project truth | #257 |
 | `.claude/commands/erd/*.md` | Internalized SuperClaude front-half skills as `/erd:*` slash commands | #240 |
 | `.gitignore` (downstream-project seed) | Per-file blacklist (`.claude/settings.local.json`, `.codex/config.local.toml`) replaced with marker-guarded whitelist blocks for `.claude/*` and `.codex/*`; always-ignore added for `.serena/` and `screenshots/` | #259 |
+| `.codex/config.toml` (workspace + template) | Workspace gains the file (new); template bumps `model` from `gpt-5.3-codex` → `gpt-5.4` and adds `model_reasoning_effort = "high"`. Workspace and template kept in sync. | #261 |
+| `.gitignore` (workspace) | Codex whitelist block (`# Codex CLI (track shared config only)` + `.codex/*` + `!.codex/config.toml`) appended to the workspace's own `.gitignore` so `.codex/auth.json` etc. are never committed | #261 |
+| `.claude/settings.json` (workspace) | `permissions.allow` gains `Bash(codex:*)` so `/review` can invoke the Codex CLI without per-call approval | #261 |
 
 No SQL, no database migrations — config files and the seeded `.gitignore` are the only schemas.
+
+### `.codex/config.toml` schema (project-level Codex CLI config, #261)
+
+Flat top-level TOML. All keys optional from Codex's perspective; tarnished sets all four to lock in deterministic behavior across machines.
+
+| Key | Type | Value (workspace + template) | Purpose |
+| --- | --- | --- | --- |
+| `model` | string | `"gpt-5.4"` | Always-latest reasoning model |
+| `model_reasoning_effort` | string | `"high"` | Higher cost, deeper review (paid only when `/review` runs) |
+| `approval_policy` | string | `"on-request"` | Codex prompts before destructive actions |
+| `sandbox_mode` | string | `"workspace-write"` | File writes restricted to workspace |
 
 ## Generated-Artifact Contracts
 

@@ -168,6 +168,63 @@ sequenceDiagram
     Migration-->>Design: shared/ seeded; resume normal flow
 ```
 
+## Codex CLI: install in devcontainer + `/review` execution (#261)
+
+Two phases: (a) `setup_codex` runs once during devcontainer post-create to make `codex` available on `$PATH`; (b) every subsequent `/review` invocation streams a prompt to `codex exec` and captures the result. Phase (a) is system-wide for any project that ships `setup_codex.sh` (workspace + downstream Codex-flavor projects); phase (b) is invoked per `/review` call. The decision tree inside `setup_codex` itself lives in `docs/design/#261/flowchart.md`.
+
+```mermaid
+sequenceDiagram
+    participant Container as devcontainer onCreate
+    participant Post as post.sh (set -e)
+    participant SetupCodex as setup_codex.sh
+    participant Npm as npm
+    participant Codex as codex CLI
+
+    Container->>Post: source post.sh
+    Note over Post: ... earlier blocks (git/SSH/Rust/codespell/setup_plugins) ...
+    Post->>SetupCodex: source setup_codex.sh; setup_codex
+    alt npm missing
+        SetupCodex-->>Post: [WARN] + return 0
+    else codex already installed
+        SetupCodex->>Codex: codex --version
+        Codex-->>SetupCodex: <version>
+        SetupCodex-->>Post: log + return 0
+    else needs install
+        SetupCodex->>Npm: npm root -g
+        Npm-->>SetupCodex: <prefix or empty>
+        SetupCodex->>SetupCodex: decide sudo (see flowchart.md)
+        SetupCodex->>Npm: [sudo -E] npm install -g @openai/codex
+        alt install ok
+            Npm-->>SetupCodex: installed
+        else install fails
+            Npm-->>SetupCodex: error
+            Note over SetupCodex: [WARN] + manual recovery hint
+        end
+        SetupCodex-->>Post: return 0
+    end
+    Post-->>Container: post-create complete
+
+    actor Dev
+    participant Claude as Claude Code (/review skill)
+    participant ConfTOML as .codex/config.toml
+    participant Agents as AGENTS.md
+
+    Dev->>Claude: /review
+    Claude->>Claude: prerequisites: command -v codex
+    alt codex missing
+        Claude-->>Dev: refuse with install instructions
+    else codex present
+        Claude->>Claude: collect git diff + design.md + prompt
+        Claude->>Codex: codex exec - --sandbox read-only<br/>(or codex review --base develop)
+        Codex->>ConfTOML: read model / approval / sandbox
+        Codex->>Agents: read review-agent role
+        Codex-->>Claude: structured review (Critical/Warnings/Suggestions/Positive)
+        Claude->>Claude: save to docs/review/#{issue}/review.md
+        Claude->>Claude: apply fixes; commit
+        Claude-->>Dev: review summary + applied fixes
+    end
+```
+
 ## `update_gitignore` — block-level idempotent appends (#259)
 
 ```mermaid
