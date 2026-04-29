@@ -12,10 +12,16 @@
 # - Claude Code hooks for automatic formatting/linting
 # - GitHub Actions workflow for quality checks (type check, clippy, fmt, tests)
 #
+# Monorepo split (#263): rustfmt.toml + clippy.toml are per-module
+# (plugin_post_copy_module); devcontainer + Claude + post.sh edits are
+# shared at root (plugin_post_copy_shared). Rust does not auto-scaffold
+# Cargo.toml or src/ — that remains the user's choice via `cargo init`.
 # =============================================================================
 
 # Get the directory where this plugin is located
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+readonly RUST_POSTSH_MARKER="# >>> rust (cargo) post-create >>>"
 
 # =============================================================================
 # Required Functions
@@ -67,8 +73,8 @@ plugin_copy() {
     fi
 }
 
-# Post-copy processing - merge devcontainer.json, settings.json, and copy tool configs
-plugin_post_copy() {
+# Shared root post-copy work: devcontainer / claude / post.sh edits.
+plugin_post_copy_shared() {
     local target_dir="$1"
 
     # Merge devcontainer.json features and extensions
@@ -79,7 +85,6 @@ plugin_post_copy() {
         print_info "Merging Rust devcontainer features..."
         local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
 
-        # Merge devcontainer.json with special handling for features and extensions
         merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
         mv "$temp_file" "$target_devcontainer"
 
@@ -94,7 +99,6 @@ plugin_post_copy() {
         print_info "Merging Rust Claude settings..."
         local temp_file="${target_dir}/.claude/settings.json.tmp"
 
-        # Merge settings with hook array concatenation
         merge_claude_settings_hooks "$target_settings" "$plugin_settings" "$temp_file"
         mv "$temp_file" "$target_settings"
 
@@ -111,27 +115,18 @@ plugin_post_copy() {
         print_success "Rust Claude rules copied"
     fi
 
-    # Copy tool configuration files
-    local tool_configs=("rustfmt.toml" "clippy.toml")
-
-    for config_file in "${tool_configs[@]}"; do
-        local source_config="${PLUGIN_DIR}/${config_file}"
-        local target_config="${target_dir}/${config_file}"
-
-        if [[ -f "$source_config" ]]; then
-            print_info "Copying ${config_file}..."
-            copy_with_confirm "$source_config" "$target_config"
-        fi
-    done
-
-    # Append Rust setup commands to post.sh
+    # Append Rust setup commands to post.sh (idempotent via marker, #263).
     local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
 
     if [[ -f "$target_post_sh" ]]; then
-        print_info "Adding Rust setup to post.sh..."
+        if grep -qF "$RUST_POSTSH_MARKER" "$target_post_sh"; then
+            print_info "Rust post.sh block already present, skipping"
+        else
+            print_info "Adding Rust setup to post.sh..."
 
-        cat >> "$target_post_sh" << 'EOF'
+            cat >> "$target_post_sh" << EOF
 
+${RUST_POSTSH_MARKER}
 # -----------------------------------------------------------------------------
 # Rust Development Tools Setup
 # -----------------------------------------------------------------------------
@@ -152,8 +147,35 @@ if command -v cargo &> /dev/null; then
 
     echo "Rust development tools installed."
 fi
+# <<< rust (cargo) post-create <<<
 EOF
 
-        print_success "Rust setup added to post.sh"
+            print_success "Rust setup added to post.sh"
+        fi
     fi
+}
+
+# Module-scoped post-copy work: per-module lint configs.
+plugin_post_copy_module() {
+    local target_dir="$1"
+    local _module_name="$2"   # currently unused; kept for contract symmetry
+
+    local tool_configs=("rustfmt.toml" "clippy.toml")
+
+    for config_file in "${tool_configs[@]}"; do
+        local source_config="${PLUGIN_DIR}/${config_file}"
+        local target_config="${target_dir}/${config_file}"
+
+        if [[ -f "$source_config" ]]; then
+            print_info "Copying ${config_file} to ${target_dir}..."
+            copy_with_confirm "$source_config" "$target_config"
+        fi
+    done
+}
+
+# Backward-compat shim.
+plugin_post_copy() {
+    local target_dir="$1"
+    plugin_post_copy_shared "$target_dir"
+    plugin_post_copy_module "$target_dir" "${PROJECT_NAME}"
 }

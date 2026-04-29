@@ -13,10 +13,18 @@
 # - Claude Code hooks for automatic formatting/linting
 # - GitHub Actions workflow for quality checks (type check, lint, fmt, tests)
 #
+# In monorepo mode (#263) plugin_post_copy is dispatched as
+# plugin_post_copy_shared(root) once + plugin_post_copy_module(<module>, name)
+# per matching module. The legacy plugin_post_copy entry point is kept as a
+# backward-compat shim that calls both with PROJECT_NAME as the module name.
 # =============================================================================
 
 # Get the directory where this plugin is located
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Marker for the Python toolchain block in Dockerfile.dev (#263 idempotency).
+readonly PYTHON_DOCKERFILE_MARKER="# >>> python (uv) toolchain >>>"
+readonly PYTHON_POSTSH_MARKER="# >>> python (uv) post-create >>>"
 
 # =============================================================================
 # Required Functions
@@ -68,7 +76,7 @@ plugin_copy() {
     fi
 }
 
-# Append Python/uv ENV variables to Dockerfile.dev
+# Append Python/uv ENV variables to Dockerfile.dev (idempotent via marker, #263).
 plugin_dockerfile() {
     local target_dir="$1"
     local dockerfile="${target_dir}/docker/Dockerfile.dev"
@@ -78,14 +86,22 @@ plugin_dockerfile() {
         return
     fi
 
+    # Idempotency: skip if the marker block is already present.
+    if grep -qF "$PYTHON_DOCKERFILE_MARKER" "$dockerfile"; then
+        print_info "Python toolchain block already present in Dockerfile, skipping"
+        return
+    fi
+
     print_info "Adding Python/uv environment variables to Dockerfile..."
 
     local temp_file="${dockerfile}.tmp"
 
-    # Insert ENV block before SHELL line (or CMD if no SHELL, or append)
-    awk '
+    # Insert ENV block before SHELL line (or fall back to file end).
+    awk -v marker_open="$PYTHON_DOCKERFILE_MARKER" \
+        -v marker_close="# <<< python (uv) toolchain <<<" '
     /^SHELL / && !inserted {
         print ""
+        print marker_open
         print "# Python/uv environment configuration"
         print "ENV PYTHONDONTWRITEBYTECODE=1"
         print "ENV PYTHONUNBUFFERED=1"
@@ -94,18 +110,37 @@ plugin_dockerfile() {
         print "ENV UV_COMPILE_BYTECODE=1"
         print "ENV UV_LINK_MODE=copy"
         print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
+        print marker_close
         print ""
         inserted=1
     }
     { print }
+    END {
+        if (!inserted) {
+            print ""
+            print marker_open
+            print "ENV PYTHONDONTWRITEBYTECODE=1"
+            print "ENV PYTHONUNBUFFERED=1"
+            print "ENV UV_HOME=\"/opt/uv\""
+            print "ENV PATH=\"$UV_HOME/bin:$PATH\""
+            print "ENV UV_COMPILE_BYTECODE=1"
+            print "ENV UV_LINK_MODE=copy"
+            print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
+            print marker_close
+        }
+    }
     ' "$dockerfile" > "$temp_file"
 
     mv "$temp_file" "$dockerfile"
     print_success "Python/uv environment variables added to Dockerfile"
 }
 
-# Post-copy processing - merge devcontainer.json, settings.json, and copy tool configs
-plugin_post_copy() {
+# -----------------------------------------------------------------------------
+# Shared (root) post-copy hook (#263).
+# Called once per loaded plugin in monorepo mode; in single mode invoked via
+# the plugin_post_copy shim with target_dir = project root.
+# -----------------------------------------------------------------------------
+plugin_post_copy_shared() {
     local target_dir="$1"
 
     # Merge devcontainer.json features and extensions
@@ -116,7 +151,6 @@ plugin_post_copy() {
         print_info "Merging Python devcontainer features..."
         local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
 
-        # Merge devcontainer.json with special handling for features and extensions
         merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
         mv "$temp_file" "$target_devcontainer"
 
@@ -131,7 +165,6 @@ plugin_post_copy() {
         print_info "Merging Python Claude settings..."
         local temp_file="${target_dir}/.claude/settings.json.tmp"
 
-        # Merge settings with hook array concatenation
         merge_claude_settings_hooks "$target_settings" "$plugin_settings" "$temp_file"
         mv "$temp_file" "$target_settings"
 
@@ -148,85 +181,26 @@ plugin_post_copy() {
         print_success "Python Claude rules copied"
     fi
 
-    # Copy ruff.toml configuration
-    local source_ruff="${PLUGIN_DIR}/ruff.toml"
-    local target_ruff="${target_dir}/ruff.toml"
-
-    if [[ -f "$source_ruff" ]]; then
-        print_info "Copying ruff.toml..."
-        copy_with_confirm "$source_ruff" "$target_ruff"
-    fi
-
-    # Create pyproject.toml from template
-    local source_pyproject="${PLUGIN_DIR}/pyproject.toml.template"
-    local target_pyproject="${target_dir}/pyproject.toml"
-
-    if [[ -f "$source_pyproject" ]]; then
-        print_info "Creating pyproject.toml..."
-
-        if [[ -f "$target_pyproject" ]]; then
-            echo -n "  pyproject.toml already exists. Overwrite? (y/n) [n]: "
-            if check_tty_available; then
-                read -r overwrite < /dev/tty
-            else
-                overwrite="n"
-            fi
-            if [[ "$overwrite" != "y" ]]; then
-                print_info "Skipping pyproject.toml"
-            else
-                # Replace PROJECT_NAME placeholder with actual project name
-                sed "s/{{PROJECT_NAME}}/${PROJECT_NAME}/g" "$source_pyproject" > "$target_pyproject"
-                print_success "Created pyproject.toml"
-            fi
-        else
-            sed "s/{{PROJECT_NAME}}/${PROJECT_NAME}/g" "$source_pyproject" > "$target_pyproject"
-            print_success "Created pyproject.toml"
-        fi
-    fi
-
-    # Create tests directory structure
-    print_info "Creating tests directory structure..."
-    mkdir -p "${target_dir}/tests/unit"
-    mkdir -p "${target_dir}/tests/integration"
-    mkdir -p "${target_dir}/tests/e2e"
-
-    # Create __init__.py files
-    touch "${target_dir}/tests/__init__.py"
-    touch "${target_dir}/tests/unit/__init__.py"
-    touch "${target_dir}/tests/integration/__init__.py"
-    touch "${target_dir}/tests/e2e/__init__.py"
-
-    # Create conftest.py for pytest
-    cat > "${target_dir}/tests/conftest.py" << 'EOF'
-"""Pytest configuration and fixtures."""
-
-import pytest
-
-
-@pytest.fixture
-def sample_fixture():
-    """Sample fixture for demonstration."""
-    return {"key": "value"}
-EOF
-
-    print_success "Tests directory structure created"
-
-    # Append Python setup commands to post.sh
+    # Append Python setup block to post.sh (idempotent via marker, #263).
     local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
 
     if [[ -f "$target_post_sh" ]]; then
-        print_info "Adding Python setup to post.sh..."
+        if grep -qF "$PYTHON_POSTSH_MARKER" "$target_post_sh"; then
+            print_info "Python post.sh block already present, skipping"
+        else
+            print_info "Adding Python setup to post.sh..."
 
-        cat >> "$target_post_sh" << 'EOF'
+            cat >> "$target_post_sh" << EOF
 
+${PYTHON_POSTSH_MARKER}
 # -----------------------------------------------------------------------------
 # Python Development Environment Setup
 # -----------------------------------------------------------------------------
 if command -v uv &> /dev/null; then
     echo "Setting up Python development environment..."
 
-    # Create virtual environment if it doesn't exist
-    if [[ ! -d ".venv" ]]; then
+    # Create virtual environment if it doesn't exist (single-project layout)
+    if [[ ! -d ".venv" ]] && [[ -f "pyproject.toml" ]]; then
         echo "  - Creating virtual environment with uv..."
         uv venv --prompt {{PROJECT_NAME}}
     fi
@@ -238,20 +212,91 @@ if command -v uv &> /dev/null; then
     fi
 
     echo "Python development environment ready."
-    echo "  - Virtual environment: .venv"
-    echo "  - Activate: source .venv/bin/activate"
 fi
+# <<< python (uv) post-create <<<
 EOF
 
-        print_success "Python setup added to post.sh"
+            print_success "Python setup added to post.sh"
+        fi
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Module-scoped post-copy hook (#263).
+# Called once per matching module in monorepo mode. In single mode, called
+# via the shim with target_dir = project root and module_name = PROJECT_NAME.
+# -----------------------------------------------------------------------------
+plugin_post_copy_module() {
+    local target_dir="$1"
+    local module_name="$2"
+
+    # Copy ruff.toml configuration
+    local source_ruff="${PLUGIN_DIR}/ruff.toml"
+    local target_ruff="${target_dir}/ruff.toml"
+
+    if [[ -f "$source_ruff" ]]; then
+        print_info "Copying ruff.toml to ${target_dir}..."
+        copy_with_confirm "$source_ruff" "$target_ruff"
     fi
 
-    # Create src directory with __init__.py
-    mkdir -p "${target_dir}/src/${PROJECT_NAME}"
-    touch "${target_dir}/src/${PROJECT_NAME}/__init__.py"
+    # Create pyproject.toml from template (substituting module name for the
+    # package id; in single mode module_name == PROJECT_NAME).
+    local source_pyproject="${PLUGIN_DIR}/pyproject.toml.template"
+    local target_pyproject="${target_dir}/pyproject.toml"
 
-    # Create a sample main.py
-    cat > "${target_dir}/src/${PROJECT_NAME}/__main__.py" << 'EOF'
+    if [[ -f "$source_pyproject" ]]; then
+        print_info "Creating pyproject.toml in ${target_dir}..."
+
+        if [[ -f "$target_pyproject" ]] && [[ "$OVERWRITE_ALL" != true ]]; then
+            local overwrite="n"
+            if check_tty_available; then
+                echo -n "  pyproject.toml already exists in ${target_dir}. Overwrite? (y/n) [n]: "
+                read -r overwrite < /dev/tty
+            fi
+            if [[ "$overwrite" != "y" ]]; then
+                print_info "Skipping pyproject.toml in ${target_dir}"
+            else
+                sed "s/{{PROJECT_NAME}}/${module_name}/g" "$source_pyproject" > "$target_pyproject"
+                print_success "Created pyproject.toml in ${target_dir}"
+            fi
+        else
+            sed "s/{{PROJECT_NAME}}/${module_name}/g" "$source_pyproject" > "$target_pyproject"
+            print_success "Created pyproject.toml in ${target_dir}"
+        fi
+    fi
+
+    # Create tests directory structure
+    print_info "Creating tests directory structure in ${target_dir}..."
+    mkdir -p "${target_dir}/tests/unit"
+    mkdir -p "${target_dir}/tests/integration"
+    mkdir -p "${target_dir}/tests/e2e"
+
+    touch "${target_dir}/tests/__init__.py"
+    touch "${target_dir}/tests/unit/__init__.py"
+    touch "${target_dir}/tests/integration/__init__.py"
+    touch "${target_dir}/tests/e2e/__init__.py"
+
+    # Create conftest.py for pytest if absent
+    if [[ ! -f "${target_dir}/tests/conftest.py" ]]; then
+        cat > "${target_dir}/tests/conftest.py" << 'EOF'
+"""Pytest configuration and fixtures."""
+
+import pytest
+
+
+@pytest.fixture
+def sample_fixture():
+    """Sample fixture for demonstration."""
+    return {"key": "value"}
+EOF
+    fi
+
+    # Create src/<module_name>/ skeleton
+    mkdir -p "${target_dir}/src/${module_name}"
+    touch "${target_dir}/src/${module_name}/__init__.py"
+
+    if [[ ! -f "${target_dir}/src/${module_name}/__main__.py" ]]; then
+        cat > "${target_dir}/src/${module_name}/__main__.py" << 'EOF'
 """Main entry point for the application."""
 
 
@@ -263,6 +308,15 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 EOF
+    fi
 
-    print_success "Created src directory structure"
+    print_success "Python module scaffold created in ${target_dir}"
+}
+
+# Backward-compat shim: in single-mode (or when called by an old orchestrator)
+# this performs the full post-copy, which is identical to the pre-#263 body.
+plugin_post_copy() {
+    local target_dir="$1"
+    plugin_post_copy_shared "$target_dir"
+    plugin_post_copy_module "$target_dir" "${PROJECT_NAME}"
 }
