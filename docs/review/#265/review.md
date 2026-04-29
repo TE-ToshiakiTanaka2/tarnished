@@ -36,3 +36,25 @@
 Final verdict: **REQUEST_CHANGES**
 
 Note from reviewer: bats suite was not executed inside the Codex sandbox because `BATS_TMPDIR` requires a writable temp directory that was read-only.
+
+---
+
+## Fixes Applied
+
+- **C1** Manifest recording: stage_plugin_run + new stage_plugin_run_for_module both backstop with `manifest_walk_directory` after the staged run, capturing `sed > target` / `cat > target` / `touch` outputs into NEW_HASHES. Verified: python scaffold's pyproject.toml round-trips correctly.
+- **C2** Per-module dispatch: new `stage_plugin_run_for_module` calls `plugin_post_copy_module(staging_dir, module_name)` directly, bypassing the standard execute_plugin_post_copies monorepo dispatch that doubled up shared edits and nested module paths.
+- **C4** Apply error propagation: `apply_decisions_for_scope` now counts `manifest_apply` failures, aborts the scope before re-running post_copy or rewriting the manifest, and returns non-zero so `run_upgrade` propagates the failure.
+- **C5** Fresh-scaffold manifest: `main()` now writes `.tarnished-manifest.json` after every successful scaffold (single mode + monorepo init; skipped for add-module which inherits the existing manifest). Patches the result with the actual git-describe ref + commit. Verified: a fresh `setup.sh --lang rust` produces a 30-file manifest pointing at the correct version.
+- **W2** `--shared-only --module foo` now processes both scopes (matches the design intent).
+- **W3** Help text updated to clarify that the default `--target-version` source differs between remote and local execution; recommends explicit `--target-version <ref>` for determinism.
+- **Suggestion #2** Upgrade preserves `scaffold_options` from the existing manifest instead of re-inferring from the mutated filesystem.
+
+### Deferred
+
+- **C3** Idempotency of `claude` / `services/{postgresql,mysql,redis}` `plugin_post_copy`: pre-existing bugs surfaced by `tests/plugin_idempotency.bats`. Tracked there with `skip` markers and TODO references; fixing requires per-plugin merge-deduplication work that is out of scope for #265 itself. Until fixed, `--upgrade`'s FR-5 re-run on those plugins may produce visible duplicates.
+
+### Commits
+- `edcc1a2` fix: address review feedback for #265
+
+All 139 bats tests pass after the fixes.
+
