@@ -1313,8 +1313,11 @@ main() {
         prompt_service_selection
     fi
 
-    # Prompt for optional features if in interactive mode
-    if check_tty_available; then
+    # Prompt for optional features if in interactive mode. In add-module mode
+    # these plugins are skipped by load_selected_plugins (they own root assets
+    # already installed by the original --monorepo init), so prompting would
+    # create a silent no-op (Warning #5 from #263 review).
+    if check_tty_available && [[ "$IS_ADD_MODULE_MODE" != true ]]; then
         # Ask about Codex CLI integration
         if [[ "$CODEX_ENABLED" != true ]]; then
             echo "" > /dev/tty
@@ -1346,6 +1349,23 @@ main() {
             if [[ "$autotag_response" == "y" || "$autotag_response" == "Y" ]]; then
                 AUTO_TAG_ENABLED=true
             fi
+        fi
+    fi
+
+    # Same reasoning for the explicit CLI flags — emit a one-time warning if
+    # the user passed them with --add-module so they know they will be no-ops.
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        if [[ "$CODEX_ENABLED" == true ]]; then
+            print_warning "--codex is ignored in add-module mode (Codex was set up by the original --monorepo init)"
+            CODEX_ENABLED=false
+        fi
+        if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
+            print_warning "--github-actions is ignored in add-module mode (already installed by the original --monorepo init)"
+            GITHUB_ACTIONS_ENABLED=false
+        fi
+        if [[ "$AUTO_TAG_ENABLED" == true ]]; then
+            print_warning "--auto-tag is ignored in add-module mode (already installed by the original --monorepo init)"
+            AUTO_TAG_ENABLED=false
         fi
     fi
 
