@@ -1,0 +1,11 @@
+# {{MODULE_NAME}}
+
+Module language: {{MODULE_LANGUAGE}}
+
+This module is part of the `{{PROJECT_NAME}}` monorepo. Project-wide context lives in the root `CLAUDE.md` and `modules.json`. Module-specific context goes here.
+
+## Conventions
+
+- Source code under `src/` (or language idiomatic equivalent).
+- Tests under `tests/`.
+- Module-local lint/format/type configs are kept in this directory.

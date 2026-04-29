@@ -688,3 +688,302 @@ prompt_multiselect() {
 
     echo "${selected[*]}"
 }
+
+# =============================================================================
+# Monorepo Utility Functions (#263)
+# =============================================================================
+#
+# Helpers for the monorepo / add-module flows in setup.sh. The schema and
+# function contracts are documented in
+# docs/design/shared/api-spec.md :: "scripts/lib/common.sh — monorepo helpers"
+# and docs/design/shared/data-model.md :: "modules.json schema".
+#
+# All helpers below assume `jq` is installed (already a hard dependency of
+# setup.sh — checked in check_dependencies).
+
+# Maximum modules.json schema version this version of setup.sh understands.
+# Bump when introducing breaking changes to the schema.
+readonly MODULES_JSON_SUPPORTED_VERSION=1
+
+# Detect whether the given directory is an existing monorepo target
+# (i.e., contains a modules.json registry).
+# Usage: detect_existing_monorepo <target_dir>
+# Returns: 0 if modules.json is present, 1 otherwise.
+detect_existing_monorepo() {
+    local target_dir="$1"
+    [[ -f "${target_dir}/modules.json" ]]
+}
+
+# Validate a module name. Same character set as project names, but with
+# stricter constraints (lowercase only, length 50, no leading digit) to
+# keep paths and compose service names predictable.
+# Usage: validate_module_name <name>
+# Returns: 0 if valid, 1 otherwise. Emits an error on stderr on failure.
+validate_module_name() {
+    local name="$1"
+
+    if [[ -z "$name" ]]; then
+        print_error "Module name cannot be empty"
+        return 1
+    fi
+
+    if [[ ${#name} -gt 50 ]]; then
+        print_error "Module name '$name' exceeds 50 characters"
+        return 1
+    fi
+
+    if [[ ! "$name" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+        print_error "Module name '$name' must match ^[a-z][a-z0-9_-]*$ (lowercase, alnum/-/_, no leading digit)"
+        return 1
+    fi
+
+    return 0
+}
+
+# Read modules.json and stream the parsed top-level object to stdout via jq.
+# Rejects unknown major schema versions with a clear error.
+# Usage: read_modules_json <target_dir>
+# Returns: 0 on success (object to stdout), 1 on parse / version error.
+read_modules_json() {
+    local target_dir="$1"
+    local file="${target_dir}/modules.json"
+
+    if [[ ! -f "$file" ]]; then
+        print_error "modules.json not found at: $file"
+        return 1
+    fi
+
+    local version
+    if ! version=$(jq -r '.version // 0' "$file" 2>/dev/null); then
+        print_error "modules.json parse failed (invalid JSON): $file"
+        return 1
+    fi
+
+    if ! [[ "$version" =~ ^[0-9]+$ ]] || [[ "$version" -lt 1 ]]; then
+        print_error "modules.json missing required 'version' field"
+        return 1
+    fi
+
+    if [[ "$version" -gt "$MODULES_JSON_SUPPORTED_VERSION" ]]; then
+        print_error "Unsupported modules.json version: $version (max supported: $MODULES_JSON_SUPPORTED_VERSION). Upgrade setup.sh."
+        return 1
+    fi
+
+    cat "$file"
+}
+
+# Atomically rewrite modules.json by passing the current contents through a
+# jq filter and replacing the file. Uses tmp + mv so a SIGINT mid-write
+# leaves the original intact.
+# Usage: write_modules_json <target_dir> <jq_filter>
+write_modules_json() {
+    local target_dir="$1"
+    local jq_filter="$2"
+    local file="${target_dir}/modules.json"
+    local tmp="${file}.tmp"
+
+    if ! jq "$jq_filter" "$file" > "$tmp"; then
+        print_error "Failed to apply jq filter to modules.json"
+        rm -f "$tmp"
+        return 1
+    fi
+
+    mv "$tmp" "$file"
+}
+
+# Look up a module by name. Pure read (no mutation).
+# Usage: find_module_by_name <target_dir> <name>
+# Returns: 0 if a module with that name exists, 1 otherwise.
+find_module_by_name() {
+    local target_dir="$1"
+    local name="$2"
+    local file="${target_dir}/modules.json"
+
+    [[ -f "$file" ]] || return 1
+    jq -e --arg n "$name" '.modules[] | select(.name == $n)' "$file" >/dev/null 2>&1
+}
+
+# Stream module names to stdout, one per line.
+# Usage: list_module_names <target_dir>
+list_module_names() {
+    local target_dir="$1"
+    local file="${target_dir}/modules.json"
+
+    [[ -f "$file" ]] || return 0
+    jq -r '.modules[].name' "$file" 2>/dev/null
+}
+
+# Append a module entry to modules.json. Refuses to overwrite an existing
+# entry — caller must call find_module_by_name + handle the overwrite
+# prompt before invoking this with a colliding name.
+# Usage: add_module_entry <target_dir> <name> <lang> [<services_csv>]
+# Returns: 0 on success, 2 on duplicate name, 1 on other error.
+add_module_entry() {
+    local target_dir="$1"
+    local name="$2"
+    local lang="$3"
+    local services_csv="${4:-}"
+
+    if find_module_by_name "$target_dir" "$name"; then
+        return 2
+    fi
+
+    # Build the services array from a comma-separated list (may be empty).
+    local services_json='[]'
+    if [[ -n "$services_csv" ]]; then
+        services_json=$(printf '%s' "$services_csv" | jq -R 'split(",") | map(select(length > 0))')
+    fi
+
+    write_modules_json "$target_dir" \
+        ".modules += [{name: \"$name\", path: \"$name\", language: \"$lang\", services: $services_json}]"
+}
+
+# Replace an existing module entry in-place (overwrite path).
+# Usage: replace_module_entry <target_dir> <name> <lang> [<services_csv>]
+# Returns: 0 on success, 1 on error.
+replace_module_entry() {
+    local target_dir="$1"
+    local name="$2"
+    local lang="$3"
+    local services_csv="${4:-}"
+
+    local services_json='[]'
+    if [[ -n "$services_csv" ]]; then
+        services_json=$(printf '%s' "$services_csv" | jq -R 'split(",") | map(select(length > 0))')
+    fi
+
+    write_modules_json "$target_dir" \
+        ".modules |= map(if .name == \"$name\" then {name: \"$name\", path: \"$name\", language: \"$lang\", services: $services_json} else . end)"
+}
+
+# List the docker-compose service ids currently defined in the target's
+# docker-compose.yml. Used by add-module to offer only un-added services.
+# Usage: list_existing_compose_services <target_dir>
+list_existing_compose_services() {
+    local target_dir="$1"
+    local file="${target_dir}/docker-compose.yml"
+
+    [[ -f "$file" ]] || return 0
+
+    # Compose service keys are 4-space-indented under a top-level `services:`.
+    # This light grep keeps us free of yq as a hard dep.
+    awk '
+        /^services:[[:space:]]*$/ { in_services = 1; next }
+        /^[a-zA-Z]/ && !/^[[:space:]]/ { in_services = 0 }
+        in_services && /^  [a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
+            sub(/^  /, ""); sub(/:[[:space:]]*$/, ""); print
+        }
+    ' "$file"
+}
+
+# Prompt the user (interactive only) whether they want monorepo mode.
+# Echoes "true" or "false" on stdout.
+# Usage: result=$(prompt_monorepo_mode)
+prompt_monorepo_mode() {
+    echo "" > /dev/tty
+    echo -n "Monorepo configuration? (y/n) [n]: " > /dev/tty
+    local response
+    IFS='' read -r response < /dev/tty
+
+    if [[ "$response" =~ ^[Yy] ]]; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
+# Interactive module dialogue loop. Mutates the global MODULES array,
+# appending each accepted "name:lang" entry. Empty name terminates.
+# At least one module is required (re-prompts if user terminates with 0
+# entries).
+# Usage: prompt_module_loop  (operates on global MODULES)
+# Globals required: AVAILABLE_LANGUAGES (set by setup.sh)
+prompt_module_loop() {
+    echo "" > /dev/tty
+    print_info "Define monorepo modules. Enter an empty module name to finish."
+    print_info "Available languages: ${AVAILABLE_LANGUAGES[*]}"
+
+    local idx=$((${#MODULES[@]} + 1))
+    while true; do
+        echo "" > /dev/tty
+        echo -n "Module $idx name (empty to finish): " > /dev/tty
+        local name
+        IFS='' read -r name < /dev/tty
+
+        if [[ -z "$name" ]]; then
+            if [[ ${#MODULES[@]} -eq 0 ]]; then
+                print_warning "At least one module is required"
+                continue
+            fi
+            break
+        fi
+
+        if ! validate_module_name "$name"; then
+            continue
+        fi
+
+        # Reject duplicates within this batch.
+        local dup=false
+        local existing
+        for existing in "${MODULES[@]}"; do
+            if [[ "${existing%%:*}" == "$name" ]]; then
+                print_warning "Module '$name' already declared in this run"
+                dup=true
+                break
+            fi
+        done
+        if [[ "$dup" == true ]]; then
+            continue
+        fi
+
+        echo -n "Module $idx language (${AVAILABLE_LANGUAGES[*]}): " > /dev/tty
+        local lang
+        IFS='' read -r lang < /dev/tty
+
+        local valid=false
+        local available
+        for available in "${AVAILABLE_LANGUAGES[@]}"; do
+            if [[ "$available" == "$lang" ]]; then
+                valid=true
+                break
+            fi
+        done
+        if [[ "$valid" != true ]]; then
+            print_warning "Unknown language '$lang' (available: ${AVAILABLE_LANGUAGES[*]})"
+            continue
+        fi
+
+        MODULES+=("$name:$lang")
+        print_success "Added module: $name ($lang)"
+        idx=$((idx + 1))
+    done
+}
+
+# Single-shot prompt for one module name + language (used by add-module).
+# Echoes "name:lang" on stdout.
+# Globals required: AVAILABLE_LANGUAGES
+prompt_add_module() {
+    local name lang
+
+    while true; do
+        echo "" > /dev/tty
+        echo -n "Module name: " > /dev/tty
+        IFS='' read -r name < /dev/tty
+        if validate_module_name "$name"; then
+            break
+        fi
+    done
+
+    while true; do
+        echo -n "Module language (${AVAILABLE_LANGUAGES[*]}): " > /dev/tty
+        IFS='' read -r lang < /dev/tty
+        local available
+        for available in "${AVAILABLE_LANGUAGES[@]}"; do
+            if [[ "$available" == "$lang" ]]; then
+                echo "${name}:${lang}"
+                return 0
+            fi
+        done
+        print_warning "Unknown language '$lang' (available: ${AVAILABLE_LANGUAGES[*]})"
+    done
+}
