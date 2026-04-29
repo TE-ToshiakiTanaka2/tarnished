@@ -186,8 +186,11 @@ Options:
                         version. User-edited files are skipped automatically. (#265)
     --target-version <ref>
                         Target git ref (tag, branch, or commit) of upstream
-                        tarnished for --upgrade. Defaults to ${REMOTE_BRANCH}
-                        HEAD (currently develop). (#265)
+                        tarnished for --upgrade. When omitted: under remote
+                        execution (curl|bash) the bootstrap clone of
+                        ${REMOTE_BRANCH} HEAD is used; under local execution
+                        the current SCRIPT_DIR checkout is used. Pass an
+                        explicit ref for deterministic behavior. (#265)
     --shared-only       Restrict --upgrade to the root-level (shared) manifest.
                         Has no effect on single-mode targets. (#265)
     --prune             Delete tracked files removed upstream and unedited
@@ -1722,6 +1725,71 @@ stage_plugin_run() {
     execute_plugin_post_copies "$staging_dir"
     TEMPLATES_DIR="$saved_templates"
     manifest_recording_stop
+
+    # Backstop for review.md Critical #1: plugins emit some files via
+    # `sed > target`, `cat > target`, or `touch target` rather than
+    # copy_with_confirm — these bypass the recording wrapper. After the
+    # staged run, walk the staging tree and merge any files we missed
+    # into MANIFEST_TRACKED so NEW_HASHES is the complete set of files
+    # the upgraded templates produce. Honors MANIFEST_EXCLUDE_GLOBS.
+    local rel hash
+    while IFS=$'\t' read -r rel hash; do
+        [[ -z "$rel" ]] && continue
+        # Only fill in entries the recorder didn't already capture.
+        [[ -n "${MANIFEST_TRACKED[$rel]:-}" ]] && continue
+        MANIFEST_TRACKED["$rel"]="$hash"
+    done < <(manifest_walk_directory "$staging_dir")
+}
+
+# Per-module variant of stage_plugin_run. Bypasses the monorepo dispatch
+# in execute_plugin_post_copies (which doubles up plugin_post_copy_shared
+# at the wrong root and nests plugin_post_copy_module under <root>/<name>
+# — review.md Critical #2). Instead, sources the language plugin
+# directly and calls plugin_post_copy_module(staging_dir, module_name)
+# so the emitted relative paths line up with the per-module manifest's
+# keys.
+#
+# Usage: stage_plugin_run_for_module <upstream_dir> <staging_dir> <lang> <module_name>
+stage_plugin_run_for_module() {
+    local upstream_dir="$1"
+    local staging_dir="$2"
+    local lang="$3"
+    local module_name="$4"
+
+    if [[ -z "$lang" ]]; then
+        print_error "stage_plugin_run_for_module: language required"
+        return 1
+    fi
+
+    local plugin_path="${upstream_dir}/templates/languages/${lang}/plugin.sh"
+    if [[ ! -f "$plugin_path" ]]; then
+        print_error "language plugin not found: $plugin_path"
+        return 1
+    fi
+
+    manifest_recording_start "$staging_dir"
+    unset_plugin_functions
+    # shellcheck disable=SC1090
+    source "$plugin_path"
+    if declare -f plugin_post_copy_module > /dev/null; then
+        plugin_post_copy_module "$staging_dir" "$module_name"
+    elif declare -f plugin_post_copy > /dev/null; then
+        # Fallback for plugins that haven't been split yet (#263 contract
+        # supports the legacy single plugin_post_copy as a back-compat
+        # shim). In that case the plugin treats its argument as the
+        # module's working directory directly.
+        plugin_post_copy "$staging_dir"
+    fi
+    unset_plugin_functions
+    manifest_recording_stop
+
+    # Backstop for review.md Critical #1 (sed/cat/touch emissions).
+    local rel hash
+    while IFS=$'\t' read -r rel hash; do
+        [[ -z "$rel" ]] && continue
+        [[ -n "${MANIFEST_TRACKED[$rel]:-}" ]] && continue
+        MANIFEST_TRACKED["$rel"]="$hash"
+    done < <(manifest_walk_directory "$staging_dir")
 }
 
 # Re-run plugin_post_copy hooks against the user's real target tree (not
@@ -1795,6 +1863,7 @@ apply_decisions_for_scope() {
     done
 
     local rel old current new staging_path target_path decision
+    local apply_failures=0
     for rel in "${!ALL_PATHS[@]}"; do
         old="${OLD_HASHES[$rel]:-}"
         new="${NEW_HASHES[$rel]:-}"
@@ -1806,8 +1875,20 @@ apply_decisions_for_scope() {
             current=""
         fi
         decision=$(manifest_decide "$old" "$current" "$new")
-        manifest_apply "$decision" "$rel" "$staging_path" "$target_path" || true
+        # Per review.md Critical #4: do NOT swallow manifest_apply
+        # failures — a partial cp/rm corrupts the lifecycle invariant.
+        # Count failures and abort before the manifest is rewritten.
+        if ! manifest_apply "$decision" "$rel" "$staging_path" "$target_path"; then
+            print_error "manifest_apply failed for: $rel (decision=$decision)"
+            ((apply_failures++)) || true
+        fi
     done
+
+    if [[ "$apply_failures" -gt 0 ]]; then
+        print_error "Aborting upgrade for scope '${scope_label:-shared}': $apply_failures file(s) failed to apply."
+        print_error "Manifest has NOT been rewritten; the target tree may be in a partially-updated state."
+        return 1
+    fi
 
     # Re-run plugin_post_copy on the real target so merge logic / new
     # whitelist blocks land (FR-5). Recording is OFF.
@@ -1815,9 +1896,8 @@ apply_decisions_for_scope() {
         rerun_post_copy_on_target "$UPSTREAM_DIR" "$scope_root"
     fi
 
-    # Write the new manifest. MANIFEST_TRACKED already holds the new
-    # hashes from the staged run; transfer to the scope-local map and
-    # write.
+    # Write the new manifest. NEW_HASHES holds the new hashes from the
+    # staged run; transfer to MANIFEST_TRACKED and write.
     if [[ "${DRY_RUN:-false}" != true ]]; then
         # Reset MANIFEST_TRACKED to the new-hashes set (drop NEW_HASHES
         # entries that the user has rejected with SKIP_NEW_CONFLICT —
@@ -1837,8 +1917,13 @@ apply_decisions_for_scope() {
             MANIFEST_TRACKED["$k"]="${NEW_HASHES[$k]}"
         done
 
+        # Per review.md Suggestion #2: preserve scaffold_options from the
+        # existing manifest rather than re-inferring from the (mutated)
+        # filesystem — the manifest is the source of truth for what was
+        # originally selected, and re-inference can drop entries when
+        # users delete language marker files.
         local opts
-        opts="$(infer_scaffold_options "$scope_root" "$(echo "$old_json" | jq -r '.scaffold_options.monorepo // false')")"
+        opts="$(echo "$old_json" | jq -c '.scaffold_options')"
         manifest_write "$scope_root" "$UPSTREAM_VERSION" "$UPSTREAM_COMMIT" "$opts"
     fi
 
@@ -1936,10 +2021,15 @@ run_upgrade() {
         fi
 
         # --- Shared (root) scope --------------------------------------
+        # Process shared when:
+        #   (a) no scope filters at all (default — process everything), OR
+        #   (b) --shared-only is set (with or without --module: design
+        #       allows both; review.md W2), OR
+        #   (c) --shared-only is set AND no --module given.
+        # Skip shared when --module foo is given without --shared-only
+        # (the user explicitly asked for a module-only refresh).
         local process_shared=true
         if [[ ${#UPGRADE_MODULES[@]} -gt 0 ]] && [[ "$SHARED_ONLY" != true ]]; then
-            # Default behavior when only --module foo is given: skip
-            # shared (per workflow.md compute_upgrade_scopes spec).
             process_shared=false
         fi
 
@@ -1952,11 +2042,20 @@ run_upgrade() {
             stage_dir=$(mktemp -d)/stage-shared
             mkdir -p "$stage_dir"
             stage_plugin_run "$UPSTREAM_DIR" "$stage_dir"
-            apply_decisions_for_scope "$target_dir" "$stage_dir" "shared"
+            apply_decisions_for_scope "$target_dir" "$stage_dir" "shared" || return 1
             rm -rf "$(dirname "$stage_dir")" 2>/dev/null || true
         fi
 
-        if [[ "$SHARED_ONLY" != true ]]; then
+        # Per-module scopes. Process when either:
+        #   - --module foo[ ...] was given (process the named modules), OR
+        #   - no scope filters at all (process all modules).
+        # Skip when --shared-only is set and no --module was given.
+        local process_modules=true
+        if [[ "$SHARED_ONLY" == true ]] && [[ ${#UPGRADE_MODULES[@]} -eq 0 ]]; then
+            process_modules=false
+        fi
+
+        if [[ "$process_modules" == true ]]; then
             # --- Per-module scopes ----------------------------------------
             local module_scope_root module_old_json module_lang
             for m in "${modules[@]}"; do
@@ -1967,13 +2066,22 @@ run_upgrade() {
                 fi
                 module_old_json=$(manifest_read "$module_scope_root") || continue
                 module_lang=$(echo "$module_old_json" | jq -r '.scaffold_options.languages[0] // empty')
-                populate_setup_state_from_manifest "$module_old_json" false "$module_lang" "$m"
+                if [[ -z "$module_lang" ]]; then
+                    print_warning "module '$m' has no language in scaffold_options — skipping"
+                    continue
+                fi
 
                 local mstage
                 mstage=$(mktemp -d)/stage-"$m"
                 mkdir -p "$mstage"
-                stage_plugin_run "$UPSTREAM_DIR" "$mstage"
-                apply_decisions_for_scope "$module_scope_root" "$mstage" "$m"
+                # Per review.md Critical #2: do NOT route per-module
+                # staging through the standard execute_plugin_post_copies
+                # monorepo dispatch — that would write shared edits to
+                # the module dir and nest plugin_post_copy_module under
+                # <module>/<module>. Use the dedicated direct-dispatch
+                # helper instead.
+                stage_plugin_run_for_module "$UPSTREAM_DIR" "$mstage" "$module_lang" "$m"
+                apply_decisions_for_scope "$module_scope_root" "$mstage" "$m" || return 1
                 rm -rf "$(dirname "$mstage")" 2>/dev/null || true
             done
         fi
@@ -2275,6 +2383,41 @@ main() {
 
     # Update .gitignore
     update_gitignore "$TARGET_DIR"
+
+    # Per review.md Critical #5: write a manifest at the end of every
+    # successful scaffold so newly-created projects can use --upgrade
+    # without first running --create-manifest. Skipped for --dry-run
+    # (no files were written) and for add-module (which only adds to an
+    # existing project; the existing manifest still applies).
+    if [[ "$DRY_RUN" != true ]] && [[ "$IS_ADD_MODULE_MODE" != true ]]; then
+        # shellcheck disable=SC1091
+        source "${SCRIPT_DIR}/scripts/lib/manifest.sh"
+        local scaffold_version=""
+        scaffold_version=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo "${REMOTE_BRANCH:-develop}")
+        local scaffold_commit=""
+        scaffold_commit=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        FROM_VERSION="$scaffold_version"
+        # Use the same logic as --create-manifest: detect monorepo,
+        # write root manifest (and per-module manifests), inferring
+        # scaffold_options from filesystem evidence (#265).
+        # Non-fatal: a failure here does not abort the scaffold.
+        if ! run_create_manifest "$TARGET_DIR" 2>&1 | sed 's/^/  /'; then
+            print_warning "Failed to write .tarnished-manifest.json (scaffold otherwise succeeded)"
+        fi
+        # Override the version we just wrote with the actual git ref +
+        # commit so legacy "unknown" only applies to bootstrap of
+        # pre-existing projects.
+        if manifest_exists "$TARGET_DIR"; then
+            local tmp_manifest="${TARGET_DIR}/.tarnished-manifest.json.tmp"
+            if jq --arg v "$scaffold_version" --arg c "$scaffold_commit" \
+                '.tarnished_version = $v | .tarnished_commit = $c' \
+                "${TARGET_DIR}/.tarnished-manifest.json" > "$tmp_manifest"; then
+                mv "$tmp_manifest" "${TARGET_DIR}/.tarnished-manifest.json"
+            else
+                rm -f "$tmp_manifest"
+            fi
+        fi
+    fi
 
     # Setup GitHub repository
     print_section "GitHub Repository Setup"
