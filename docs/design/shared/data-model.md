@@ -18,6 +18,7 @@ This is the cumulative project-wide data model. Per-issue deltas may add or modi
 | `GetIssueResponse` | `src/github/types.rs` | GitHub REST issue payload (incl. `labels`, #230) |
 | `IssueLabel` | `src/github/types.rs` | `{name}` from issue labels payload |
 | `ProjectV2` | `src/github/types.rs` | GraphQL project node info |
+| `ModulesRegistry` (logical) | downstream `<project>/modules.json` (#263) | Monorepo module registry — `{ version, modules: [{ name, path, language, services }] }` |
 
 ## Type Definitions
 
@@ -83,6 +84,33 @@ pub struct GetIssueResponse {
 
 `labels` is `default` so older mocked payloads without labels still deserialize.
 
+### `modules.json` schema (monorepo registry, #263)
+
+JSON file at the root of a monorepo target produced by `setup.sh --monorepo`. Read and mutated by `scripts/lib/common.sh` helpers via `jq`. There is no Rust counterpart — `erd` does not consume this file today.
+
+```json
+{
+  "version": 1,
+  "modules": [
+    { "name": "jing", "path": "jing", "language": "python", "services": [] },
+    { "name": "kir",  "path": "kir",  "language": "node",   "services": [] }
+  ]
+}
+```
+
+| Field | Type | Required | Constraints / notes |
+| --- | --- | --- | --- |
+| `version` | integer | yes | Schema version; readers MUST reject unknown majors. Currently `1`. |
+| `modules` | array | yes | May be empty after init if user accepted no modules; FR-2 enforces ≥1 in interactive flow. |
+| `modules[].name` | string | yes | `^[a-z][a-z0-9_-]*$`, max 50 chars, unique within file. |
+| `modules[].path` | string | yes | Relative path from repo root. Currently equals `name`; field is reserved for future flexibility (nested layouts). |
+| `modules[].language` | string | yes | One of the `AVAILABLE_LANGUAGES` ids: `rust`, `python`, `node`, `deno`, `latex`. |
+| `modules[].services` | array of string | yes (may be empty) | Informational record of services declared at registration. The actual compose runs project-wide using `{{PROJECT_NAME}}-<svc>` names, shared across modules. |
+
+**Forward compatibility (NFR-2)**: Readers ignore unknown top-level keys and unknown per-module keys. Adding fields like `commands`, `version_file`, `package` (à la elsur) is non-breaking. The `version` field is the breaking-change escape hatch — bumping to `version: 2` allows incompatible changes that older `setup.sh` versions correctly reject with a clear error.
+
+**Idempotency**: `add_module_entry <name> ...` returns exit `2` on duplicate `name`, which the caller (interactive add-module flow) translates into the FR-9 overwrite prompt.
+
 ## Relationships
 
 ```mermaid
@@ -101,11 +129,21 @@ erDiagram
         string owner
         u32 number
     }
+    ModulesRegistry ||--o{ ModuleEntry : "modules"
+    ModulesRegistry {
+        int version
+    }
+    ModuleEntry {
+        string name
+        string path
+        string language
+        array services
+    }
 ```
 
 ## Schemas / Migrations
 
-This project is a single-binary CLI with no persistent database. The "schemas" are YAML config files and a few generated text artifacts. Their evolution:
+This project is a single-binary CLI with no persistent database. The "schemas" are YAML config files, the JSON modules registry (#263), and a few generated text artifacts. Their evolution:
 
 | File | Migration | Issue |
 | --- | --- | --- |
@@ -121,8 +159,11 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `.codex/config.toml` (workspace + template) | Workspace gains the file (new); template bumps `model` from `gpt-5.3-codex` → `gpt-5.4` and adds `model_reasoning_effort = "high"`. Workspace and template kept in sync. | #261 |
 | `.gitignore` (workspace) | Codex whitelist block (`# Codex CLI (track shared config only)` + `.codex/*` + `!.codex/config.toml`) appended to the workspace's own `.gitignore` so `.codex/auth.json` etc. are never committed | #261 |
 | `.claude/settings.json` (workspace) | `permissions.allow` gains `Bash(codex:*)` so `/review` can invoke the Codex CLI without per-call approval | #261 |
+| `modules.json` (downstream monorepo target) | New schema introduced for monorepo support; `version: 1` with a `modules: []` array. Forward-compatible via unknown-key tolerance and a `version` escape hatch. | #263 |
+| Language plugin contract (`templates/languages/<lang>/plugin.sh`) | `plugin_post_copy` split into `plugin_post_copy_shared(target_dir)` + `plugin_post_copy_module(target_dir, module_name)`. Existing `plugin_post_copy` retained as a backward-compat shim. | #263 |
+| `Dockerfile.dev` and `.devcontainer/scripts/post.sh` language toolchain blocks | Now wrapped in marker comments (`# >>> <lang> toolchain >>>` … `<<< <lang> toolchain <<<`) and gated by `grep -q` checks for block-level idempotency, so `setup.sh --add-module` re-runs are no-ops for shared assets. | #263 |
 
-No SQL, no database migrations — config files and the seeded `.gitignore` are the only schemas.
+No SQL, no database migrations — config files, the JSON modules registry, and the seeded `.gitignore` are the only schemas.
 
 ### `.codex/config.toml` schema (project-level Codex CLI config, #261)
 
@@ -138,3 +179,5 @@ Flat top-level TOML. All keys optional from Codex's perspective; tarnished sets 
 ## Generated-Artifact Contracts
 
 The `.gitignore` produced by `update_gitignore()` and Codex's `plugin_post_copy` is structured as a sequence of **marker-guarded blocks**. The marker (a comment line) is the keyed-on identity of the block; rewriting it without coordination would re-trigger the block-append on existing projects (a benign but visible side effect). The exact marker strings and block contents are defined in [api-spec.md](./api-spec.md) :: "Setup / Plugin Surface".
+
+The same marker-guarded-block pattern (#263) governs the language toolchain blocks appended to `Dockerfile.dev` and `post.sh` by language plugins — see api-spec.md :: "Language plugin contract".

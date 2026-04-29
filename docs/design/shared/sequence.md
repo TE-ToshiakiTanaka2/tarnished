@@ -275,3 +275,99 @@ sequenceDiagram
         Codex-->>Setup: ok
     end
 ```
+
+## `setup.sh --monorepo` — one-shot monorepo init (#263)
+
+Runs against an empty target directory. Generates root assets + per-module sub-directories + `modules.json`. The mode-selection portion of `main()` is captured separately in `docs/design/#263/flowchart.md`; this sequence focuses on the post-copy dispatch.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Setup as setup.sh
+    participant Common as scripts/lib/common.sh
+    participant Lang as language plugins (e.g. python, node)
+    participant Core as core plugin
+    participant Svc as service plugins (optional)
+    participant Root as <project>/ (root)
+    participant Mods as <project>/modules.json
+    participant SubDir as <project>/<module>/
+
+    User->>Setup: ./setup.sh --monorepo --module jing:python --module kir:node --postgresql -y
+    Setup->>Setup: parse_arguments → MONOREPO_MODE=true, MODULES=("jing:python","kir:node")
+    Setup->>Setup: derive SELECTED_LANGUAGES = ("python","node")
+    Setup->>Setup: load_selected_plugins (core, claude, python, node, postgres, ...)
+    Setup->>Setup: execute_plugin_copies(root)
+    Note over Setup,Root: copies .devcontainer/, .claude/, docker/, docker-compose.yml, etc.
+    Setup->>Setup: execute_plugin_dockerfiles(root)
+    Note over Setup,Root: appends marker-guarded python + node toolchain blocks (FR-5)
+
+    Setup->>Setup: execute_plugin_post_copies (monorepo mode)
+    loop for each loaded plugin
+        alt plugin in templates/languages/* (e.g. python)
+            Setup->>Lang: plugin_post_copy_shared(root)
+            Lang->>Root: patch .devcontainer/devcontainer.json (idempotent merge)
+            Lang->>Root: patch .claude/settings.json (idempotent merge)
+            Lang->>Root: append marker-guarded post.sh language block
+            loop for each module with language == python (e.g. jing)
+                Setup->>Lang: plugin_post_copy_module(root/jing, "jing")
+                Lang->>SubDir: write pyproject.toml, ruff.toml, src/jing/__init__.py, tests/
+            end
+        else plugin in templates/services/* (e.g. postgres) or core/claude/codex/github-actions
+            Setup->>Svc: plugin_post_copy(root)
+            Svc->>Root: merge docker-compose.yml service "<project>-db" (project-name prefix; existing convention)
+            Svc->>Root: append marker-guarded post.sh service block
+        end
+    end
+
+    Setup->>Core: plugin_post_copy(root) [monorepo branch]
+    Core->>Mods: write modules.json from MODULES (FR-4)
+    loop for each module
+        Core->>SubDir: write <module>/CLAUDE.md from template
+    end
+
+    Setup->>Common: replace_placeholders(root, project_name)
+    Setup->>Common: update_gitignore(root)
+    Setup-->>User: completion message
+```
+
+## `setup.sh --add-module` — incremental add to existing monorepo (#263)
+
+Detects an existing `modules.json` in CWD (or accepts `--add-module` flag) and adds a single module. Idempotent against shared assets via marker-guarded blocks and JSON merge helpers.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Setup as setup.sh
+    participant Common as scripts/lib/common.sh
+    participant Lang as language plugin (e.g. python)
+    participant Core as core plugin
+    participant Mods as <project>/modules.json
+    participant Root as <project>/ (root)
+    participant SubDir as <project>/<module>/
+
+    User->>Setup: ./setup.sh --add-module anisette --lang python -y
+    Setup->>Common: detect_existing_monorepo(cwd)
+    Common-->>Setup: ok (modules.json present)
+    Setup->>Common: find_module_by_name(cwd, "anisette")
+    Common-->>Setup: not present (else: prompt overwrite, FR-9)
+
+    Setup->>Common: list_existing_compose_services(cwd) → diff vs AVAILABLE_SERVICES
+    Note over Setup,Common: only un-added services are offered (FR-10)
+
+    Setup->>Setup: load python plugin (+ any newly-selected service plugin)
+    Setup->>Setup: execute_plugin_dockerfiles(root)
+    Note over Setup,Root: marker-guard skips re-append if python toolchain block already present
+    Setup->>Lang: plugin_post_copy_shared(root) [idempotent: merge / marker-guards skip on re-run]
+
+    Setup->>SubDir: mkdir -p root/anisette
+    Setup->>Lang: plugin_post_copy_module(root/anisette, "anisette")
+    Lang->>SubDir: write pyproject.toml, ruff.toml, src/anisette/__init__.py, tests/
+
+    Setup->>Core: plugin_post_copy(root) [monorepo branch]
+    Core->>Common: add_module_entry(cwd, "anisette", "python", services=[])
+    Common->>Mods: append entry (atomic jq | mv); on duplicate → exit 2 (caller handled above)
+    Core->>SubDir: write root/anisette/CLAUDE.md from template (skip if exists, unless --overwrite)
+
+    Setup->>Common: update_gitignore(root) [idempotent]
+    Setup-->>User: completion: "Module 'anisette' added"
+```
