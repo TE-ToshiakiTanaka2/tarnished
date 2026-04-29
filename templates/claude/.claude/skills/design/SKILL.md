@@ -129,8 +129,24 @@ Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the ent
 
 ### Phase 8: Commit and Report
 
-17. **Commit design artifacts** - Single commit covering both `docs/design/shared/*` and `docs/design/#{issue_number}/*` changes.
-18. **Report results** - Present branch name, files written (per layer), and summary.
+17. **Stage design artifacts** — Use explicit paths to avoid pulling in unrelated untracked files (e.g. `.vscode/`, local scratchpads, MCP scratch directories):
+    ```bash
+    git add docs/design/shared/<files-modified-in-phase-7> \
+            docs/design/#{issue_number}/
+    ```
+    Stage only the `shared/*` files that Phase 7 actually wrote (e.g. omit `class.md` when there were no class-diagram changes), plus the entire per-issue directory. Include `docs/design/shared/research/<lib>.md` if Phase 3 produced cross-cutting research. Avoid `git add -A` and `git add .` — they sweep up unrelated untracked content.
+
+18. **Create commit** — Single commit covering both layers. Use the structure documented in "Commit Strategy" below: `docs:` subject, two-bullet body summarizing each layer's changes, and `Refs #{issue_number}` footer.
+
+19. **Verify post-commit state** — Confirm the commit landed on the expected branch and the design-artifact working tree is clean:
+    ```bash
+    git log --oneline -1        # confirm subject + commit hash
+    git status --short          # only unrelated untracked files (if any) should remain
+    git branch --show-current   # confirm we are still on the feature branch
+    ```
+    If `git status` still shows tracked files modified under `docs/design/`, Phase 7 did not write the snapshot or staging missed a file — investigate before reporting completion.
+
+20. **Report results** - Present branch name, commit hash, files written (per layer), and summary using the "Output Format" template below.
 
 ## Branch Naming Convention
 
@@ -425,11 +441,24 @@ graph TD
 
 ## Commit Strategy
 
+Single commit covers both `docs/design/shared/*` (snapshot regeneration) and `docs/design/#{issue_number}/*` (new delta). Atomicity is intentional — the snapshot regeneration must never land without its triggering delta.
+
+**Message structure**:
+
 ```
 docs: add design documents for #{issue_number}
+
+- Per-issue delta (docs/design/#{issue_number}/): <one bullet per file authored,
+  naming the files and what they describe>
+- Shared snapshot (docs/design/shared/): <one bullet per shared file updated and
+  what was added/changed; explicitly note files left unchanged if relevant>
+
+Refs #{issue_number}
 ```
 
-The commit covers both `docs/design/shared/*` (snapshot regeneration) and `docs/design/#{issue_number}/*` (new delta) in one commit.
+- **Subject** MUST be `docs: add design documents for #{issue_number}` so downstream automation (PR linkage, changelog) can recognize it.
+- **Body** MUST contain both the "Per-issue delta" and "Shared snapshot" summary lines so reviewers can audit the snapshot regeneration without diffing every shared file.
+- **Footer** MUST be `Refs #{issue_number}` — NOT `Closes #{issue_number}`. `/design` only writes documentation; the issue is closed by `/implement` or by the merging PR.
 
 ## Output Format
 
