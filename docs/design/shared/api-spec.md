@@ -162,6 +162,43 @@ Same idempotency contract as above. Appends one block:
 
 The Codex block is gated on the existence of `${target_dir}/.gitignore` (created earlier by `update_gitignore`); the plugin only appends.
 
+### `templates/codex/.codex/config.toml` (#261)
+
+Project-level Codex CLI configuration written verbatim into downstream projects (and into `/workspace/.codex/config.toml` for workspace dogfooding). Flat top-level TOML, four keys (full schema in `data-model.md::.codex/config.toml schema`):
+
+| Key | Default value |
+| --- | --- |
+| `model` | `"gpt-5.4"` (bumped from `"gpt-5.3-codex"` in #261) |
+| `model_reasoning_effort` | `"high"` (added in #261) |
+| `approval_policy` | `"on-request"` |
+| `sandbox_mode` | `"workspace-write"` |
+
+The workspace's own `/workspace/.codex/config.toml` MUST stay in sync with this template default so a `/review` run inside the tarnished repo behaves identically to a `/review` run inside any newly bootstrapped downstream project.
+
+### `templates/codex/.devcontainer/scripts/setup_codex.sh` and workspace counterpart (#261)
+
+| Function | Purpose |
+| --- | --- |
+| `setup_codex()` | Idempotent install of `@openai/codex` via npm. Single function, no args, always returns `0`. |
+
+Behavior contract:
+
+1. If `npm` is missing → log `[WARN]` and return `0`.
+2. If `codex` is already on `$PATH` → log the version and return `0`.
+3. Otherwise, probe `npm root -g`:
+   - empty result → attempt install without sudo (optimistic);
+   - existing prefix dir not user-writable, OR missing prefix whose parent is not user-writable → use `sudo -E npm install -g @openai/codex`;
+   - else → install without sudo.
+4. Run `npm install -g @openai/codex` (with or without `sudo -E`); on non-zero exit, log `[WARN] Failed to install Codex CLI` plus the manual recovery command, and return `0`.
+
+Contract: under `set -e` (in `post.sh`), this function MUST return `0` even when install fails — same non-fatal invariant as `setup_plugins.sh`. The two-pronged write check (existing dir vs. parent dir) is required because `npm install -g` writes into the prefix when present and creates it otherwise; a single check is wrong in one of the two cases. The decision tree is documented in `docs/design/#261/flowchart.md`.
+
+The function is sourced into `.devcontainer/scripts/post.sh` after `setup_plugins`, using the same `${SCRIPT_DIR}/setup_codex.sh` source pattern. The Node.js LTS devcontainer feature (`ghcr.io/devcontainers/features/node:1`) is the prerequisite for `npm` being present.
+
+### `/workspace/.claude/settings.json` (workspace, #261)
+
+`permissions.allow` includes `"Bash(codex:*)"` so the `/review` skill can invoke `codex exec` and `codex review` without per-call approval. The pre-existing `permissions.deny` list and `hooks` block are unchanged. Other downstream projects opt in via `templates/codex/.claude/settings.json`.
+
 ### `templates/claude/.devcontainer/scripts/setup_plugins.sh` (#249, #255)
 
 | Function | Purpose |

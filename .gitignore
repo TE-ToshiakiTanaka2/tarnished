@@ -1,3 +1,7 @@
 /target
 .serena/
 .claude/settings.local.json
+
+# Codex CLI (track shared config only)
+.codex/*
+!.codex/config.toml
