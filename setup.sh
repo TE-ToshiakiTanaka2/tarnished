@@ -125,6 +125,11 @@ ADD_MODULE_NAME=""
 ADD_MODULE_LANG=""
 declare -a MODULES=()
 
+# Manifest modes (#265). Mutually exclusive with each other and with the
+# scaffold modes (single / monorepo init / add-module).
+CREATE_MANIFEST_MODE=false
+FROM_VERSION=""
+
 # Core plugins that are always loaded
 declare -a CORE_PLUGINS=("core" "claude")
 
@@ -162,6 +167,14 @@ Options:
     --celery            Include Celery task queue (auto-enables Redis, requires Python)
     --github-actions    Include GitHub Project integration (requires erd CLI)
     --overwrite         Overwrite existing files without confirmation
+    --create-manifest   Bootstrap a .tarnished-manifest.json from the current
+                        state of files in this directory. Required as a one-shot
+                        for legacy projects before their first --upgrade. (#265)
+    --from-version <ref>
+                        Recorded as `tarnished_version` in the new manifest
+                        (defaults to "unknown"). Use this to pin the originating
+                        tarnished version for projects scaffolded before the
+                        manifest format existed. Only valid with --create-manifest. (#265)
 
 Arguments:
     PROJECT_NAME        Name for your project (optional, will prompt if not provided)
@@ -200,6 +213,10 @@ Examples:
     # Add module to an existing monorepo (#263)
     ./setup.sh --add-module anisette --lang python -y
     ./setup.sh                              # Auto-detected if CWD has modules.json
+
+    # Bootstrap a manifest for an existing project (#265)
+    ./setup.sh --create-manifest --from-version v0.0.74 -y
+    ./setup.sh --create-manifest -y         # tarnished_version recorded as "unknown"
 
 Generated Files:
     .devcontainer/
@@ -894,6 +911,18 @@ parse_arguments() {
                 OVERWRITE_ALL=true
                 shift
                 ;;
+            --create-manifest)
+                CREATE_MANIFEST_MODE=true
+                shift
+                ;;
+            --from-version)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--from-version requires a value (e.g., v0.0.74 or 'unknown')"
+                    exit 1
+                fi
+                FROM_VERSION="$2"
+                shift 2
+                ;;
             -*)
                 print_error "Unknown option: $1"
                 echo "Use --help for usage information"
@@ -914,9 +943,42 @@ parse_arguments() {
     validate_argument_combinations
 }
 
-# Reject mutually-exclusive flag combinations and other invalid mixes (#263).
-# Documented in docs/design/shared/api-spec.md :: Setup / Plugin Surface.
+# Reject mutually-exclusive flag combinations and other invalid mixes
+# (#263, #265). Documented in docs/design/shared/api-spec.md ::
+# Setup / Plugin Surface.
 validate_argument_combinations() {
+    # --create-manifest is exclusive with every scaffold/upgrade flag (#265).
+    if [[ "$CREATE_MANIFEST_MODE" == true ]]; then
+        if [[ "$MONOREPO_MODE" == true ]]; then
+            print_error "--create-manifest is mutually exclusive with --monorepo / --module"
+            exit 1
+        fi
+        if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+            print_error "--create-manifest is mutually exclusive with --add-module"
+            exit 1
+        fi
+        if [[ ${#SELECTED_LANGUAGES[@]} -gt 0 ]]; then
+            print_error "--create-manifest does not accept --lang (no scaffold work is done)"
+            exit 1
+        fi
+        if [[ ${#SELECTED_SERVICES[@]} -gt 0 ]]; then
+            print_error "--create-manifest does not accept service flags (--postgresql, --mysql, --redis, --celery)"
+            exit 1
+        fi
+        if [[ "$CODEX_ENABLED" == true ]] || [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
+            print_error "--create-manifest does not accept feature flags (--codex, --github-actions)"
+            exit 1
+        fi
+        # FROM_VERSION is optional; nothing to validate beyond presence.
+        return 0
+    fi
+
+    # --from-version is only meaningful with --create-manifest.
+    if [[ -n "$FROM_VERSION" ]] && [[ "$CREATE_MANIFEST_MODE" != true ]]; then
+        print_error "--from-version is only valid with --create-manifest"
+        exit 1
+    fi
+
     # --add-module is exclusive with monorepo init flags
     if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
         if [[ "$MONOREPO_MODE" == true ]] && [[ ${#MODULES[@]} -gt 0 ]]; then
@@ -1247,6 +1309,188 @@ service_overlay_collides_with_target() {
 }
 
 # =============================================================================
+# Manifest Modes (#265)
+# =============================================================================
+
+# Infer the scaffold_options object as a JSON string from filesystem evidence
+# in <target_dir>. Used by --create-manifest to fill the manifest's
+# scaffold_options field for legacy projects that have no recorded scaffold
+# parameters.
+#
+# Usage: infer_scaffold_options <target_dir> <monorepo_bool> [<single_lang>]
+#   <single_lang> overrides languages[] when set (used by per-module
+#   manifests where the module's language is known from modules.json).
+infer_scaffold_options() {
+    local target_dir="$1"
+    local monorepo_flag="$2"
+    local single_lang="${3:-}"
+
+    local languages_json='[]'
+    if [[ -n "$single_lang" ]]; then
+        languages_json=$(printf '%s' "$single_lang" | jq -Rs 'split("\n") | map(select(length>0))')
+    elif [[ "$monorepo_flag" == true ]] && [[ -f "$target_dir/modules.json" ]]; then
+        languages_json=$(jq '[.modules[].language] | unique' "$target_dir/modules.json" 2>/dev/null || echo '[]')
+    else
+        # Single mode: probe for the per-language marker files emitted by
+        # each language plugin's plugin_post_copy.
+        local langs=()
+        [[ -f "$target_dir/Cargo.toml" ]] && langs+=(rust)
+        [[ -f "$target_dir/pyproject.toml" ]] && langs+=(python)
+        [[ -f "$target_dir/package.json" ]] && langs+=(node)
+        [[ -f "$target_dir/deno.json" || -f "$target_dir/deno.jsonc" ]] && langs+=(deno)
+        # LaTeX has no canonical root manifest; the build-pdf workflow is
+        # the cleanest indicator.
+        [[ -f "$target_dir/.github/workflows/build-pdf.yml" ]] && langs+=(latex)
+        if [[ ${#langs[@]} -eq 0 ]]; then
+            languages_json='[]'
+        else
+            languages_json=$(printf '%s\n' "${langs[@]}" | jq -Rs 'split("\n") | map(select(length>0))')
+        fi
+    fi
+
+    # Services: scan docker-compose.yml for top-level service ids that match
+    # the well-known plugin names. Per-module manifests do not carry services
+    # (services are project-wide).
+    local services_json='[]'
+    if [[ -z "$single_lang" ]] && [[ -f "$target_dir/docker-compose.yml" ]]; then
+        local svcs=()
+        # Service names use the {{PROJECT_NAME}}-<svc> convention; check for
+        # the `<...>-db|redis|celery-worker` shapes.
+        local compose="$target_dir/docker-compose.yml"
+        grep -qE '^  [a-z][a-z0-9_-]*-db:[[:space:]]*$' "$compose" 2>/dev/null && {
+            # disambiguate db type by the image
+            if grep -q "image: postgres" "$compose"; then svcs+=(postgresql); fi
+            if grep -q "image: mysql" "$compose"; then svcs+=(mysql); fi
+        }
+        grep -qE '^  [a-z][a-z0-9_-]*-redis:[[:space:]]*$' "$compose" 2>/dev/null && svcs+=(redis)
+        grep -qE '^  [a-z][a-z0-9_-]*-celery-worker:[[:space:]]*$' "$compose" 2>/dev/null && svcs+=(celery)
+        if [[ ${#svcs[@]} -gt 0 ]]; then
+            services_json=$(printf '%s\n' "${svcs[@]}" | jq -Rs 'split("\n") | map(select(length>0))')
+        fi
+    fi
+
+    local gha=false ata=false codex=false
+    [[ -f "$target_dir/.github/workflows/project-integration.yml" ]] && gha=true
+    [[ -f "$target_dir/.github/workflows/auto-tag.yml" ]] && ata=true
+    [[ -f "$target_dir/.codex/config.toml" ]] && codex=true
+
+    jq -n \
+        --argjson languages "$languages_json" \
+        --argjson services "$services_json" \
+        --argjson gha "$gha" \
+        --argjson ata "$ata" \
+        --argjson codex "$codex" \
+        --argjson monorepo "$monorepo_flag" \
+        '{
+            languages: $languages,
+            services: $services,
+            github_actions_enabled: $gha,
+            auto_tag_enabled: $ata,
+            codex_enabled: $codex,
+            monorepo: $monorepo
+        }'
+}
+
+# Walk a directory and load its current contents into MANIFEST_TRACKED so
+# manifest_write can persist them. Used by --create-manifest.
+#
+# Usage: load_manifest_from_walk <root> [<additional_skip_prefix>...]
+load_manifest_from_walk() {
+    local root="$1"
+    shift
+    manifest_recording_start "$root"
+    local rel hash
+    while IFS=$'\t' read -r rel hash; do
+        [[ -z "$rel" ]] && continue
+        MANIFEST_TRACKED["$rel"]="$hash"
+    done < <(manifest_walk_directory "$root" "$@")
+    manifest_recording_stop
+}
+
+# Bootstrap a manifest for an existing project. Detects single vs monorepo
+# by the presence of modules.json. In monorepo mode, writes a root manifest
+# (covering shared assets) and one manifest per registered module.
+#
+# Usage: run_create_manifest <target_dir>
+# Returns: 0 on success.
+run_create_manifest() {
+    local target_dir="$1"
+
+    if [[ ! -d "$target_dir" ]]; then
+        print_error "create-manifest: target directory not found: $target_dir"
+        return 1
+    fi
+
+    local from_version="${FROM_VERSION:-unknown}"
+    local commit=""
+
+    print_section "Creating Manifest"
+    print_info "target: $target_dir"
+    print_info "tarnished_version: $from_version"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "(dry-run: no manifest will be written)"
+    fi
+
+    if detect_existing_monorepo "$target_dir"; then
+        print_info "monorepo target detected (modules.json present)"
+
+        # Collect module names so we can both skip them in the root walk and
+        # iterate them for per-module manifests.
+        local modules=()
+        local m
+        while IFS= read -r m; do
+            [[ -n "$m" ]] && modules+=("$m")
+        done < <(list_module_names "$target_dir")
+
+        # Root manifest: walk root, skipping every module subtree.
+        local opts
+        opts="$(infer_scaffold_options "$target_dir" true)"
+        load_manifest_from_walk "$target_dir" "${modules[@]}"
+        if [[ "$DRY_RUN" != true ]]; then
+            manifest_write "$target_dir" "$from_version" "$commit" "$opts"
+            print_success "wrote $(manifest_path "$target_dir")"
+        else
+            print_info "would write root manifest with ${#MANIFEST_TRACKED[@]} file entries"
+        fi
+
+        # Per-module manifests.
+        local module
+        for module in "${modules[@]}"; do
+            local module_dir="$target_dir/$module"
+            if [[ ! -d "$module_dir" ]]; then
+                print_warning "module '$module' has no directory at $module_dir; skipping"
+                continue
+            fi
+            local lang
+            lang=$(jq -r --arg n "$module" '.modules[] | select(.name == $n) | .language' "$target_dir/modules.json" 2>/dev/null)
+            local module_opts
+            module_opts="$(infer_scaffold_options "$module_dir" false "$lang")"
+            load_manifest_from_walk "$module_dir"
+            if [[ "$DRY_RUN" != true ]]; then
+                manifest_write "$module_dir" "$from_version" "$commit" "$module_opts"
+                print_success "wrote $(manifest_path "$module_dir")"
+            else
+                print_info "would write $module manifest with ${#MANIFEST_TRACKED[@]} file entries"
+            fi
+        done
+    else
+        print_info "single-mode target detected"
+        local opts
+        opts="$(infer_scaffold_options "$target_dir" false)"
+        load_manifest_from_walk "$target_dir"
+        if [[ "$DRY_RUN" != true ]]; then
+            manifest_write "$target_dir" "$from_version" "$commit" "$opts"
+            print_success "wrote $(manifest_path "$target_dir")"
+        else
+            print_info "would write manifest with ${#MANIFEST_TRACKED[@]} file entries"
+        fi
+    fi
+
+    return 0
+}
+
+# =============================================================================
 # Main Setup Flow
 # =============================================================================
 
@@ -1260,6 +1504,16 @@ main() {
 
     # Parse arguments
     parse_arguments "$@"
+
+    # Manifest modes (#265) short-circuit before any scaffold work. They
+    # operate on existing project trees and have nothing to do with
+    # project name, language selection, or plugin pipelines.
+    if [[ "$CREATE_MANIFEST_MODE" == true ]]; then
+        # shellcheck disable=SC1091
+        source "${SCRIPT_DIR}/scripts/lib/manifest.sh"
+        run_create_manifest "$(pwd)"
+        exit $?
+    fi
 
     # Get project name
     if [[ -z "$PROJECT_NAME" ]]; then
