@@ -67,7 +67,7 @@ plugin_copy() {
             fi
         fi
 
-        cp "$workflow" "$target_file"
+        OVERWRITE_ALL=true copy_with_confirm "$workflow" "$target_file"
         print_success "Created deno-quality-check.yml"
     fi
 }

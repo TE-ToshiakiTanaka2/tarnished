@@ -69,11 +69,11 @@ plugin_copy() {
             if [[ "$overwrite" != "y" ]]; then
                 print_info "Skipping build-pdf.yml"
             else
-                cp "$workflow" "$target_file"
+                OVERWRITE_ALL=true copy_with_confirm "$workflow" "$target_file"
                 print_success "Created build-pdf.yml"
             fi
         else
-            cp "$workflow" "$target_file"
+            copy_with_confirm "$workflow" "$target_file"
             print_success "Created build-pdf.yml"
         fi
     fi
@@ -93,12 +93,12 @@ plugin_copy() {
             if [[ "$overwrite" != "y" ]]; then
                 print_info "Skipping detect_changes.sh"
             else
-                cp "$detect_script" "$target_script"
+                OVERWRITE_ALL=true copy_with_confirm "$detect_script" "$target_script"
                 chmod +x "$target_script"
                 print_success "Created detect_changes.sh"
             fi
         else
-            cp "$detect_script" "$target_script"
+            copy_with_confirm "$detect_script" "$target_script"
             chmod +x "$target_script"
             print_success "Created detect_changes.sh"
         fi
@@ -249,7 +249,10 @@ plugin_post_copy_shared() {
                 print_info "LaTeX entries already in .gitignore, skipping"
             fi
         else
-            cp "$source_gitignore" "$target_gitignore"
+            # .gitignore is in MANIFEST_EXCLUDE_GLOBS so this copy will not
+            # be tracked, but the call still routes through the standard
+            # helper for convention (#265).
+            copy_with_confirm "$source_gitignore" "$target_gitignore"
             print_success "Created .gitignore with LaTeX entries"
         fi
     fi

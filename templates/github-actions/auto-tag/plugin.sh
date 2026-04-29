@@ -106,6 +106,9 @@ plugin_copy() {
 
         # Replace __ERD_REF__ placeholder with actual ref
         sed "s/__ERD_REF__/${ref}/g" "$workflow" > "$target_file"
+        # The output bypasses copy_with_confirm; register it explicitly so
+        # the manifest tracking layer (#265) sees this verbatim file.
+        manifest_track_file "$target_file"
         print_success "Created auto-tag.yml (using @${ref})"
     fi
 }

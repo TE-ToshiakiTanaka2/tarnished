@@ -68,7 +68,10 @@ plugin_copy() {
             fi
         fi
 
-        cp "$workflow" "$target_file"
+        # User has either confirmed overwrite or the target did not exist;
+        # bypass copy_with_confirm's own prompt so the message UX above
+        # remains the source of truth (#265).
+        OVERWRITE_ALL=true copy_with_confirm "$workflow" "$target_file"
         print_success "Created rust-quality-check.yml"
     fi
 }
