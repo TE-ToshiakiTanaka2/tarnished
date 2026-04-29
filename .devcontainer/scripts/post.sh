@@ -267,4 +267,13 @@ if [[ -f "${SCRIPT_DIR}/setup_plugins.sh" ]]; then
     setup_plugins
 fi
 
+# -----------------------------------------------------------------------------
+# Codex CLI Setup
+# -----------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/setup_codex.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_codex.sh"
+    setup_codex
+fi
+
 echo "Post-creation setup complete!"
