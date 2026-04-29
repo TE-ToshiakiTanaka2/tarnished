@@ -118,6 +118,13 @@ CELERY_ENABLED=false
 DRY_RUN=false
 SKIP_CONFIRM=false
 
+# Monorepo mode (#263)
+MONOREPO_MODE=false
+IS_ADD_MODULE_MODE=false
+ADD_MODULE_NAME=""
+ADD_MODULE_LANG=""
+declare -a MODULES=()
+
 # Core plugins that are always loaded
 declare -a CORE_PLUGINS=("core" "claude")
 
@@ -141,7 +148,13 @@ Options:
     -h, --help          Show this help message
     -d, --dry-run       Preview files without creating them
     -y, --yes           Skip confirmation prompts
-    --lang <language>   Select language template (can be specified multiple times)
+    --lang <language>   Select language template (can be specified multiple times in
+                        single mode; in monorepo mode use --module instead)
+    --monorepo          Enable monorepo mode for fresh init (#263)
+    --module <name>:<lang>
+                        Define a monorepo module. Repeatable. Implies --monorepo. (#263)
+    --add-module <name> Add a single module to an existing monorepo. Pair with --lang.
+                        Auto-detected when CWD already contains modules.json. (#263)
     --codex             Include OpenAI Codex CLI integration (code review)
     --postgresql        Include PostgreSQL database service
     --mysql             Include MySQL database service
@@ -166,20 +179,27 @@ Available Services:
     celery              Celery Worker + Beat task queue (requires Python + Redis)
 
 Examples:
+    # Single-project mode (default)
     ./setup.sh                              # Interactive mode
     ./setup.sh my-project                   # Create project named 'my-project'
     ./setup.sh --dry-run my-app             # Preview what would be created
     ./setup.sh --lang rust                  # Rust only
-    ./setup.sh --lang python                # Python only
     ./setup.sh --lang rust --lang python    # Rust + Python
-    ./setup.sh --lang rust --codex          # Rust with Codex CLI code review
     ./setup.sh --lang rust --postgresql     # Rust with PostgreSQL
-    ./setup.sh --lang rust --mysql          # Rust with MySQL
-    ./setup.sh --lang python --redis       # Python with Redis
-    ./setup.sh --lang python --celery      # Python with Celery + Redis (auto-enabled)
+    ./setup.sh --lang python --celery       # Python with Celery + Redis (auto-enabled)
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
-    ./setup.sh --overwrite                  # Overwrite existing files
+
+    # Monorepo mode (#263)
+    ./setup.sh --monorepo                   # Interactive: define modules in a loop
+    ./setup.sh --monorepo --module jing:python --module kir:node
+                                            # Two-module init (Python + Node)
+    ./setup.sh --monorepo --module foo:python --postgresql --redis -y
+                                            # Init with shared services
+
+    # Add module to an existing monorepo (#263)
+    ./setup.sh --add-module anisette --lang python -y
+    ./setup.sh                              # Auto-detected if CWD has modules.json
 
 Generated Files:
     .devcontainer/
@@ -415,15 +435,23 @@ load_plugin() {
     return 0
 }
 
-# Load selected plugins in correct order
+# Load selected plugins in correct order. In add-module mode (#263) we skip
+# the plugins that own the shared root assets (core, claude, codex,
+# github-actions) — those were already installed during the original
+# `setup.sh --monorepo` run, and re-running their plugin_copy hooks would
+# overwrite user customizations and language-toolchain marker blocks.
 load_selected_plugins() {
     LOADED_PLUGINS=()
     PLUGIN_NAMES=()
 
     local -a load_order=()
+    local skip_root_plugins=false
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        skip_root_plugins=true
+    fi
 
-    # 1. Core plugin first
-    if [[ -f "${TEMPLATES_DIR}/core/plugin.sh" ]]; then
+    # 1. Core plugin first (skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ -f "${TEMPLATES_DIR}/core/plugin.sh" ]]; then
         load_order+=("${TEMPLATES_DIR}/core/plugin.sh")
     fi
 
@@ -443,13 +471,13 @@ load_selected_plugins() {
         fi
     done
 
-    # 4. Claude plugin
-    if [[ -f "${TEMPLATES_DIR}/claude/plugin.sh" ]]; then
+    # 4. Claude plugin (skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ -f "${TEMPLATES_DIR}/claude/plugin.sh" ]]; then
         load_order+=("${TEMPLATES_DIR}/claude/plugin.sh")
     fi
 
-    # 5. Codex plugin (if enabled)
-    if [[ "$CODEX_ENABLED" == true ]]; then
+    # 5. Codex plugin (if enabled — skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ "$CODEX_ENABLED" == true ]]; then
         local codex_path="${TEMPLATES_DIR}/codex/plugin.sh"
         if [[ -f "$codex_path" ]]; then
             load_order+=("$codex_path")
@@ -458,8 +486,8 @@ load_selected_plugins() {
         fi
     fi
 
-    # 6. GitHub Actions plugins (if enabled)
-    if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
+    # 6. GitHub Actions plugins (skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
         local github_actions_path="${TEMPLATES_DIR}/github-actions/project-integration/plugin.sh"
         if [[ -f "$github_actions_path" ]]; then
             load_order+=("$github_actions_path")
@@ -468,14 +496,18 @@ load_selected_plugins() {
         fi
     fi
 
-    # 7. Auto-tag plugin (independent from project-integration)
-    if [[ "$AUTO_TAG_ENABLED" == true ]]; then
+    # 7. Auto-tag plugin (independent from project-integration; skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ "$AUTO_TAG_ENABLED" == true ]]; then
         local auto_tag_path="${TEMPLATES_DIR}/github-actions/auto-tag/plugin.sh"
         if [[ -f "$auto_tag_path" ]]; then
             load_order+=("$auto_tag_path")
         else
             print_warning "Auto-tag plugin not found, skipping"
         fi
+    fi
+
+    if [[ "$skip_root_plugins" == true ]]; then
+        print_info "add-module mode: skipping core/claude/codex/github-actions (already installed)"
     fi
 
     # Load plugins
@@ -494,7 +526,7 @@ load_selected_plugins() {
 
 # Unset plugin functions to prevent carryover between plugins
 unset_plugin_functions() {
-    unset -f plugin_name plugin_description plugin_copy plugin_post_copy plugin_interactive_setup plugin_dockerfile 2>/dev/null || true
+    unset -f plugin_name plugin_description plugin_copy plugin_post_copy plugin_interactive_setup plugin_dockerfile plugin_post_copy_shared plugin_post_copy_module 2>/dev/null || true
 }
 
 # Execute plugin_copy for all loaded plugins
@@ -544,9 +576,23 @@ execute_plugin_dockerfiles() {
     unset_plugin_functions
 }
 
-# Execute plugin_post_copy for all loaded plugins
+# Execute plugin_post_copy for all loaded plugins.
+#
+# Dispatch (#263):
+#   - Single mode (MONOREPO_MODE=false): call plugin_post_copy(root) for every
+#     plugin. Identical to pre-#263 behavior.
+#   - Monorepo / add-module mode (MONOREPO_MODE=true || IS_ADD_MODULE_MODE=true):
+#     for language plugins (path under templates/languages/) that expose
+#     plugin_post_copy_module, call plugin_post_copy_shared(root) once and
+#     plugin_post_copy_module(root/<module>, <module>) for each module whose
+#     language matches this plugin. Non-language plugins (and language plugins
+#     missing the new hook) fall back to plugin_post_copy(root).
 execute_plugin_post_copies() {
     local target_dir="$1"
+    local monorepo_dispatch=false
+    if [[ "$MONOREPO_MODE" == true ]] || [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        monorepo_dispatch=true
+    fi
 
     for plugin_path in "${LOADED_PLUGINS[@]}"; do
         # Unset previous plugin functions
@@ -561,8 +607,37 @@ execute_plugin_post_copies() {
             plugin_interactive_setup
         fi
 
-        # Execute plugin_post_copy if it exists (after interactive setup)
-        if declare -f plugin_post_copy > /dev/null; then
+        local is_lang=false
+        if [[ "$plugin_path" == */templates/languages/* ]]; then
+            is_lang=true
+        fi
+
+        if [[ "$monorepo_dispatch" == true ]] && [[ "$is_lang" == true ]] \
+            && declare -f plugin_post_copy_module > /dev/null; then
+
+            # Determine this plugin's language id from its parent directory.
+            local plugin_lang
+            plugin_lang="$(basename "$(dirname "$plugin_path")")"
+
+            # Run shared edits once.
+            if declare -f plugin_post_copy_shared > /dev/null; then
+                plugin_post_copy_shared "$target_dir"
+            fi
+
+            # Run per-module edits for every module that uses this language.
+            local entry module_name module_lang
+            for entry in "${MODULES[@]}"; do
+                module_name="${entry%%:*}"
+                module_lang="${entry#*:}"
+                if [[ "$module_lang" != "$plugin_lang" ]]; then
+                    continue
+                fi
+                local module_dir="${target_dir}/${module_name}"
+                mkdir -p "$module_dir"
+                plugin_post_copy_module "$module_dir" "$module_name"
+            done
+        elif declare -f plugin_post_copy > /dev/null; then
+            # Single mode (and non-language / legacy plugins in monorepo mode).
             plugin_post_copy "$target_dir"
         fi
     done
@@ -756,6 +831,32 @@ parse_arguments() {
                     exit 1
                 fi
                 ;;
+            --monorepo)
+                MONOREPO_MODE=true
+                shift
+                ;;
+            --module)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--module requires a value (format: <name>:<lang>)"
+                    exit 1
+                fi
+                if [[ "$2" != *:* ]]; then
+                    print_error "--module value must be <name>:<lang> (got: '$2')"
+                    exit 1
+                fi
+                MODULES+=("$2")
+                MONOREPO_MODE=true
+                shift 2
+                ;;
+            --add-module)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--add-module requires a value (module name)"
+                    exit 1
+                fi
+                IS_ADD_MODULE_MODE=true
+                ADD_MODULE_NAME="$2"
+                shift 2
+                ;;
             --codex)
                 CODEX_ENABLED=true
                 shift
@@ -809,6 +910,340 @@ parse_arguments() {
                 ;;
         esac
     done
+
+    validate_argument_combinations
+}
+
+# Reject mutually-exclusive flag combinations and other invalid mixes (#263).
+# Documented in docs/design/shared/api-spec.md :: Setup / Plugin Surface.
+validate_argument_combinations() {
+    # --add-module is exclusive with monorepo init flags
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        if [[ "$MONOREPO_MODE" == true ]] && [[ ${#MODULES[@]} -gt 0 ]]; then
+            print_error "--module cannot be combined with --add-module (--module is init-only)"
+            exit 1
+        fi
+        if [[ ${#MODULES[@]} -gt 0 ]]; then
+            print_error "--module cannot be combined with --add-module"
+            exit 1
+        fi
+        # --add-module via CLI requires --lang to specify the new module's language
+        if [[ ${#SELECTED_LANGUAGES[@]} -gt 0 ]]; then
+            ADD_MODULE_LANG="${SELECTED_LANGUAGES[0]}"
+            if [[ ${#SELECTED_LANGUAGES[@]} -gt 1 ]]; then
+                print_error "--add-module accepts a single --lang (got ${#SELECTED_LANGUAGES[@]})"
+                exit 1
+            fi
+            if ! validate_language "$ADD_MODULE_LANG"; then
+                exit 1
+            fi
+        fi
+        # --monorepo + --add-module (without --module) is also rejected as a redundant
+        # signal — --add-module already implies "operate on an existing monorepo".
+        if [[ "$MONOREPO_MODE" == true ]]; then
+            print_error "--monorepo and --add-module are mutually exclusive"
+            exit 1
+        fi
+        return 0
+    fi
+
+    # In monorepo init mode, --lang at the root level is invalid; languages
+    # come from --module entries.
+    if [[ "$MONOREPO_MODE" == true ]] && [[ ${#SELECTED_LANGUAGES[@]} -gt 0 ]]; then
+        print_error "--lang is not allowed in monorepo mode; use --module <name>:<lang> instead"
+        exit 1
+    fi
+
+    # Validate languages embedded in --module entries.
+    local entry name lang
+    for entry in "${MODULES[@]}"; do
+        name="${entry%%:*}"
+        lang="${entry#*:}"
+        if ! validate_module_name "$name"; then
+            exit 1
+        fi
+        if ! validate_language "$lang"; then
+            exit 1
+        fi
+    done
+}
+
+# Verify a language id is one of AVAILABLE_LANGUAGES.
+# Usage: validate_language <lang>
+validate_language() {
+    local lang="$1"
+    local available
+    for available in "${AVAILABLE_LANGUAGES[@]}"; do
+        if [[ "$available" == "$lang" ]]; then
+            return 0
+        fi
+    done
+    print_error "Unknown language '$lang' (available: ${AVAILABLE_LANGUAGES[*]})"
+    return 1
+}
+
+# =============================================================================
+# Mode Resolution (#263)
+# =============================================================================
+
+# Resolve the operating mode based on flags, the pre-existing state of the
+# CWD, and (when interactive) user choice. After this returns, exactly one
+# of three states holds:
+#
+#   1. Single mode:    MONOREPO_MODE=false, IS_ADD_MODULE_MODE=false
+#   2. Monorepo init:  MONOREPO_MODE=true,  IS_ADD_MODULE_MODE=false, MODULES non-empty
+#   3. Add-module:     IS_ADD_MODULE_MODE=true, MODULES has exactly 1 entry
+#
+# In modes 2 and 3, SELECTED_LANGUAGES is populated from MODULES so the
+# downstream language-selection prompt is skipped.
+resolve_setup_mode() {
+    local target_dir
+    target_dir="$(pwd)"
+
+    # --- Add-module path ------------------------------------------------------
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        if ! detect_existing_monorepo "$target_dir"; then
+            print_error "No modules.json found in $target_dir. Run with --monorepo first."
+            exit 1
+        fi
+
+        # Validate the registry NOW, before any plugin writes — fail fast
+        # on malformed JSON or unsupported `version` (Critical #2 from
+        # the #263 review).
+        if ! read_modules_json "$target_dir" >/dev/null; then
+            exit 1
+        fi
+
+        # Anchor PROJECT_NAME to the existing monorepo so the new module's
+        # generated content (CLAUDE.md, service compose substitution, etc.)
+        # matches what was written by the original --monorepo init — even
+        # if the user typed a different name or renamed the directory
+        # (Warning #4 from #263 review).
+        local canonical
+        if canonical=$(derive_project_name_from_compose "$target_dir"); then
+            if [[ "$PROJECT_NAME" != "$canonical" ]]; then
+                print_info "Using existing project name '$canonical' (overrides '$PROJECT_NAME')"
+                PROJECT_NAME="$canonical"
+            fi
+        fi
+
+        # Module name validated already; need the language too.
+        if [[ -z "$ADD_MODULE_LANG" ]]; then
+            if check_tty_available; then
+                # Interactive completion of a partial CLI invocation.
+                local lang
+                while true; do
+                    echo -n "Module language for '$ADD_MODULE_NAME' (${AVAILABLE_LANGUAGES[*]}): " > /dev/tty
+                    IFS='' read -r lang < /dev/tty
+                    if validate_language "$lang"; then
+                        ADD_MODULE_LANG="$lang"
+                        break
+                    fi
+                done
+            else
+                print_error "--add-module requires --lang in non-interactive mode"
+                exit 1
+            fi
+        fi
+
+        if ! validate_module_name "$ADD_MODULE_NAME"; then
+            exit 1
+        fi
+
+        MODULES=("${ADD_MODULE_NAME}:${ADD_MODULE_LANG}")
+        SELECTED_LANGUAGES=("$ADD_MODULE_LANG")
+        print_info "Add-module mode: ${ADD_MODULE_NAME} (${ADD_MODULE_LANG})"
+        return 0
+    fi
+
+    # --- Auto-detect existing monorepo (no explicit flag) ---------------------
+    # If the user just ran `./setup.sh` in a directory that already contains
+    # modules.json, offer to add a module rather than re-init from scratch.
+    if [[ "$MONOREPO_MODE" != true ]] && detect_existing_monorepo "$target_dir"; then
+        # Validate before offering anything (Critical #2 from #263 review).
+        if ! read_modules_json "$target_dir" >/dev/null; then
+            exit 1
+        fi
+        if check_tty_available; then
+            echo "" > /dev/tty
+            print_info "Existing monorepo detected (modules.json present)."
+            if confirm "Add a new module?" "y"; then
+                IS_ADD_MODULE_MODE=true
+                local entry name lang
+                entry=$(prompt_add_module)
+                name="${entry%%:*}"
+                lang="${entry#*:}"
+                ADD_MODULE_NAME="$name"
+                ADD_MODULE_LANG="$lang"
+                MODULES=("$entry")
+                SELECTED_LANGUAGES=("$lang")
+                print_info "Add-module mode: ${name} (${lang})"
+                return 0
+            fi
+            # User declined; nothing to do.
+            print_info "Nothing to do."
+            exit 0
+        else
+            # Non-interactive run inside an existing monorepo with no flags
+            # is a no-op (avoid accidental re-init in CI).
+            print_info "Existing monorepo detected; no flags given. Use --add-module to add."
+            exit 0
+        fi
+    fi
+
+    # --- Monorepo init path ---------------------------------------------------
+    if [[ "$MONOREPO_MODE" == true ]]; then
+        if [[ ${#MODULES[@]} -eq 0 ]]; then
+            if check_tty_available; then
+                prompt_module_loop
+            else
+                print_error "--monorepo requires --module entries in non-interactive mode"
+                exit 1
+            fi
+        fi
+        derive_selected_languages_from_modules
+        return 0
+    fi
+
+    # --- Default: ask whether to enable monorepo (interactive only) ----------
+    if check_tty_available; then
+        local answer
+        answer=$(prompt_monorepo_mode)
+        if [[ "$answer" == "true" ]]; then
+            MONOREPO_MODE=true
+            prompt_module_loop
+            derive_selected_languages_from_modules
+            return 0
+        fi
+    fi
+
+    # Fall through: single mode (no change).
+}
+
+# Populate SELECTED_LANGUAGES from MODULES (deduplicated, order-preserving).
+derive_selected_languages_from_modules() {
+    local seen entry lang
+    declare -A seen=()
+    SELECTED_LANGUAGES=()
+    for entry in "${MODULES[@]}"; do
+        lang="${entry#*:}"
+        if [[ -z "${seen[$lang]:-}" ]]; then
+            SELECTED_LANGUAGES+=("$lang")
+            seen[$lang]=1
+        fi
+    done
+}
+
+# In add-module mode, fail fast (or prompt) when the requested module name
+# already exists in modules.json. Honors --overwrite (-y also bypasses the
+# prompt). Exits 0 on a clean decline.
+check_add_module_conflict() {
+    local target_dir entry name
+    target_dir="$(pwd)"
+
+    for entry in "${MODULES[@]}"; do
+        name="${entry%%:*}"
+        if ! find_module_by_name "$target_dir" "$name"; then
+            continue
+        fi
+
+        if [[ "$OVERWRITE_ALL" == true ]]; then
+            print_warning "Module '$name' exists; will overwrite (--overwrite)"
+            continue
+        fi
+
+        if check_tty_available; then
+            if confirm "Module '$name' already exists. Overwrite?" "n"; then
+                OVERWRITE_ALL=true
+                print_info "Overwriting module '$name' on user confirmation"
+            else
+                print_info "Skipped: $name"
+                exit 0
+            fi
+        else
+            print_error "Module '$name' exists. Re-run with --overwrite to replace."
+            exit 1
+        fi
+    done
+}
+
+# Reduce both the interactive AVAILABLE_SERVICES list and the CLI-flag-set
+# SELECTED_SERVICES list to only those services that would NOT collide with
+# something already defined in the existing docker-compose.yml (FR-10,
+# Critical #3 from #263 review).
+#
+# We compute "would collide" by reading the candidate overlay's own service
+# keys and substituting {{PROJECT_NAME}}, then checking against the target's
+# current top-level service list. This is more accurate than hardcoded
+# suffix tables — postgresql and mysql both produce `<project>-db`, celery
+# produces both `-celery-worker` and `-celery-beat`, etc.
+filter_available_services_for_add_module() {
+    local target_dir svc_id
+    target_dir="$(pwd)"
+
+    if [[ ! -f "${target_dir}/docker-compose.yml" ]]; then
+        return 0
+    fi
+
+    # Filter interactive offer list.
+    local -a remaining=()
+    for svc_id in "${AVAILABLE_SERVICES[@]}"; do
+        if service_overlay_collides_with_target "$svc_id" "$target_dir"; then
+            print_info "Service '$svc_id' would collide with existing compose service; will not offer."
+        else
+            remaining+=("$svc_id")
+        fi
+    done
+    AVAILABLE_SERVICES=("${remaining[@]}")
+
+    # Scrub the CLI-flag-populated SELECTED_SERVICES list too — without this,
+    # `--add-module foo --lang python --postgresql` against a project that
+    # already has postgres would re-run the postgres plugin and append
+    # duplicate compose services / depends_on / env vars.
+    local -a selected_remaining=()
+    for svc_id in "${SELECTED_SERVICES[@]}"; do
+        if service_overlay_collides_with_target "$svc_id" "$target_dir"; then
+            print_warning "Service '$svc_id' (from CLI flag) would collide with existing compose service; skipping."
+        else
+            selected_remaining+=("$svc_id")
+        fi
+    done
+    SELECTED_SERVICES=("${selected_remaining[@]}")
+}
+
+# Check whether the candidate service plugin's compose overlay would
+# introduce a service key that already exists in the target compose file.
+# Returns 0 (collision) / 1 (no collision).
+service_overlay_collides_with_target() {
+    local svc_id="$1"
+    local target_dir="$2"
+    local overlay="${TEMPLATES_DIR}/services/${svc_id}/docker-compose.${svc_id}.yml"
+
+    [[ -f "$overlay" ]] || return 1
+
+    local existing_services overlay_services
+    existing_services=$(list_existing_compose_services "$target_dir")
+
+    # Substitute {{PROJECT_NAME}} FIRST so the resulting service keys match
+    # the same `^  [a-zA-Z]...` shape as list_existing_compose_services
+    # (raw overlay keys start with `{`, so awk needs the substituted form).
+    overlay_services=$(sed "s|{{PROJECT_NAME}}|${PROJECT_NAME}|g" "$overlay" | awk '
+        /^services:[[:space:]]*$/ { in_services = 1; next }
+        /^[a-zA-Z]/ && !/^[[:space:]]/ { in_services = 0 }
+        in_services && /^  [a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
+            sub(/^  /, ""); sub(/:[[:space:]]*$/, ""); print
+        }
+    ')
+
+    local svc existing
+    for svc in $overlay_services; do
+        for existing in $existing_services; do
+            if [[ "$svc" == "$existing" ]]; then
+                return 0
+            fi
+        done
+    done
+    return 1
 }
 
 # =============================================================================
@@ -850,9 +1285,27 @@ main() {
 
     print_info "Project name: $PROJECT_NAME"
 
-    # Select language if not specified
-    if [[ ${#SELECTED_LANGUAGES[@]} -eq 0 ]]; then
+    # Resolve operating mode (single | monorepo init | add-module). Populates
+    # MONOREPO_MODE, IS_ADD_MODULE_MODE, MODULES, and SELECTED_LANGUAGES.
+    # Single mode (the only mode in pre-#263 setup.sh) is the no-op default.
+    resolve_setup_mode
+
+    # In add-module mode, check for module-name collisions before doing any
+    # work so the user can decline without partial writes (FR-9).
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        check_add_module_conflict
+    fi
+
+    # Select language if not specified (single-mode only — monorepo derives
+    # SELECTED_LANGUAGES from MODULES inside resolve_setup_mode).
+    if [[ "$MONOREPO_MODE" != true ]] && [[ ${#SELECTED_LANGUAGES[@]} -eq 0 ]]; then
         prompt_language_selection
+    fi
+
+    # In add-module mode, filter the service-selection menu to only the
+    # services not already present in the existing docker-compose.yml.
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        filter_available_services_for_add_module
     fi
 
     # Select services if not specified
@@ -860,8 +1313,11 @@ main() {
         prompt_service_selection
     fi
 
-    # Prompt for optional features if in interactive mode
-    if check_tty_available; then
+    # Prompt for optional features if in interactive mode. In add-module mode
+    # these plugins are skipped by load_selected_plugins (they own root assets
+    # already installed by the original --monorepo init), so prompting would
+    # create a silent no-op (Warning #5 from #263 review).
+    if check_tty_available && [[ "$IS_ADD_MODULE_MODE" != true ]]; then
         # Ask about Codex CLI integration
         if [[ "$CODEX_ENABLED" != true ]]; then
             echo "" > /dev/tty
@@ -896,9 +1352,34 @@ main() {
         fi
     fi
 
+    # Same reasoning for the explicit CLI flags — emit a one-time warning if
+    # the user passed them with --add-module so they know they will be no-ops.
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        if [[ "$CODEX_ENABLED" == true ]]; then
+            print_warning "--codex is ignored in add-module mode (Codex was set up by the original --monorepo init)"
+            CODEX_ENABLED=false
+        fi
+        if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
+            print_warning "--github-actions is ignored in add-module mode (already installed by the original --monorepo init)"
+            GITHUB_ACTIONS_ENABLED=false
+        fi
+        if [[ "$AUTO_TAG_ENABLED" == true ]]; then
+            print_warning "--auto-tag is ignored in add-module mode (already installed by the original --monorepo init)"
+            AUTO_TAG_ENABLED=false
+        fi
+    fi
+
     # Confirm settings
     print_section "Setup Configuration"
     echo "Project name:         $PROJECT_NAME"
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        echo "Mode:                 add-module (${MODULES[0]})"
+    elif [[ "$MONOREPO_MODE" == true ]]; then
+        echo "Mode:                 monorepo init"
+        echo "Modules:              ${MODULES[*]}"
+    else
+        echo "Mode:                 single-project"
+    fi
     echo "Language:             ${SELECTED_LANGUAGES[*]:-none}"
     echo "Services:             ${SELECTED_SERVICES[*]:-none}"
     echo "Codex CLI:            $CODEX_ENABLED"
@@ -937,6 +1418,20 @@ main() {
     # Execute post-copy processing
     print_section "Post-Processing"
     execute_plugin_post_copies "$TARGET_DIR"
+
+    # Monorepo registry maintenance (#263). Decoupled from the plugin
+    # pipeline so that add-module mode (which skips core plugin) still
+    # writes modules.json + per-module CLAUDE.md.
+    if [[ "$MONOREPO_MODE" == true ]] || [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        print_info "Updating monorepo registry..."
+        # Source core plugin once to expose the registry helpers — cheap and
+        # avoids duplicating the implementation in setup.sh itself.
+        unset_plugin_functions
+        source "${TEMPLATES_DIR}/core/plugin.sh"
+        core_seed_modules_json "$TARGET_DIR"
+        core_write_per_module_claude_md "$TARGET_DIR"
+        unset_plugin_functions
+    fi
 
     # Replace placeholders
     replace_placeholders "$TARGET_DIR" "$PROJECT_NAME"

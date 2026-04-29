@@ -1,6 +1,6 @@
 # API Specification (Project-wide)
 
-Cumulative public surface of `erd`. Per-issue API deltas live in `docs/design/#{issue}/api-spec.md`.
+Cumulative public surface of `erd` and the `setup.sh` ecosystem. Per-issue API deltas live in `docs/design/#{issue}/api-spec.md`.
 
 ## CLI Surface
 
@@ -27,6 +27,78 @@ Behavior:
 1. Always link to `default_project` (with overrides if provided).
 2. For each label on the issue: if a matching key exists under `label_projects`, link to that project too, applying that entry's `field_defaults` (CLI overrides do NOT apply to label-routed links — they use config-only defaults).
 3. Missing label-routed projects log a warning and continue (non-fatal).
+
+### `setup.sh` (#246, #263)
+
+Top-level template installer. Three operating modes:
+
+| Mode | Trigger | Effect |
+| --- | --- | --- |
+| **Single** (default) | no `--monorepo` / no `--module` / no `--add-module` / no existing CWD `modules.json` | Today's behavior — generates a flat single-project layout. |
+| **Monorepo init** | `--monorepo`, or `--module`, or interactive "y" answer to "Monorepo configuration?" | Generates root assets + per-module sub-directories + `modules.json`. |
+| **Add-module** | `--add-module <name>`, or auto-detected when CWD already contains `modules.json` (interactive "y" answer) | Adds one module to an existing monorepo. |
+
+Flags (additions in #263 marked):
+
+```
+-h, --help              Show help
+-d, --dry-run           Preview without writing files
+-y, --yes               Skip confirmation prompts
+--lang <language>       Single mode + add-module mode: select language (repeatable in single mode)
+--monorepo              [#263] Enable monorepo mode for fresh init
+--module <name>:<lang>  [#263] Repeatable; define a module (init mode). Implies --monorepo.
+--add-module <name>     [#263] Add a module to an existing monorepo. Pair with --lang.
+--codex                 Include OpenAI Codex CLI integration
+--postgresql            Include PostgreSQL service
+--mysql                 Include MySQL service
+--redis                 Include Redis service
+--celery                Include Celery (auto-enables Redis + Python)
+--github-actions        Include GitHub Project integration
+--overwrite             Overwrite existing files without confirmation
+```
+
+Mutually-exclusive combinations rejected with exit 1:
+
+| Combination | Reason |
+| --- | --- |
+| `--monorepo --add-module <name>` | Init vs. add are exclusive operations |
+| `--module ... --add-module <name>` | `--module` is init-only |
+| `--monorepo --lang <lang>` (without `--module`) | In monorepo mode, language is per-module; use `--module name:lang` |
+| `--add-module <name>` outside a monorepo (no CWD `modules.json`) | Run with `--monorepo` first |
+
+Examples:
+
+```bash
+# Single (existing behavior)
+./setup.sh --lang rust -y
+./setup.sh --lang python --postgresql -y
+
+# Monorepo init (#263)
+./setup.sh                                                              # interactive
+./setup.sh --monorepo --module jing:python --module kir:node -y         # CLI
+./setup.sh --monorepo --module jing:python --postgresql --redis -y      # with services
+
+# Add module (#263)
+./setup.sh --add-module anisette --lang python -y                       # explicit
+./setup.sh                                                              # implicit if modules.json exists
+
+# Curl pipe (primary distribution path)
+curl -fsSL .../setup.sh | bash -s -- --lang rust -y
+curl -fsSL .../setup.sh | bash -s -- --monorepo --module jing:python --module kir:node -y
+```
+
+Completion message (#246):
+
+```
+Available Claude Code commands:
+  /issue     - Create a GitHub Issue
+  /design    - Design architecture for a GitHub Issue
+  /implement - Implement a GitHub Issue
+  /review    - Code review via Codex CLI
+  /pr        - Create a Pull Request
+
+Workflow: /issue → /design → /implement → /review → /pr
+```
 
 ## Configuration Files
 
@@ -90,6 +162,30 @@ branches:
 default_bump: rc
 ```
 
+### `modules.json` (downstream monorepo target, #263)
+
+JSON registry of modules in a monorepo, written by `setup.sh --monorepo` and updated by `setup.sh --add-module`.
+
+```json
+{
+  "version": 1,
+  "modules": [
+    { "name": "jing", "path": "jing", "language": "python", "services": [] },
+    { "name": "kir",  "path": "kir",  "language": "node",   "services": [] }
+  ]
+}
+```
+
+Schema (full table in [data-model.md](./data-model.md) :: "modules.json schema"):
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | integer | Currently `1`. Readers MUST reject unknown majors. |
+| `modules[].name` | string | `^[a-z][a-z0-9_-]*$`, max 50 chars, unique. |
+| `modules[].path` | string | Relative to repo root; equals `name` for now. |
+| `modules[].language` | string | One of `rust`, `python`, `node`, `deno`, `latex`. |
+| `modules[].services` | array of string | Informational; actual compose runs project-wide. |
+
 ## Internal API (cross-module function contracts)
 
 ### `src/cli/issue.rs`
@@ -127,18 +223,7 @@ default_bump: rc
 
 ### `setup.sh`
 
-Top-level installer. After completion prints (#246):
-
-```
-Available Claude Code commands:
-  /issue     - Create a GitHub Issue
-  /design    - Design architecture for a GitHub Issue
-  /implement - Implement a GitHub Issue
-  /review    - Code review via Codex CLI
-  /pr        - Create a Pull Request
-
-Workflow: /issue → /design → /implement → /review → /pr
-```
+See "CLI Surface :: `setup.sh`" above for flags and modes (#263). The completion message is unchanged from #246.
 
 ### `scripts/lib/common.sh::update_gitignore()` (#259)
 
@@ -151,6 +236,22 @@ Signature: `update_gitignore <target_dir>`. Seeds `${target_dir}/.gitignore` wit
 | Screenshots | `# Local screenshots (manual UI testing)` | `screenshots/` |
 
 `update_gitignore` calls `touch` on a missing `.gitignore` and emits exactly two messages (`[INFO] Updating .gitignore...`, `[OK] .gitignore updated`).
+
+### `scripts/lib/common.sh` — monorepo helpers (#263)
+
+| Function | Signature | Returns | Side effects |
+| --- | --- | --- | --- |
+| `detect_existing_monorepo` | `<target_dir>` | `0` if `<target_dir>/modules.json` exists | none |
+| `prompt_monorepo_mode` | (none) | `"true"` / `"false"` on stdout | reads `/dev/tty`; output via `print_*` to stderr |
+| `prompt_module_loop` | (none) | mutates global `MODULES` | reads `/dev/tty`; loops until empty `name`; re-prompts on validation fail |
+| `prompt_add_module` | (none) | `<name>:<lang>` on stdout | reads `/dev/tty` |
+| `validate_module_name` | `<name>` | `0` if valid, `1` otherwise | none. Regex: `^[a-z][a-z0-9_-]*$`, max 50 chars |
+| `read_modules_json` | `<target_dir>` | parsed `modules` array on stdout (jq) | exits non-zero on malformed JSON or unsupported `version` |
+| `write_modules_json` | `<target_dir> <jq_filter>` | `0` on success | atomic replace via tmp + `mv` |
+| `add_module_entry` | `<target_dir> <name> <lang> [<services_csv>]` | `0` on success, `2` if name exists | mutates `modules.json` |
+| `find_module_by_name` | `<target_dir> <name>` | `0` if present, `1` otherwise | none |
+| `list_module_names` | `<target_dir>` | newline-separated names on stdout | none |
+| `list_existing_compose_services` | `<target_dir>` | newline-separated service ids on stdout | none |
 
 ### `templates/codex/plugin.sh::plugin_post_copy` — gitignore step (#259)
 
@@ -209,6 +310,62 @@ The function is sourced into `.devcontainer/scripts/post.sh` after `setup_plugin
 
 Contract: under `set -e` (in `post.sh`), this script MUST `return 0` even when individual plugins fail; surface them as warnings.
 
+### Language plugin contract (`templates/languages/<lang>/plugin.sh`, #263)
+
+Language plugins (currently `python`, `rust`, `node`, `deno`, `latex`) expose a split `plugin_post_copy`:
+
+```bash
+# REQUIRED today, kept verbatim:
+plugin_name()                       # echo "<id>"
+plugin_description()                # echo "<desc>"
+plugin_copy(target_dir)             # root-scoped (e.g. .github/workflows/<lang>-quality-check.yml)
+plugin_dockerfile(target_dir)       # appends marker-guarded language block to docker/Dockerfile.dev
+
+# REQUIRED today, becomes a SHIM that delegates to the new pair:
+plugin_post_copy(target_dir) {
+    local target_dir="$1"
+    plugin_post_copy_shared "$target_dir"
+    plugin_post_copy_module "$target_dir" "${PROJECT_NAME}"
+}
+
+# NEW for language plugins only (#263):
+plugin_post_copy_shared(target_dir)
+plugin_post_copy_module(target_dir, module_name)
+```
+
+| Hook | Arguments | What it MAY touch | What it MUST NOT touch |
+| --- | --- | --- | --- |
+| `plugin_post_copy_shared` | `target_dir` (= project root) | `target_dir/.devcontainer/`, `target_dir/.claude/`, marker-guarded blocks in `target_dir/docker/Dockerfile.dev` and `target_dir/.devcontainer/scripts/post.sh` | Module sub-directories |
+| `plugin_post_copy_module` | `target_dir` (= `<root>/<module>` in monorepo mode, `<root>` in single mode), `module_name` | Files inside `target_dir`: `pyproject.toml`/`Cargo.toml`/`package.json`, lint config (`ruff.toml`, `biome.json`, etc.), `src/<module_name>/`, `tests/`, language-specific `.gitignore`, `CLAUDE.md` for the module | `target_dir/.devcontainer/`, `target_dir/.claude/`, `target_dir/docker/`, root `docker-compose.yml` |
+
+Both functions MUST be **idempotent** — re-running `setup.sh --add-module` for an already-registered language is a no-op for shared assets and obeys `--overwrite` for module assets. Marker-guarded blocks (`# >>> <lang> toolchain >>>` … `<<< <lang> toolchain <<<`) in `Dockerfile.dev` and `post.sh` provide block-level idempotency analogous to the gitignore policy (#259).
+
+### Non-language plugin contract (`templates/{core,claude,codex,services/<svc>,github-actions/<wf>}/plugin.sh`)
+
+Unchanged. These plugins implement only `plugin_post_copy(target_dir)` and operate on `target_dir = project root` in both single and monorepo modes. Service plugins remain mode-agnostic because their existing `{{PROJECT_NAME}}-<svc>` naming convention naturally produces monorepo-correct service names (e.g., `myapp-db` in single mode, `elsur-db` in monorepo mode for project `elsur`).
+
+`templates/core/plugin.sh::plugin_post_copy` gains an internal monorepo-mode branch (#263) gated on `${MONOREPO_MODE}` that writes `modules.json` from the registered `MODULES` array and writes `<module>/CLAUDE.md` per module — internal logic, not a contract change.
+
+### Orchestrator dispatch (`setup.sh::execute_plugin_post_copies`, #263)
+
+```
+for plugin_path in LOADED_PLUGINS:
+    is_lang := [[ "$plugin_path" == */templates/languages/* ]]
+    source plugin_path
+    if declare -f plugin_interactive_setup && check_tty_available:
+        plugin_interactive_setup
+
+    if MONOREPO_MODE && is_lang && declare -f plugin_post_copy_module:
+        plugin_post_copy_shared root
+        for module in MODULES where lang(module) == lang(plugin):
+            mkdir -p root/<module>
+            plugin_post_copy_module root/<module> <module>
+    else:
+        plugin_post_copy root
+```
+
+Single mode: takes the `else` branch for all plugins → identical to today's behavior (NFR-1).
+
 ## Error Responses
 
 | Error | Type | When |
@@ -220,7 +377,16 @@ Contract: under `set -e` (in `post.sh`), this script MUST `return 0` even when i
 | Plugin install failure | shell warning | `setup_plugins.sh` per-plugin; non-fatal |
 | Marketplace registration failure | shell warning, `return 0` | `setup_plugins.sh` ensure_claude_marketplace; non-fatal so `post.sh` continues |
 | `update_gitignore` write failure | shell error (propagates under `set -euo pipefail`) | `${target_dir}/.gitignore` not writable |
+| Mutually-exclusive setup.sh flags | shell error, exit 1 | `--monorepo --add-module`, `--module --add-module`, `--monorepo --lang` (no `--module`) (#263) |
+| `--add-module` outside monorepo | shell error, exit 1 | CWD lacks `modules.json` (#263) |
+| Unknown `--module` language | shell error, exit 1 | `--module name:foo` where `foo` ∉ `AVAILABLE_LANGUAGES` (#263) |
+| Invalid module name | shell warning + re-prompt (TTY) / shell error, exit 1 (CLI) | `validate_module_name` failure (#263) |
+| Module name conflict | exit 2 from `add_module_entry` → "Overwrite? y/n" prompt (TTY) / exit 1 (CLI without `--overwrite`) | add-module against existing `name` (#263) |
+| `modules.json` malformed | shell error, exit 1 | jq parse failure (#263) |
+| `modules.json` unsupported `version` | shell error, exit 1 | `read_modules_json` rejects `version > 1` (#263) |
 
 ## Versioning Policy
 
 `erd` follows semver. Tag bumps are computed from branch prefix per `versioning.yml`. Default-bump fallback is `rc`. The CLI itself is at `0.1.0` (pre-1.0).
+
+`modules.json` (#263) carries its own `version` field; current value is `1`. Bumps follow a major-only convention (no minor/patch; field additions are non-breaking by tolerant readers).

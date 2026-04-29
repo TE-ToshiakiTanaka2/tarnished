@@ -12,10 +12,19 @@
 # - GitHub Actions workflow for PDF builds with directory-based auto-detection
 # - Sample paper templates (English/Japanese ICSE format)
 #
+# Monorepo split (#263, experimental for LaTeX): .latexmkrc + sample paper
+# templates + paper category dirs go to plugin_post_copy_module. The
+# Dockerfile / devcontainer / Claude / post.sh / docker-compose / .gitignore
+# edits go to plugin_post_copy_shared. LaTeX in monorepo mode is documented
+# as experimental — the per-module mental model fits poorly with TeX
+# project layouts.
 # =============================================================================
 
 # Get the directory where this plugin is located
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+LATEX_DOCKERFILE_MARKER="# >>> latex (texlive) toolchain >>>"
+LATEX_POSTSH_MARKER="# >>> latex post-create >>>"
 
 # =============================================================================
 # Required Functions
@@ -96,7 +105,9 @@ plugin_copy() {
     fi
 }
 
-# Append TeX Live packages and ENV variables to Dockerfile.dev
+# Append TeX Live packages and ENV variables to Dockerfile.dev. Markers +
+# idempotency check only in monorepo / add-module mode (NFR-1 keeps
+# single-mode output byte-identical to pre-#263).
 plugin_dockerfile() {
     local target_dir="$1"
     local dockerfile="${target_dir}/docker/Dockerfile.dev"
@@ -106,34 +117,66 @@ plugin_dockerfile() {
         return
     fi
 
+    local use_marker=false
+    if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+        use_marker=true
+        if grep -qF "$LATEX_DOCKERFILE_MARKER" "$dockerfile"; then
+            print_info "LaTeX toolchain block already present in Dockerfile, skipping"
+            return
+        fi
+    fi
+
     print_info "Adding TeX Live packages to Dockerfile..."
 
     local temp_file="${dockerfile}.tmp"
 
-    # Insert TeX Live installation and ENV block before SHELL line
-    awk '
-    /^SHELL / && !inserted {
-        print ""
-        print "# TeX Live environment"
-        print "RUN apt-get update && apt-get install -y --no-install-recommends \\"
-        print "    texlive-full \\"
-        print "    && rm -rf /var/lib/apt/lists/*"
-        print ""
-        print "# LaTeX environment configuration"
-        print "ENV TEXINPUTS='"'"'.//;'"'"'"
-        print "ENV BIBINPUTS='"'"'.//;'"'"'"
-        print ""
-        inserted=1
-    }
-    { print }
-    ' "$dockerfile" > "$temp_file"
+    if [[ "$use_marker" == true ]]; then
+        awk -v marker_open="$LATEX_DOCKERFILE_MARKER" \
+            -v marker_close="# <<< latex (texlive) toolchain <<<" '
+        /^SHELL / && !inserted {
+            print ""
+            print marker_open
+            print "# TeX Live environment"
+            print "RUN apt-get update && apt-get install -y --no-install-recommends \\"
+            print "    texlive-full \\"
+            print "    && rm -rf /var/lib/apt/lists/*"
+            print ""
+            print "# LaTeX environment configuration"
+            print "ENV TEXINPUTS='"'"'.//;'"'"'"
+            print "ENV BIBINPUTS='"'"'.//;'"'"'"
+            print marker_close
+            print ""
+            inserted=1
+        }
+        { print }
+        ' "$dockerfile" > "$temp_file"
+    else
+        # Pre-#263 single-mode insertion (no markers).
+        awk '
+        /^SHELL / && !inserted {
+            print ""
+            print "# TeX Live environment"
+            print "RUN apt-get update && apt-get install -y --no-install-recommends \\"
+            print "    texlive-full \\"
+            print "    && rm -rf /var/lib/apt/lists/*"
+            print ""
+            print "# LaTeX environment configuration"
+            print "ENV TEXINPUTS='"'"'.//;'"'"'"
+            print "ENV BIBINPUTS='"'"'.//;'"'"'"
+            print ""
+            inserted=1
+        }
+        { print }
+        ' "$dockerfile" > "$temp_file"
+    fi
 
     mv "$temp_file" "$dockerfile"
     print_success "TeX Live packages and environment variables added to Dockerfile"
 }
 
-# Post-copy processing - merge configs, create project structure, copy templates
-plugin_post_copy() {
+# Shared root post-copy: devcontainer / claude / docker-compose / .gitignore /
+# post.sh edits.
+plugin_post_copy_shared() {
     local target_dir="$1"
 
     # Merge devcontainer.json features and extensions
@@ -164,57 +207,13 @@ plugin_post_copy() {
         print_success "LaTeX Claude settings merged"
     fi
 
-    # Copy .latexmkrc (root config for Japanese platex)
-    local source_latexmkrc="${PLUGIN_DIR}/.latexmkrc"
-    local target_latexmkrc="${target_dir}/.latexmkrc"
-
-    if [[ -f "$source_latexmkrc" ]]; then
-        print_info "Copying .latexmkrc..."
-        copy_with_confirm "$source_latexmkrc" "$target_latexmkrc"
-    fi
-
-    # Copy sample paper templates
-    print_info "Copying sample paper templates..."
-
-    # Copy arxiv/sample-en
-    local source_sample_en="${PLUGIN_DIR}/arxiv/sample-en"
-    local target_sample_en="${target_dir}/arxiv/sample-en"
-
-    if [[ -d "$source_sample_en" ]]; then
-        mkdir -p "${target_dir}/arxiv"
-        copy_dir_with_confirm "$source_sample_en" "$target_sample_en"
-        print_success "Created arxiv/sample-en template"
-    fi
-
-    # Copy arxiv/sample-ja
-    local source_sample_ja="${PLUGIN_DIR}/arxiv/sample-ja"
-    local target_sample_ja="${target_dir}/arxiv/sample-ja"
-
-    if [[ -d "$source_sample_ja" ]]; then
-        mkdir -p "${target_dir}/arxiv"
-        copy_dir_with_confirm "$source_sample_ja" "$target_sample_ja"
-        print_success "Created arxiv/sample-ja template"
-    fi
-
-    # Create standard directories for paper categories
-    print_info "Creating paper category directories..."
-    mkdir -p "${target_dir}/conference"
-    mkdir -p "${target_dir}/journal"
-    mkdir -p "${target_dir}/workshop"
-
-    touch "${target_dir}/conference/.gitkeep"
-    touch "${target_dir}/journal/.gitkeep"
-    touch "${target_dir}/workshop/.gitkeep"
-
-    print_success "Paper category directories created"
-
-    # Add .latexmkrc volume mount to docker-compose.yml
+    # Add .latexmkrc volume mount to docker-compose.yml (already idempotent
+    # via grep on '\.latexmkrc').
     local target_compose="${target_dir}/docker-compose.yml"
 
     if [[ -f "$target_compose" ]]; then
         print_info "Adding .latexmkrc volume mount to docker-compose.yml..."
 
-        # Add .latexmkrc mount after the workspace volume mount
         if ! grep -q '\.latexmkrc' "$target_compose"; then
             local temp_file="${target_compose}.tmp"
             awk '
@@ -233,7 +232,8 @@ plugin_post_copy() {
         fi
     fi
 
-    # Append LaTeX-specific entries to .gitignore
+    # Append LaTeX-specific entries to .gitignore (already block-guarded
+    # by '# LaTeX intermediate files').
     local target_gitignore="${target_dir}/.gitignore"
     local source_gitignore="${PLUGIN_DIR}/.gitignore.template"
 
@@ -241,7 +241,6 @@ plugin_post_copy() {
         print_info "Adding LaTeX entries to .gitignore..."
 
         if [[ -f "$target_gitignore" ]]; then
-            # Append if not already present
             if ! grep -q '# LaTeX intermediate files' "$target_gitignore"; then
                 echo "" >> "$target_gitignore"
                 cat "$source_gitignore" >> "$target_gitignore"
@@ -255,13 +254,43 @@ plugin_post_copy() {
         fi
     fi
 
-    # Append LaTeX setup to post.sh
+    # Append LaTeX setup to post.sh. Markers + idempotency check only in
+    # monorepo / add-module mode (NFR-1).
     local target_post_sh="${target_dir}/.devcontainer/scripts/post.sh"
 
     if [[ -f "$target_post_sh" ]]; then
+        local use_marker=false
+        if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
+            use_marker=true
+            if grep -qF "$LATEX_POSTSH_MARKER" "$target_post_sh"; then
+                print_info "LaTeX post.sh block already present, skipping"
+                return
+            fi
+        fi
+
         print_info "Adding LaTeX setup to post.sh..."
 
-        cat >> "$target_post_sh" << 'EOF'
+        if [[ "$use_marker" == true ]]; then
+            cat >> "$target_post_sh" << EOF
+
+${LATEX_POSTSH_MARKER}
+# -----------------------------------------------------------------------------
+# LaTeX Development Environment Setup
+# -----------------------------------------------------------------------------
+if command -v latexmk &> /dev/null; then
+    echo "LaTeX development environment detected."
+    echo "  - TeX distribution: \$(latex --version | head -1)"
+    echo "  - latexmk: \$(latexmk --version | head -1)"
+    echo "  - Build: latexmk index.tex (in paper directory)"
+    echo "  - Or use Ctrl+Alt+B in VS Code with LaTeX Workshop"
+else
+    echo "Warning: latexmk not found. TeX Live may not be installed correctly."
+fi
+# <<< latex post-create <<<
+EOF
+        else
+            # Pre-#263 single-mode block (no markers).
+            cat >> "$target_post_sh" << 'EOF'
 
 # -----------------------------------------------------------------------------
 # LaTeX Development Environment Setup
@@ -276,7 +305,63 @@ else
     echo "Warning: latexmk not found. TeX Live may not be installed correctly."
 fi
 EOF
+        fi
 
         print_success "LaTeX setup added to post.sh"
     fi
+}
+
+# Module-scoped post-copy: per-module .latexmkrc, sample templates, paper
+# category dirs. (LaTeX-in-monorepo is experimental; users typically have a
+# single LaTeX module and this matches single-mode shape.)
+plugin_post_copy_module() {
+    local target_dir="$1"
+    local _module_name="$2"
+
+    # Copy .latexmkrc
+    local source_latexmkrc="${PLUGIN_DIR}/.latexmkrc"
+    local target_latexmkrc="${target_dir}/.latexmkrc"
+
+    if [[ -f "$source_latexmkrc" ]]; then
+        print_info "Copying .latexmkrc to ${target_dir}..."
+        copy_with_confirm "$source_latexmkrc" "$target_latexmkrc"
+    fi
+
+    # Copy sample paper templates
+    print_info "Copying sample paper templates to ${target_dir}..."
+
+    local source_sample_en="${PLUGIN_DIR}/arxiv/sample-en"
+    local target_sample_en="${target_dir}/arxiv/sample-en"
+    if [[ -d "$source_sample_en" ]]; then
+        mkdir -p "${target_dir}/arxiv"
+        copy_dir_with_confirm "$source_sample_en" "$target_sample_en"
+        print_success "Created arxiv/sample-en template"
+    fi
+
+    local source_sample_ja="${PLUGIN_DIR}/arxiv/sample-ja"
+    local target_sample_ja="${target_dir}/arxiv/sample-ja"
+    if [[ -d "$source_sample_ja" ]]; then
+        mkdir -p "${target_dir}/arxiv"
+        copy_dir_with_confirm "$source_sample_ja" "$target_sample_ja"
+        print_success "Created arxiv/sample-ja template"
+    fi
+
+    # Create standard paper category directories
+    print_info "Creating paper category directories in ${target_dir}..."
+    mkdir -p "${target_dir}/conference"
+    mkdir -p "${target_dir}/journal"
+    mkdir -p "${target_dir}/workshop"
+
+    touch "${target_dir}/conference/.gitkeep"
+    touch "${target_dir}/journal/.gitkeep"
+    touch "${target_dir}/workshop/.gitkeep"
+
+    print_success "LaTeX paper categories created in ${target_dir}"
+}
+
+# Backward-compat shim.
+plugin_post_copy() {
+    local target_dir="$1"
+    plugin_post_copy_shared "$target_dir"
+    plugin_post_copy_module "$target_dir" "${PROJECT_NAME}"
 }
