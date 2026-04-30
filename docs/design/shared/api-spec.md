@@ -246,11 +246,30 @@ Schema (full table in [data-model.md](./data-model.md) :: "modules.json schema")
 
 ## Workflow Triggers (`.github/workflows/`)
 
-| Workflow | Triggers | Purpose |
+Six root workflow files. The first four are also exposed as `workflow_call`-callable reusable workflows for downstream repos (e.g., freyja). `release-erd.yml` and `rust-quality-check.yml` are tarnished-internal.
+
+| Workflow | Triggers | `workflow_call` exposed? | Purpose |
+| --- | --- | --- | --- |
+| `auto-tag.yml` | `push: [develop, main]` | Yes (inputs: `config-path`, `erd-version`) | Compute next semver tag from branch prefix and push it |
+| `pr-project-status.yml` | `pull_request: [opened, reopened]` | Yes (inputs: `pr-number`, `config-path`, `erd-version`; secret: `PROJECT_TOKEN`) | Map PR open → `pr_status.on_open` for linked issues |
+| `project-integration.yml` | `issues: [opened, reopened]` | Yes (inputs: `issue-number`, `config-path`, `erd-version`; secret: `PROJECT_TOKEN`) | Run `erd issue link` on issue create/reopen — links the default project (#230 split: label-only routing moved to `project-label-routing.yml`, #244) |
+| `project-label-routing.yml` | `issues: [labeled]` | Yes (inputs: `issue-number`, `label-name`, `config-path`, `erd-version`; secret: `PROJECT_TOKEN`) | Run `erd issue link --label-only` for label-keyed `label_projects` routing (#244 sub-feature opt-in) |
+| `release-erd.yml` | `workflow_dispatch` (input: `tag`) | No | Build the `erd` Linux binary, run tests + coverage, upload artifacts, create GitHub Release |
+| `rust-quality-check.yml` | `pull_request: [develop]`, `push: [develop]` | No | Tarnished-internal: `cargo check`, `clippy`, `fmt`, unit tests, integration tests |
+
+### JavaScript action runtime pin policy (#267)
+
+Every `uses:` reference to a third-party JavaScript action across these six files is pinned to the **earliest major whose `action.yml` declares `runs.using: node24`** as the default runtime — the selection rule documented in `architecture.md` :: "Cross-cutting Concerns / GitHub Actions JS runtime". Concrete pins:
+
+| Action | Pin | Rationale for this major |
 | --- | --- | --- |
-| `project-integration.yml` | `issues: [opened, reopened, labeled]` (#230) | Run `erd issue link` on issue events |
-| `pr-project-status.yml` | `pull_request: [opened, reopened, ready_for_review]` | Map PR open → `pr_status.on_open` |
-| `project-label-routing.yml` | (template, optional) | Sub-feature opt-in template for label routing (#244) |
+| `actions/checkout` | `@v5` | First Node-24 major; `@v6` adds an unrelated `$RUNNER_TEMP` credential-persist change unneeded by our usage |
+| `actions/cache` | `@v5` | First Node-24 major; cache-key compatibility maintained from v4 |
+| `actions/github-script` | `@v8` | First Node-24 major with no API change vs v7; `@v9` makes `@actions/github` ESM-only and reserves `getOctokit` |
+| `actions/upload-artifact` | `@v6` | First major where default `runs.using` is `node24` (v5 supported but defaulted to `node20`); `@v7` adds an unrelated `archive: false` direct-upload flag |
+| `softprops/action-gh-release` | `@v3` | First Node-24 major; input schema (`tag_name`, `name`, `prerelease`, `generate_release_notes`, `files`) unchanged from v2 |
+
+Composite actions (`dtolnay/rust-toolchain@stable`, `taiki-e/install-action@*`) have no Node runtime and are unaffected. Bumping any of these pins on the tarnished side automatically propagates to downstream consumers via `workflow_call`'s callee-execution semantics — no consumer-side change is required.
 
 ## Setup / Plugin Surface
 
