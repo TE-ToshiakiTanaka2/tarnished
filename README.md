@@ -37,12 +37,19 @@ curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develo
 # Answer "y" to the "Monorepo configuration?" prompt, then enter modules in
 # the dialogue loop. Empty module name finishes.
 
-# Or non-interactively
+# Or non-interactively (use --postgresql or --mysql for the DB service)
 curl -fsSL .../setup.sh | bash -s -- \
   --monorepo \
   --module backend:python \
   --module frontend:node \
   --postgresql -y
+
+# Same shape with MySQL instead:
+curl -fsSL .../setup.sh | bash -s -- \
+  --monorepo \
+  --module backend:python \
+  --module frontend:node \
+  --mysql -y
 
 # Add a module to an existing monorepo (auto-detected via modules.json,
 # or explicit via --add-module):

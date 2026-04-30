@@ -108,6 +108,12 @@ EOF
     [[ "$output" == *"--create-manifest does not accept service flags"* ]]
 }
 
+@test "--create-manifest rejects --mysql" {
+    run bash "$SETUP_SH" --create-manifest --mysql -y
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"--create-manifest does not accept service flags"* ]]
+}
+
 @test "--from-version requires --create-manifest" {
     run bash "$SETUP_SH" --from-version v0.0.74 --lang rust -y my-proj
     [[ "$status" -eq 1 ]]
