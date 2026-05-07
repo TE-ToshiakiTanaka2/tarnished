@@ -4,11 +4,11 @@
 # This file is meant to be sourced by setup.sh, not executed directly.
 # =============================================================================
 # This plugin provides OpenAI Codex CLI integration including:
-# - AGENTS.md template for code review role
+# - AGENTS.md template for primary or review agent role
 # - Project-level Codex configuration (.codex/config.toml)
 # - Node.js devcontainer feature (for npm-based Codex CLI install)
 # - Codex CLI installation script for post-creation setup
-# - Claude Code integration settings for invoking Codex as reviewer
+# - Claude Code integration settings for cross-agent handoff
 #
 # =============================================================================
 
@@ -26,7 +26,7 @@ plugin_name() {
 
 # Return plugin description
 plugin_description() {
-    echo "OpenAI Codex CLI integration for AI-powered code review"
+    echo "OpenAI Codex CLI integration for primary or review workflows"
 }
 
 # =============================================================================

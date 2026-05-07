@@ -9,6 +9,8 @@ disable-model-invocation: true
 
 GitHub Issue creation skill for projects. Handles requirement discovery through brainstorming, expert review, estimation, and Issue creation.
 
+This skill is the Claude Code projection of `.tarnished/workflows/issue.md`. Keep the shared workflow source and this tool-specific entrypoint aligned.
+
 ## Usage
 
 ```
