@@ -68,7 +68,7 @@ Each flavor directory (`templates/codex/`, `templates/claude/`, `templates/langu
 
 - `plugin.sh` at the root implementing the four-function interface above
 - Optional `AGENTS.md` (Codex flavor only — root-level review-agent definition)
-- Optional `.devcontainer/`, `.claude/`, `.codex/`, `.github/`, `docker/` subdirectories whose contents are copied verbatim into the target by `plugin_copy`
+- Optional `.devcontainer/`, `.claude/`, `.codex/`, `.tarnished/`, `.github/`, `docker/` subdirectories whose contents are copied verbatim into the target by `plugin_copy`
 - Optional `.devcontainer/scripts/<setup>.sh` shell helpers whose functions are sourced into the target's `post.sh` by `plugin_post_copy`
 
 Reviewers should reject changes that violate this shape (e.g., a plugin that puts setup logic outside `plugin_*` functions, a flavor that ships files outside the listed subdirectories, or a `plugin.sh` that calls `setup.sh` machinery directly instead of going through `common.sh`).

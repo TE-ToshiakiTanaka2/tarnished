@@ -10,7 +10,9 @@ This file provides context to Claude Code about the project structure and develo
 
 - **Container**: Docker with Devcontainer
 - **Version Control**: Git with GitHub
-- **AI Assistant**: Claude Code
+- **AI Profile**: `{{AI_PROFILE}}`
+- **Primary Agent**: {{AI_PRIMARY_AGENT}}
+- **Review Agent**: {{AI_REVIEW_AGENT}}
 
 ## Directory Structure
 
@@ -19,20 +21,24 @@ This file provides context to Claude Code about the project structure and develo
 ├── .devcontainer/          # Devcontainer configuration
 │   ├── devcontainer.json   # VS Code Devcontainer settings
 │   └── scripts/            # Setup scripts
+├── .tarnished/             # Shared Claude/Codex workflow source
+│   ├── agent-profile.json  # Selected primary/review agent profile
+│   └── workflows/          # Agent-neutral lifecycle documentation
 ├── .claude/                # Claude Code configuration
 │   ├── commands/erd/       # erd commands (brainstorm, estimate, etc.)
 │   ├── skills/             # Custom skills (slash commands)
 │   │   ├── issue/          # Issue creation skill
 │   │   ├── design/         # Architecture design skill
 │   │   ├── implement/      # Implementation skill
-│   │   ├── review/         # Code review skill (via Codex)
+│   │   ├── review/         # Cross-agent review skill
 │   │   └── pr/             # Pull Request skill
 │   ├── scripts/            # Helper scripts
 │   └── settings.json       # Claude Code settings
 ├── docker/                 # Docker configuration
 │   └── Dockerfile.dev      # Development Dockerfile
 ├── docker-compose.yml      # Docker Compose configuration
-└── CLAUDE.md              # This file
+├── AGENTS.md               # Codex entrypoint when Codex is enabled
+└── CLAUDE.md               # This file
 ```
 
 ## Coding Conventions
@@ -77,12 +83,16 @@ docker-compose down
 
 ### Claude Code
 
+Claude Code skills are the Claude-specific projection of the shared workflow source in `.tarnished/workflows/`. Detailed `erd:*` behavior is also available in `.tarnished/workflows/erd/*` for Codex-readable reuse. When changing workflow behavior, update the shared workflow source first, then keep `.claude/skills/*`, `.claude/commands/erd/*`, and Codex-facing `AGENTS.md` aligned.
+
+When Claude Code is the primary agent, drive the full lifecycle below. When Claude Code is the configured review agent, focus on `.tarnished/workflows/review.md` and provide independent review feedback without taking over implementation unless the user asks.
+
 Available skills (slash commands):
 
 - `/issue` - Create a GitHub Issue from requirements (uses erd:brainstorm, erd:estimate)
 - `/design <issue_number>` - Design architecture with UML diagrams (uses erd:research, erd:design, erd:workflow)
 - `/implement <issue_number>` - Implement a GitHub Issue (uses erd:implement, erd:build, erd:test)
-- `/review` - Code review via Codex CLI (requires codex)
+- `/review` - Cross-agent code review using the configured review workflow
 - `/pr [--merge]` - Create a Pull Request (uses erd:analyze, erd:improve, erd:cleanup, erd:reflect)
 
 Available erd commands (callable independently):
