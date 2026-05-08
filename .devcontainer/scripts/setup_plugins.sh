@@ -105,8 +105,14 @@ setup_plugins() {
         return 0
     fi
 
+    # Wrap `claude plugins list` in an `if`-guard so a failed command
+    # substitution cannot trip `set -e` in post.sh — symmetric with the
+    # marketplace registration failure path above (#273 review).
     local plugins_output
-    plugins_output=$(claude plugins list 2>/dev/null)
+    if ! plugins_output=$(claude plugins list 2>/dev/null); then
+        echo "  - Warning: failed to query installed plugins; skipping plugin install" >&2
+        return 0
+    fi
 
     # -----------------------------------------------------------------
     # context7: Library documentation lookup

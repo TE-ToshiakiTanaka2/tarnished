@@ -79,6 +79,7 @@ The auth check is the minimum gate that prevents `claude plugins …` from ever 
 | `claude` CLI not on `$PATH` | `command -v claude` (existing) | Print `[Warning] Claude Code CLI is not installed`, `return 0` |
 | **`~/.claude/.credentials.json` missing or empty (NEW)** | `[[ -s "$HOME/.claude/.credentials.json" ]]` | Print `Claude is not yet authenticated; run \`claude\` to log in, then re-run .devcontainer/scripts/setup_plugins.sh`, `return 0` |
 | Marketplace registration fails (e.g. credentials present but expired) | `ensure_claude_marketplace` non-zero | Print `Warning: failed to register marketplace …`, `return 0` from `setup_plugins` (existing in workspace variant; new in template variant) |
+| **`claude plugins list` query fails (NEW — review fix)** | `if ! plugins_output=$(claude plugins list 2>/dev/null)` | Print `Warning: failed to query installed plugins; skipping plugin install`, `return 0`. Symmetric with marketplace registration failure. Closes a residual `set -e` exposure flagged during `/review`. |
 | Per-plugin install fails | `try_install_plugin` (existing in workspace; new in template) | Print `Warning: failed to install <name> plugin`, continue to next plugin |
 
 All paths exit `setup_plugins` with `0`, preserving the `set -e` / non-fatal contract documented in `shared/architecture.md` :: "Cross-cutting Concerns / Idempotency / Plugin failures".

@@ -111,6 +111,15 @@ sequenceDiagram
                 Note over Post: set -e respected; post.sh continues
             end
 
+            Setup->>Claude: claude plugins list (if-guarded, #273 review)
+            alt query ok
+                Claude-->>Setup: plugins_output
+            else query fails
+                Claude-->>Setup: error
+                Setup-->>Post: warning + return 0
+                Note over Post: set -e respected; post.sh continues
+            end
+
             loop each plugin in [context7, serena, optionally playwright]
                 Setup->>Setup: try_install_plugin(name)
                 Setup->>Claude: claude plugins install <name>@claude-plugins-official -s project

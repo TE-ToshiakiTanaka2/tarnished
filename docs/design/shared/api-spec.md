@@ -469,6 +469,7 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 | Plugin install failure | shell warning | `setup_plugins.sh` per-plugin; non-fatal |
 | Marketplace registration failure | shell warning, `return 0` | `setup_plugins.sh` ensure_claude_marketplace; non-fatal so `post.sh` continues |
 | Claude not yet authenticated (`~/.claude/.credentials.json` missing or empty) | shell info + guidance, `return 0` | `setup_plugins.sh` `is_claude_authenticated` gate (#273); skips marketplace/plugin steps entirely so `post.sh` proceeds to `setup_codex` on first run |
+| `claude plugins list` query failure | shell warning, `return 0` | `setup_plugins.sh` if-guarded command substitution (#273 review); symmetric with marketplace failure path so a degraded `claude` CLI cannot trip `set -e` in `post.sh` |
 | `update_gitignore` write failure | shell error (propagates under `set -euo pipefail`) | `${target_dir}/.gitignore` not writable |
 | Mutually-exclusive setup.sh flags | shell error, exit 1 | `--monorepo --add-module`, `--module --add-module`, `--monorepo --lang` (no `--module`) (#263); `--upgrade --monorepo`, `--upgrade --add-module`, `--upgrade --create-manifest`, `--create-manifest --monorepo`, `--create-manifest --add-module` (#265) |
 | `--add-module` outside monorepo | shell error, exit 1 | CWD lacks `modules.json` (#263) |

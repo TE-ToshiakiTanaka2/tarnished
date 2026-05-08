@@ -86,11 +86,15 @@ Steps 5–8 can run in parallel after Step 4. Steps 1–2 and 3 cannot reasonabl
 
 ### Unit Tests
 
-No new automated tests are added. Rationale:
+`tests/setup_plugins.bats` (added during `/review` follow-up) covers the post.sh `set -e` non-fatal-return-0 contract and the workspace ↔ template parity invariant:
 
-- The change is two short shell helpers and one early-return guard. The behavior is fully captured by manual scenarios in Steps 5–6.
-- The project's bats suite is currently focused on `setup.sh` orchestration (`setup_*.bats`) and plugin contracts (`plugin_*.bats`, `manifest.bats`). There is no existing bats fixture for `.devcontainer/scripts/setup_plugins.sh`, and authoring one purely for this fix would add scope (mock `claude`, mock `~/.claude/`, etc.) without commensurate value.
-- This matches the issue's explicit task list, which calls for manual verification only.
+- `is_claude_authenticated` returns non-zero for missing / empty credentials and zero for non-empty credentials.
+- `setup_plugins` with no credentials prints guidance, returns 0, and never invokes `claude` (verified via PATH-shim mock).
+- `setup_plugins` survives a `claude plugins list` failure under `set -e` (the residual exposure flagged in the Codex review).
+- `setup_plugins` survives a marketplace-registration failure under `set -e`.
+- The workspace and template `setup_plugins.sh` files are byte-identical (regression guard for the parity invariant).
+
+The fixtures use a per-test `mktemp` `HOME` and a PATH-shim `claude` mock — no project-wide infrastructure needed beyond the bats helper libs already required by the other `tests/*.bats` fixtures (`bats-support`, `bats-assert`).
 
 ### Integration Tests
 
