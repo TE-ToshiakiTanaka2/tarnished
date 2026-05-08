@@ -16,6 +16,13 @@ SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 WORKSPACE_SETUP="${SCRIPT_DIR}/.devcontainer/scripts/setup_plugins.sh"
 TEMPLATE_SETUP="${SCRIPT_DIR}/templates/claude/.devcontainer/scripts/setup_plugins.sh"
 
+# Helper: source $WORKSPACE_SETUP without spreading SC1090 directives over
+# every test. shellcheck cannot statically follow a path stored in a variable.
+# shellcheck disable=SC1090
+source_workspace_setup() {
+    source "$WORKSPACE_SETUP"
+}
+
 setup() {
     SCRATCH="$(mktemp -d)"
     export SCRATCH
@@ -36,7 +43,7 @@ teardown() {
 # -----------------------------------------------------------------------------
 
 @test "is_claude_authenticated: missing credentials -> non-zero" {
-    source "$WORKSPACE_SETUP"
+    source_workspace_setup
     run is_claude_authenticated
     [[ "$status" -ne 0 ]]
 }
@@ -44,7 +51,7 @@ teardown() {
 @test "is_claude_authenticated: empty credentials -> non-zero" {
     mkdir -p "$HOME/.claude"
     : > "$HOME/.claude/.credentials.json"  # zero-byte
-    source "$WORKSPACE_SETUP"
+    source_workspace_setup
     run is_claude_authenticated
     [[ "$status" -ne 0 ]]
 }
@@ -52,7 +59,7 @@ teardown() {
 @test "is_claude_authenticated: non-empty credentials -> zero" {
     mkdir -p "$HOME/.claude"
     echo '{"oauth": "stub"}' > "$HOME/.claude/.credentials.json"
-    source "$WORKSPACE_SETUP"
+    source_workspace_setup
     run is_claude_authenticated
     [[ "$status" -eq 0 ]]
 }
