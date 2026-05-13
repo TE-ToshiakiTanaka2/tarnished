@@ -65,8 +65,10 @@ if [[ -z "${BASH_SOURCE[0]}" ]] || [[ "${BASH_SOURCE[0]}" == "-" ]] || [[ ! -f "
     echo "Starting setup..."
     echo ""
 
-    # Execute local setup.sh with all arguments
-    exec bash "$BOOTSTRAP_TEMP_DIR/setup.sh" "$@"
+    # `< /dev/null` keeps the outer `curl | bash` pipe from being inherited
+    # across exec — otherwise curl hits EPIPE on its residual write and
+    # prints `curl: (23) Failure writing output to destination` (#276).
+    exec bash "$BOOTSTRAP_TEMP_DIR/setup.sh" "$@" < /dev/null
 fi
 
 set -e
