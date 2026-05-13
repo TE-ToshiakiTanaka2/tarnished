@@ -447,6 +447,95 @@ sequenceDiagram
     end
 ```
 
+## `setup.sh` remote bootstrap (`curl | bash`) (#276)
+
+The primary distribution path. The bootstrap block at `setup.sh:29-69` detects pipe execution, clones the upstream repo into a temp dir, then `exec`s the local copy. The `< /dev/null` on the `exec` line is what keeps the outer curl from emitting a spurious `curl: (23)` to the user terminal.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Curl as curl
+    participant BootBash as bash (bootstrap; reads script from curl's stdout)
+    participant Git as git
+    participant Tmp as $BOOTSTRAP_TEMP_DIR
+    participant NewBash as bash (exec'd; reads script from disk)
+
+    User->>Curl: curl -fsSL .../setup.sh | bash
+    Curl->>BootBash: stream setup.sh bytes
+    BootBash->>BootBash: detect [[ -z BASH_SOURCE[0] || == "-" || ! -f ... ]]
+    BootBash->>Git: git clone --depth 1 --branch develop ... $BOOTSTRAP_TEMP_DIR
+    Git->>Tmp: populated
+    Tmp-->>BootBash: ok
+
+    Note over BootBash,NewBash: exec replaces the process image; pre-#276 the<br/>outer curl pipe was inherited and curl hit EPIPE,<br/>printing "curl: (23) Failure writing output to destination"<br/>at a non-deterministic point during the rest of the setup.
+
+    BootBash->>NewBash: exec bash "$BOOTSTRAP_TEMP_DIR/setup.sh" "$@" < /dev/null
+    Note over Curl,NewBash: stdin redirected to /dev/null; the curl pipe is<br/>NOT inherited; curl exits cleanly with no terminal noise.
+
+    NewBash->>Tmp: read setup.sh from disk
+    NewBash->>NewBash: parse_arguments + run modes (single / monorepo / upgrade / ...)
+    NewBash-->>User: completion message
+```
+
+## GitHub Project Integration — auto-detection and fallback (#276)
+
+`plugin_interactive_setup` (in `templates/github-actions/project-integration/plugin.sh`) attempts `gh` CLI auto-detection of GitHub Projects and falls back to manual prompts on failure. Pre-#276 the fallback could be skipped when `gh` failed under `set -e`; post-#276 every gh invocation goes through `_gh_run`, which always returns 0 and surfaces the cause via `GH_LAST_ERROR`.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Setup as plugin_interactive_setup
+    participant GhRun as _gh_run
+    participant Gh as gh CLI
+    participant Warn as print_warning / _print_gh_warning
+    participant Manual as prompt_manual_project_config + prompt_manual_field_defaults
+
+    User->>Setup: enter "y" to enable Project integration
+    Setup->>Setup: prompt ERD_REF (read /dev/tty)
+    Setup->>Setup: check_gh_available
+    alt gh missing
+        Setup->>Warn: print_info "gh CLI not found, using manual configuration"
+        Setup->>Manual: invoke manual prompts
+    else gh present
+        Setup->>Warn: print_info "Detected gh CLI, attempting to fetch projects..."
+
+        Setup->>GhRun: get_current_user
+        GhRun->>Gh: gh api user --jq '.login' </dev/null 2>tmp
+        alt gh ok
+            Gh-->>GhRun: stdout=<login>, stderr empty, exit 0
+            GhRun-->>Setup: stdout=<login>, GH_LAST_ERROR=""
+        else gh fails
+            Gh-->>GhRun: stdout="", stderr="gh: not logged in...", exit 1
+            GhRun-->>Setup: stdout="", GH_LAST_ERROR="gh: not logged in..."
+        end
+
+        alt current_user empty
+            Setup->>Warn: _print_gh_warning "Could not determine current user"
+            Setup->>Manual: invoke manual prompts
+        else current_user non-empty
+            Setup->>GhRun: get_owner_projects current_user
+            GhRun->>Gh: gh project list --owner <user> --format json
+            Gh-->>GhRun: stdout=<JSON or empty>, GH_LAST_ERROR set if failed
+            GhRun-->>Setup: stdout, GH_LAST_ERROR
+            alt projects fetched and length > 0
+                Setup->>Setup: use_gh_detection=true
+                Setup->>Setup: select project (auto if 1, list if many)
+                Setup->>GhRun: get_project_fields_detailed (GraphQL; fallback to basic on empty)
+                GhRun->>Gh: gh api graphql -f ...
+                Gh-->>GhRun: detailed JSON or empty
+                GhRun-->>Setup: stdout, GH_LAST_ERROR
+                Setup->>Setup: categorize + configure single-select / iteration / date fields
+            else fetch failed or empty
+                Setup->>Warn: _print_gh_warning "Could not fetch projects" or "No projects found"
+                Setup->>Manual: invoke manual prompts
+            end
+        end
+    end
+
+    Setup->>Setup: prompt_label_routing_setup (if TTY)
+    Setup-->>User: print_success "Project configuration collected"
+```
+
 ## `setup.sh --add-module` — incremental add to existing monorepo (#263)
 
 Detects an existing `modules.json` in CWD (or accepts `--add-module` flag) and adds a single module. Idempotent against shared assets via marker-guarded blocks and JSON merge helpers.
