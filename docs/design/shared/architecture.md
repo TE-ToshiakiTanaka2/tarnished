@@ -48,9 +48,11 @@ Design artifacts are split into a shared cumulative layer (this directory) and p
 │   │   ├── module.CLAUDE.md.template # Per-module CLAUDE.md stub (#263, monorepo only)
 │   │   ├── docker-compose.yml        # Dev service `{{PROJECT_NAME}}`
 │   │   └── docker/Dockerfile.dev     # Base image; language plugins append marker-guarded blocks
-│   ├── languages/{deno,python,node,latex,rust}/
+│   ├── languages/{deno,python,node,latex,rust,go}/
 │   │   └── plugin.sh                 # Implements plugin_post_copy_shared + plugin_post_copy_module
-│   │                                 #   (#263); legacy plugin_post_copy retained as backward-compat shim
+│   │                                 #   (#263); legacy plugin_post_copy retained as backward-compat shim.
+│   │                                 #   Go (#274) follows the Rust shape: gofmt/golangci-lint/gotestsum,
+│   │                                 #   no auto `go mod init`, .golangci.yml is per-module
 │   ├── services/{mysql,redis,celery,postgresql}/
 │   │                                 # docker-compose overlay + plugin.sh.
 │   │                                 #   Service names already use `{{PROJECT_NAME}}-<svc>`
