@@ -49,13 +49,23 @@ changes.
    before `exec`, eliminating the EPIPE from curl's residual write.
 2. **`templates/github-actions/project-integration/plugin.sh`** — restructure
    the gh-detection helpers so:
-   - gh's stderr is captured (not silenced) into a transient global
-     (`GH_LAST_ERROR`, first line only).
+   - gh's stderr is captured (not silenced) into a process-wide tempfile
+     `GH_LAST_ERROR_FILE` (first line only). A file rather than a shell
+     variable is required because helpers are invoked via `$(...)`
+     command substitution; subshell mutations to a plain variable do
+     not survive. The path comes from `mktemp` (unpredictable name,
+     0600 perms) — a predictable `/tmp/...$$` path would expose a
+     symlink-clobber primitive.
    - The helpers always `return 0`; failure is communicated via empty
-     stdout + non-empty `GH_LAST_ERROR`.
+     stdout + non-empty `GH_LAST_ERROR_FILE`.
    - Callers emit a `print_warning` that includes the captured cause.
    - The "always reach an interactive prompt" invariant is restored
      (broken today by `set -e` abort inside `var=$(...)`).
+   - No `EXIT` trap is installed: this plugin is sourced inside
+     `setup.sh`'s plugin dispatch (after the `--upgrade` flow may have
+     already registered `cleanup_upstream_dir EXIT`), and an
+     unconditional trap would stomp the caller's trap and leak the
+     upstream clone directory. The per-PID tempfile is left in TMPDIR.
 
 Tests added under `tests/`.
 
@@ -89,29 +99,52 @@ without emitting EPIPE to the user terminal.
 
 ### `_gh_run` wrapper (NEW, private to `plugin.sh`)
 
+A shell variable cannot carry the captured stderr across the `$(...)`
+command substitution used by callers (subshell mutations are lost), so
+the channel is a process-wide tempfile whose path is obtained via
+`mktemp` at plugin source time. `mktemp` gives an unpredictable name
+and 0600 perms, eliminating the symlink-clobber risk a predictable
+`/tmp/foo.$$` path would expose.
+
 ```bash
-# Run a gh command, capture first-line stderr into GH_LAST_ERROR, swallow
-# the exit code. Stdout is emitted verbatim. Always returns 0.
+# Path established once when the plugin is sourced.
+# Empty if mktemp fails — _gh_run degrades to no-capture mode but the
+# helpers still work; callers just lose the captured-cause suffix.
+GH_LAST_ERROR_FILE="$(mktemp -t tarnished-gh-last-error.XXXXXX 2>/dev/null || true)"
+
+# Run a gh command, capture first-line stderr to GH_LAST_ERROR_FILE,
+# swallow the exit code. Stdout is emitted verbatim. Always returns 0.
 #
 # Usage: _gh_run gh api user --jq '.login'
 _gh_run() {
     local err_file
-    err_file=$(mktemp)
-    GH_LAST_ERROR=""
-    if ! "$@" </dev/null 2>"$err_file"; then
-        GH_LAST_ERROR=$(head -n1 "$err_file" 2>/dev/null || true)
+    err_file=$(mktemp 2>/dev/null) || err_file=""
+    [[ -n "$GH_LAST_ERROR_FILE" ]] && : > "$GH_LAST_ERROR_FILE"
+    if [[ -n "$err_file" ]]; then
+        "$@" </dev/null 2>"$err_file" || true
+        if [[ -n "$GH_LAST_ERROR_FILE" ]]; then
+            head -n1 "$err_file" > "$GH_LAST_ERROR_FILE" 2>/dev/null || true
+        fi
+        rm -f "$err_file"
+    else
+        "$@" </dev/null 2>/dev/null || true
     fi
-    rm -f "$err_file"
     return 0
 }
 ```
 
+No `EXIT` trap is installed. This plugin is sourced inside `setup.sh`'s
+plugin dispatch (after the `--upgrade` flow may have already registered
+`trap cleanup_upstream_dir EXIT` at `setup.sh:2077`); an unconditional
+`trap … EXIT` here would replace that handler and leak the upstream
+clone. The per-PID tempfile is left for the OS to clean.
+
 ### Helper output contract (revised)
 
-| Function | stdout on success | stdout on failure | Exit code | `GH_LAST_ERROR` |
+| Function | stdout on success | stdout on failure | Exit code | `GH_LAST_ERROR_FILE` |
 | --- | --- | --- | --- | --- |
-| `check_gh_available` | (empty) | (empty) | 0 / 1 | unset |
-| `get_current_repo` | `owner/repo` | (empty) | 0 (always) | first-line gh stderr (or "") |
+| `check_gh_available` | (empty) | (empty) | 0 / 1 | unchanged |
+| `get_current_repo` | `owner/repo` | (empty) | 0 (always) | first-line gh stderr (or empty) |
 | `get_current_user` | `<login>` | (empty) | 0 (always) | first-line gh stderr |
 | `get_owner_projects` | `<JSON>` | (empty) | 0 (always) | first-line gh stderr |
 | `get_project_fields` | `<JSON>` | (empty) | 0 (always) | first-line gh stderr |
@@ -147,8 +180,12 @@ Where `_print_gh_warning` is a small private helper:
 ```bash
 _print_gh_warning() {
     local prefix="$1"
-    if [[ -n "${GH_LAST_ERROR:-}" ]]; then
-        print_warning "$prefix (gh: $GH_LAST_ERROR)"
+    local err=""
+    if [[ -n "$GH_LAST_ERROR_FILE" ]] && [[ -f "$GH_LAST_ERROR_FILE" ]]; then
+        err=$(cat "$GH_LAST_ERROR_FILE" 2>/dev/null || true)
+    fi
+    if [[ -n "$err" ]]; then
+        print_warning "$prefix (gh: $err)"
     else
         print_warning "$prefix"
     fi
@@ -157,8 +194,9 @@ _print_gh_warning() {
 
 ### Type Definitions (delta)
 
-None. Only a transient global string `GH_LAST_ERROR` (reset by every
-`_gh_run` call). No schema, no struct, no Rust type.
+None. The new state is a process-wide path string `GH_LAST_ERROR_FILE`
+(set once at plugin source time) and the file it points to. No schema,
+no struct, no Rust type.
 
 ## Data Flow
 
@@ -172,10 +210,12 @@ None. Only a transient global string `GH_LAST_ERROR` (reset by every
    the curl message. (See "Implementation Notes" for the precise reason.)
 5. The new bash reads `setup.sh` from disk. Existing behavior from here on.
 6. Eventually `plugin_interactive_setup` runs:
-   - For each gh helper call, on failure `GH_LAST_ERROR` carries the
+   - For each gh helper call, on failure `GH_LAST_ERROR_FILE` holds the
      first line of gh's stderr (e.g. `gh: To get started with GitHub CLI,
-     please run: gh auth login`).
-   - Callers always emit a `print_warning` with that line.
+     please run: gh auth login`). The file persists across the `$(...)`
+     subshell because its path was established once in the parent shell.
+   - Callers always emit a `print_warning` with that line (read by
+     `_print_gh_warning` from the file).
    - `use_gh_detection` stays `false` and the manual fallback at line
      1102 runs deterministically.
 
@@ -189,7 +229,7 @@ Error policy delta (merged into `shared/api-spec.md :: "Error Responses"`):
 | Error | Type | When | Behavior |
 | --- | --- | --- | --- |
 | `curl: (23)` from remote bootstrap | (eliminated) | Outer curl pipe inherited by exec | Suppressed by `< /dev/null` on exec |
-| gh helper failure (auth / API / empty result) | shell warning, non-fatal | gh unauthenticated, network error, or empty data | `print_warning` includes captured `GH_LAST_ERROR`; flow falls through to manual prompt |
+| gh helper failure (auth / API / empty result) | shell warning, non-fatal | gh unauthenticated, network error, or empty data | `print_warning` includes captured `GH_LAST_ERROR_FILE` line; flow falls through to manual prompt |
 
 Notably:
 
@@ -218,13 +258,21 @@ Notably:
   matches the non-fatal-warning pattern documented in
   `shared/architecture.md :: "Cross-cutting Concerns / Plugin
   failures"` (`#255`).
-- **Why a global `GH_LAST_ERROR` instead of returning a structured
-  value**: bash functions cannot return multiple values without
-  out-of-band mechanisms (globals, named pipes, JSON-encoded stdout).
-  A scoped global is the simplest and matches existing in-file globals
-  (`PROJECT_OWNER`, `PROJECT_NUMBER`, `FIELD_DEFAULTS`, ...). The
-  variable is overwritten on every `_gh_run` call, so cross-call
-  leakage is bounded.
+- **Why a tempfile instead of a shell variable**: bash functions cannot
+  return multiple values without out-of-band mechanisms (globals, named
+  pipes, JSON-encoded stdout). Existing callers wrap helpers in
+  `$(...)` command substitution, which runs them in a subshell — a
+  plain variable mutated there is invisible to the parent. A tempfile
+  bridges the subshell because the FS state outlives the subshell. The
+  path is mktemp'd once at sourcing time (parent scope) and inherited
+  by every subshell that runs a helper. Each `_gh_run` truncates and
+  rewrites the file, so cross-call leakage is bounded.
+- **Why no `EXIT` trap on the tempfile**: this plugin is sourced by
+  `setup.sh` *after* the `--upgrade` flow may have set its own
+  `trap cleanup_upstream_dir EXIT` (`setup.sh:2077`). A bare
+  `trap … EXIT` here replaces (does not append to) that handler, which
+  would leak the upstream clone. The per-PID tempfile is tiny and
+  named uniquely by `mktemp`; we accept the small TMPDIR leftover.
 - **Stderr first line only**: gh sometimes prints multi-line stderr
   (e.g., 1 line of error + 1 line of recovery hint + 1 line about
   `gh auth login`). Surfacing all of it in a `print_warning` would

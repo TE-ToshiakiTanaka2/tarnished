@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2030,SC2031 # `export VAR=...` inside a @test is intentional — the var flows into the gh stub subprocess; we never read it back in the outer shell.
 
 # Regression tests for #276: the project-integration plugin's gh CLI
 # helpers must:

@@ -25,11 +25,11 @@ No CLI flag change. No new env var.
 | Function | Existing signature | Existing behavior | New behavior |
 | --- | --- | --- | --- |
 | `check_gh_available` | `() -> 0\|1` | `command -v gh` | unchanged |
-| `get_current_repo` | `() -> stdout(owner/repo)` | `gh repo view ... 2>/dev/null` | delegates to `_gh_run`; always exits 0; failure ⇒ empty stdout + `GH_LAST_ERROR` |
-| `get_current_user` | `() -> stdout(login)` | `gh api user ... 2>/dev/null` | delegates to `_gh_run`; always exits 0; failure ⇒ empty stdout + `GH_LAST_ERROR` |
-| `get_owner_projects` | `(owner) -> stdout(JSON)` | `gh project list ... 2>/dev/null` | delegates to `_gh_run`; always exits 0; failure ⇒ empty stdout + `GH_LAST_ERROR` |
-| `get_project_fields` | `(owner, number) -> stdout(JSON)` | `gh project field-list ... 2>/dev/null` | delegates to `_gh_run`; always exits 0; failure ⇒ empty stdout + `GH_LAST_ERROR` |
-| `get_project_fields_detailed` | `(owner, number) -> stdout(JSON)` | GraphQL via `gh api graphql ... 2>/dev/null`; falls back to `get_project_fields` | delegates to `_gh_run` at each gh invocation; always exits 0; falls back to `get_project_fields`; the final `GH_LAST_ERROR` is from the last gh attempt |
+| `get_current_repo` | `() -> stdout(owner/repo)` | `gh repo view ... 2>/dev/null` | delegates to `_gh_run`; always exits 0; failure ⇒ empty stdout + populated `GH_LAST_ERROR_FILE` |
+| `get_current_user` | `() -> stdout(login)` | `gh api user ... 2>/dev/null` | delegates to `_gh_run`; always exits 0; failure ⇒ empty stdout + populated `GH_LAST_ERROR_FILE` |
+| `get_owner_projects` | `(owner) -> stdout(JSON)` | `gh project list ... 2>/dev/null` | delegates to `_gh_run`; always exits 0; failure ⇒ empty stdout + populated `GH_LAST_ERROR_FILE` |
+| `get_project_fields` | `(owner, number) -> stdout(JSON)` | `gh project field-list ... 2>/dev/null` | delegates to `_gh_run`; always exits 0; failure ⇒ empty stdout + populated `GH_LAST_ERROR_FILE` |
+| `get_project_fields_detailed` | `(owner, number) -> stdout(JSON)` | GraphQL via `gh api graphql ... 2>/dev/null`; falls back to `get_project_fields` | delegates to `_gh_run` at each gh invocation; always exits 0; falls back to `get_project_fields`; `GH_LAST_ERROR_FILE` holds the last gh attempt's stderr |
 
 ### `_gh_run` (NEW, private)
 
@@ -40,10 +40,12 @@ _gh_run <cmd> [args...]
 # Effect
 #   - Runs the gh command with stdin from /dev/null and stderr captured
 #     to a temp file.
-#   - Sets GH_LAST_ERROR to the first line of captured stderr (empty
-#     if the command succeeded).
+#   - Writes the first line of captured stderr to GH_LAST_ERROR_FILE
+#     (truncates first so a success run clears the prior error).
 #   - Emits the command's stdout to its own stdout.
 #   - Always returns 0.
+#   - Degrades gracefully if mktemp is unavailable / GH_LAST_ERROR_FILE
+#     is empty: stderr is discarded instead, helpers still run.
 ```
 
 ### `_print_gh_warning` (NEW, private)
@@ -53,7 +55,7 @@ _gh_run <cmd> [args...]
 _print_gh_warning <prefix>
 
 # Effect
-#   - If GH_LAST_ERROR is non-empty:
+#   - If GH_LAST_ERROR_FILE exists and is non-empty:
 #       print_warning "<prefix> (gh: <first-line>)"
 #   - Otherwise:
 #       print_warning "<prefix>"
@@ -63,7 +65,17 @@ _print_gh_warning <prefix>
 
 | Name | Type | Lifetime | Description |
 | --- | --- | --- | --- |
-| `GH_LAST_ERROR` | string | per-`_gh_run`-call (overwritten) | First line of the most recent gh helper's stderr; empty on success. |
+| `GH_LAST_ERROR_FILE` | string (file path) | per-process; established once at plugin source via `mktemp` | Path to a tempfile whose contents are the first line of the most recent gh helper's stderr (empty on success). Empty string if mktemp failed at source time, in which case stderr capture is disabled but helpers still work. |
+
+A tempfile is required because helpers are invoked inside `$(...)`
+command substitution and a plain variable mutated in the subshell would
+not survive. The path comes from `mktemp` (unpredictable name, 0600
+perms) to avoid the symlink-clobber risk of a predictable
+`/tmp/foo.$$` path. The plugin does NOT register a `trap … EXIT` for
+this file — sourcing happens inside `setup.sh`'s plugin dispatch, where
+the parent script may have already registered its own EXIT handler
+(`cleanup_upstream_dir` for the `--upgrade` flow at `setup.sh:2077`).
+The per-PID tempfile is left for the OS to clean.
 
 No other plugin globals are introduced; no existing globals are renamed.
 
@@ -72,7 +84,7 @@ No other plugin globals are introduced; no existing globals are renamed.
 | Error | Type | When | Behavior |
 | --- | --- | --- | --- |
 | `curl: (23) Failure writing output to destination` from remote bootstrap | (eliminated) | Outer curl pipe inherited across `exec bash`, race against the new process's read | Suppressed by `< /dev/null` on the `exec` line; never printed |
-| gh helper API/auth failure | shell warning, non-fatal | gh unauthenticated, network error, or empty result | `print_warning` includes captured first-line stderr (`GH_LAST_ERROR`); control flow falls through to manual prompt |
+| gh helper API/auth failure | shell warning, non-fatal | gh unauthenticated, network error, or empty result | `print_warning` includes captured first-line stderr (from `GH_LAST_ERROR_FILE`); control flow falls through to manual prompt |
 
 ## Out of Scope (non-goals)
 

@@ -36,11 +36,16 @@ plugin_description() {
 # Process-wide file holding the most recent gh helper's first-line stderr.
 # A file (not a variable) is required because helpers are invoked via
 # command substitution `$(get_current_user)`; the subshell would discard a
-# plain variable. `$$` is the parent shell PID and is preserved across
-# subshells, so all calls share one path (#276).
-GH_LAST_ERROR_FILE="${TMPDIR:-/tmp}/tarnished-gh-last-error.$$"
-# shellcheck disable=SC2064  # expand $GH_LAST_ERROR_FILE now, not at trap time
-trap "rm -f '$GH_LAST_ERROR_FILE'" EXIT
+# plain variable. mktemp gives an unpredictable name owned 0600 by the
+# caller, avoiding the symlink/clobber risk a predictable `/tmp/...$$`
+# path would expose (#276). The file is small and per-PID; we deliberately
+# do NOT install an EXIT trap here because this plugin is sourced inside
+# setup.sh's plugin dispatch and would otherwise stomp on any trap the
+# parent script (e.g. the --upgrade flow) registered earlier.
+# If mktemp fails (e.g. TMPDIR unwritable), GH_LAST_ERROR_FILE stays empty
+# and _gh_run skips the cross-subshell capture — the helpers still work,
+# just without the diagnostic line in warnings.
+GH_LAST_ERROR_FILE="$(mktemp -t tarnished-gh-last-error.XXXXXX 2>/dev/null || true)"
 
 # Check if gh CLI is available
 check_gh_available() {
@@ -52,11 +57,17 @@ check_gh_available() {
 # callers under `set -e` are not aborted by gh failures (#276).
 _gh_run() {
     local err_file
-    err_file=$(mktemp)
-    : > "$GH_LAST_ERROR_FILE"
-    "$@" </dev/null 2>"$err_file" || true
-    head -n1 "$err_file" > "$GH_LAST_ERROR_FILE" 2>/dev/null || true
-    rm -f "$err_file"
+    err_file=$(mktemp 2>/dev/null) || err_file=""
+    [[ -n "$GH_LAST_ERROR_FILE" ]] && : > "$GH_LAST_ERROR_FILE"
+    if [[ -n "$err_file" ]]; then
+        "$@" </dev/null 2>"$err_file" || true
+        if [[ -n "$GH_LAST_ERROR_FILE" ]]; then
+            head -n1 "$err_file" > "$GH_LAST_ERROR_FILE" 2>/dev/null || true
+        fi
+        rm -f "$err_file"
+    else
+        "$@" </dev/null 2>/dev/null || true
+    fi
     return 0
 }
 
@@ -64,7 +75,7 @@ _gh_run() {
 _print_gh_warning() {
     local prefix="$1"
     local err=""
-    if [[ -f "$GH_LAST_ERROR_FILE" ]]; then
+    if [[ -n "$GH_LAST_ERROR_FILE" ]] && [[ -f "$GH_LAST_ERROR_FILE" ]]; then
         err=$(cat "$GH_LAST_ERROR_FILE" 2>/dev/null || true)
     fi
     if [[ -n "$err" ]]; then

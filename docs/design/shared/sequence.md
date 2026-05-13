@@ -479,7 +479,7 @@ sequenceDiagram
 
 ## GitHub Project Integration — auto-detection and fallback (#276)
 
-`plugin_interactive_setup` (in `templates/github-actions/project-integration/plugin.sh`) attempts `gh` CLI auto-detection of GitHub Projects and falls back to manual prompts on failure. Pre-#276 the fallback could be skipped when `gh` failed under `set -e`; post-#276 every gh invocation goes through `_gh_run`, which always returns 0 and surfaces the cause via `GH_LAST_ERROR`.
+`plugin_interactive_setup` (in `templates/github-actions/project-integration/plugin.sh`) attempts `gh` CLI auto-detection of GitHub Projects and falls back to manual prompts on failure. Pre-#276 the fallback could be skipped when `gh` failed under `set -e`; post-#276 every gh invocation goes through `_gh_run`, which always returns 0 and writes the first line of gh's stderr to `GH_LAST_ERROR_FILE_FILE` (a process-wide `mktemp`'d path) so the parent shell can surface it after the `$(...)` subshell returns.
 
 ```mermaid
 sequenceDiagram
@@ -503,10 +503,10 @@ sequenceDiagram
         GhRun->>Gh: gh api user --jq '.login' </dev/null 2>tmp
         alt gh ok
             Gh-->>GhRun: stdout=<login>, stderr empty, exit 0
-            GhRun-->>Setup: stdout=<login>, GH_LAST_ERROR=""
+            GhRun-->>Setup: stdout=<login>, GH_LAST_ERROR_FILE=""
         else gh fails
             Gh-->>GhRun: stdout="", stderr="gh: not logged in...", exit 1
-            GhRun-->>Setup: stdout="", GH_LAST_ERROR="gh: not logged in..."
+            GhRun-->>Setup: stdout="", GH_LAST_ERROR_FILE="gh: not logged in..."
         end
 
         alt current_user empty
@@ -515,15 +515,15 @@ sequenceDiagram
         else current_user non-empty
             Setup->>GhRun: get_owner_projects current_user
             GhRun->>Gh: gh project list --owner <user> --format json
-            Gh-->>GhRun: stdout=<JSON or empty>, GH_LAST_ERROR set if failed
-            GhRun-->>Setup: stdout, GH_LAST_ERROR
+            Gh-->>GhRun: stdout=<JSON or empty>, GH_LAST_ERROR_FILE set if failed
+            GhRun-->>Setup: stdout, GH_LAST_ERROR_FILE
             alt projects fetched and length > 0
                 Setup->>Setup: use_gh_detection=true
                 Setup->>Setup: select project (auto if 1, list if many)
                 Setup->>GhRun: get_project_fields_detailed (GraphQL; fallback to basic on empty)
                 GhRun->>Gh: gh api graphql -f ...
                 Gh-->>GhRun: detailed JSON or empty
-                GhRun-->>Setup: stdout, GH_LAST_ERROR
+                GhRun-->>Setup: stdout, GH_LAST_ERROR_FILE
                 Setup->>Setup: categorize + configure single-select / iteration / date fields
             else fetch failed or empty
                 Setup->>Warn: _print_gh_warning "Could not fetch projects" or "No projects found"

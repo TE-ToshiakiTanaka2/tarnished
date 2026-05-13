@@ -48,9 +48,21 @@ teardown() {
     assert_success
 }
 
-@test "bootstrap: piped invocation against local repo reaches setup with no curl: noise" {
-    # Skip if git or current branch unavailable — this is a behavioral test
-    # that depends on the workspace being a git repo.
+@test "bootstrap: pipe-fed invocation completes cleanly through clone-and-exec" {
+    # Behavioral smoke test for the bootstrap path.
+    #
+    # NOTE: This does not invoke real `curl`. The original curl: (23)
+    # EPIPE is timing-dependent (curl write buffer racing with bash's
+    # exec) and cannot be reproduced deterministically without network
+    # and precise timing. What this test DOES prove is that:
+    #   - The pipe-execution guard fires (BASH_SOURCE[0] absent/non-file).
+    #   - The clone-into-tempdir + `exec bash $LOCAL ... < /dev/null`
+    #     handoff completes without aborting under set -e.
+    #   - No part of the bootstrap or downstream setup synthesizes the
+    #     "curl: (23)" text itself (sanity-check the fix's footprint).
+    # The static-invariant test above is what actually pins down the
+    # `< /dev/null` redirect; this test guards against regression in
+    # the surrounding clone/exec mechanic.
     if ! command -v git &>/dev/null; then
         skip "git not available"
     fi
@@ -71,12 +83,10 @@ teardown() {
     export GIT_CONFIG_KEY_0="protocol.file.allow"
     export GIT_CONFIG_VALUE_0="always"
 
-    # Pipe setup.sh into bash with --help. The bootstrap should detect the
+    # Feed setup.sh into bash with --help. The bootstrap should detect the
     # pipe, clone the workspace into a temp dir, exec the cloned copy with
     # --help, and exit 0.
     run bash -c "cat \"$SETUP_SH\" | bash -s -- --help"
-    # We capture combined stderr+stdout via run's default; assert no curl:
-    # substring appears anywhere.
     refute_output --partial "curl: (23)"
     refute_output --partial "Failure writing output to destination"
 }

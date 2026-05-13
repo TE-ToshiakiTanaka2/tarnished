@@ -393,20 +393,21 @@ The function is sourced into `.devcontainer/scripts/post.sh` after `setup_plugin
 
 The project-integration plugin auto-detects GitHub Projects via the `gh` CLI during `plugin_interactive_setup`. All gh invocations go through a private `_gh_run` wrapper so that:
 
-- gh's first-line stderr is captured into the global `GH_LAST_ERROR` (empty on success).
+- gh's first-line stderr is captured to a process-wide tempfile `GH_LAST_ERROR_FILE` (path established once at plugin source time via `mktemp`; empty content on success). A tempfile is required because helpers are invoked inside `$(...)` command substitution and a plain variable would not survive the subshell.
 - Each helper always returns `0` — failure is signaled by empty stdout, not exit status. This restores the non-fatal-warning invariant documented under `architecture.md :: "Cross-cutting Concerns / Plugin failures"`, broken pre-#276 by `var=$(gh ... 2>/dev/null)` aborting under `set -e`.
 - Callers emit a `print_warning` that includes the captured cause via `_print_gh_warning`.
+- No `EXIT` trap is installed on `GH_LAST_ERROR_FILE`: this plugin is sourced from inside `setup.sh`'s plugin dispatch, and `setup.sh --upgrade` registers `cleanup_upstream_dir EXIT` earlier; replacing that trap would leak the upstream clone.
 
-| Function | Signature | Stdout on success | Stdout on failure | `GH_LAST_ERROR` |
+| Function | Signature | Stdout on success | Stdout on failure | `GH_LAST_ERROR_FILE` |
 | --- | --- | --- | --- | --- |
-| `_gh_run` | `<cmd> [args...]` | gh's stdout | gh's stdout (often empty) | first line of gh's stderr |
-| `check_gh_available` | `()` | (empty) | (empty) | unset |
+| `_gh_run` | `<cmd> [args...]` | gh's stdout | gh's stdout (often empty) | first line of gh's stderr (empty on success) |
+| `check_gh_available` | `()` | (empty) | (empty) | unchanged |
 | `get_current_repo` | `()` | `owner/repo` | (empty) | first-line gh stderr |
 | `get_current_user` | `()` | `<login>` | (empty) | first-line gh stderr |
 | `get_owner_projects` | `(owner)` | `<JSON>` | (empty) | first-line gh stderr |
 | `get_project_fields` | `(owner, number)` | `<JSON>` | (empty) | first-line gh stderr |
 | `get_project_fields_detailed` | `(owner, number)` | `<JSON>` (GraphQL or basic fallback) | (empty) | first-line gh stderr (last gh attempt) |
-| `_print_gh_warning` | `(prefix)` | (none) | (none) | reads `GH_LAST_ERROR`; emits `print_warning` |
+| `_print_gh_warning` | `(prefix)` | (none) | (none) | reads `GH_LAST_ERROR_FILE`; emits `print_warning` |
 
 Control-flow guarantee: `plugin_interactive_setup` always reaches an interactive prompt (auto-selected project list or `prompt_manual_project_config` + `prompt_manual_field_defaults`). Silent default-fallback is forbidden. The decision tree is documented in `docs/design/#276/flowchart.md`.
 
@@ -505,7 +506,7 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 | Plugin failure during staged copy in `--upgrade` | per-plugin warning, continue | same isolation pattern as `setup_plugins.sh` (#255), reused (#265) |
 | sha256 tool missing | shell error, exit 1 | `sha256_file` finds neither `sha256sum` nor `shasum` (#265) |
 | `curl: (23) Failure writing output to destination` from remote bootstrap | (eliminated, #276) | Outer curl pipe inherited by `exec bash` in `setup.sh:29-69` bootstrap | Suppressed by `< /dev/null` on the `exec` line; never printed to user terminal |
-| `gh` helper auth/API/empty-result failure | shell warning, non-fatal (#276) | `gh` unauthenticated, network error, or empty response inside `templates/github-actions/project-integration/plugin.sh` | `print_warning` includes captured first-line stderr (`GH_LAST_ERROR`); control flow falls through to `prompt_manual_project_config` + `prompt_manual_field_defaults` |
+| `gh` helper auth/API/empty-result failure | shell warning, non-fatal (#276) | `gh` unauthenticated, network error, or empty response inside `templates/github-actions/project-integration/plugin.sh` | `print_warning` includes captured first-line stderr (read from `GH_LAST_ERROR_FILE`); control flow falls through to `prompt_manual_project_config` + `prompt_manual_field_defaults` |
 
 ## Versioning Policy
 
