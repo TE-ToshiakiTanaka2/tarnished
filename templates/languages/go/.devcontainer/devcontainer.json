@@ -6,12 +6,6 @@
   },
   "customizations": {
     "vscode": {
-      "settings": {
-        "files.exclude": {
-          "**/bin": true,
-          "**/pkg": true
-        }
-      },
       "extensions": [
         "golang.go"
       ]

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "gofmt -w \"$CLAUDE_FILE_PATH\" && go vet ./..."
+            "command": "gofmt -w \"$CLAUDE_FILE_PATH\""
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "gofmt -w \"$CLAUDE_FILE_PATH\" && go vet ./..."
+            "command": "gofmt -w \"$CLAUDE_FILE_PATH\""
           }
         ]
       }

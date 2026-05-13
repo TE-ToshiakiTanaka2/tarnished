@@ -1,3 +1,17 @@
+# Go Quality Check
+#
+# Assumes a single Go module rooted at the repository root (i.e., `go.mod` at
+# the top level). All jobs invoke `./...` from the repo root, which Go resolves
+# against the module containing the working directory.
+#
+# For monorepo layouts (one `go.mod` per module under `<module>/`):
+#   - Add a `go.work` at the root listing each module to enable `./...` to
+#     resolve across modules, OR
+#   - Fork this workflow into per-module jobs (e.g., one matrix entry per
+#     `<module>/go.mod`) and `cd` into each module before invoking go tooling.
+# See `templates/languages/go/.claude/rules/go.md` for the project's
+# coding-rules baseline.
+
 name: Go Quality Check
 
 on:
