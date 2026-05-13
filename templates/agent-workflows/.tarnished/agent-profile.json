@@ -1,0 +1,6 @@
+{
+  "ai_profile": "{{AI_PROFILE}}",
+  "primary_agent": "{{AI_PRIMARY_AGENT}}",
+  "review_agent": "{{AI_REVIEW_AGENT}}",
+  "workflow_source": ".tarnished/workflows"
+}

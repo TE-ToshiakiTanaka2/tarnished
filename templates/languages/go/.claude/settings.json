@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write(*.go)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gofmt -w \"$CLAUDE_FILE_PATH\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.go)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gofmt -w \"$CLAUDE_FILE_PATH\""
+          }
+        ]
+      }
+    ]
+  }
+}

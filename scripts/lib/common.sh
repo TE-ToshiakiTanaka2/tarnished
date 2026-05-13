@@ -542,10 +542,13 @@ make_scripts_executable() {
 # =============================================================================
 
 # Replace placeholders in files
-# Usage: replace_placeholders <target_dir> <project_name>
+# Usage: replace_placeholders <target_dir> <project_name> [ai_profile] [primary_agent] [review_agent]
 replace_placeholders() {
     local target_dir="$1"
     local project_name="$2"
+    local ai_profile="${3:-claude-main}"
+    local primary_agent="${4:-Claude Code}"
+    local review_agent="${5:-Manual review}"
 
     print_info "Replacing placeholders with project name: ${project_name}"
 
@@ -556,8 +559,16 @@ replace_placeholders() {
         "${target_dir}/docker/Dockerfile.dev"
         "${target_dir}/docker-compose.yml"
         "${target_dir}/docker-compose.postgresql.yml"
+        "${target_dir}/docker-compose.mysql.yml"
         "${target_dir}/docker-compose.redis.yml"
         "${target_dir}/docker-compose.celery.yml"
+        "${target_dir}/.tarnished/agent-profile.json"
+        "${target_dir}/.tarnished/workflows/README.md"
+        "${target_dir}/.tarnished/workflows/issue.md"
+        "${target_dir}/.tarnished/workflows/design.md"
+        "${target_dir}/.tarnished/workflows/implement.md"
+        "${target_dir}/.tarnished/workflows/review.md"
+        "${target_dir}/.tarnished/workflows/pr.md"
         "${target_dir}/CLAUDE.md"
         "${target_dir}/AGENTS.md"
     )
@@ -568,9 +579,15 @@ replace_placeholders() {
             if [[ "$(uname)" == "Darwin" ]]; then
                 # macOS
                 sed -i '' "s|{{PROJECT_NAME}}|${project_name}|g" "$file"
+                sed -i '' "s|{{AI_PROFILE}}|${ai_profile}|g" "$file"
+                sed -i '' "s|{{AI_PRIMARY_AGENT}}|${primary_agent}|g" "$file"
+                sed -i '' "s|{{AI_REVIEW_AGENT}}|${review_agent}|g" "$file"
             else
                 # Linux
                 sed -i "s|{{PROJECT_NAME}}|${project_name}|g" "$file"
+                sed -i "s|{{AI_PROFILE}}|${ai_profile}|g" "$file"
+                sed -i "s|{{AI_PRIMARY_AGENT}}|${primary_agent}|g" "$file"
+                sed -i "s|{{AI_REVIEW_AGENT}}|${review_agent}|g" "$file"
             fi
         fi
     done
@@ -651,7 +668,7 @@ check_tty_available() {
     fi
 
     # Try to open /dev/tty for reading
-    if ! exec 3< /dev/tty 2>/dev/null; then
+    if ! { exec 3< /dev/tty; } 2>/dev/null; then
         return 1
     fi
 
@@ -677,6 +694,7 @@ show_interactive_mode_error() {
     echo "  --playwright          Include Playwright E2E testing"
     echo "  --docker              Include Docker-in-Docker support"
     echo "  --postgresql          Include PostgreSQL database support"
+    echo "  --mysql               Include MySQL database support"
     echo "  --neo4j               Include Neo4j graph database support"
     echo "  --redis               Include Redis cache/session support"
     echo "  --github-actions      Include GitHub Actions templates"

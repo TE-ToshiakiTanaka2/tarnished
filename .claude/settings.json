@@ -62,5 +62,10 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "context7@claude-plugins-official": true,
+    "serena@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true
   }
 }

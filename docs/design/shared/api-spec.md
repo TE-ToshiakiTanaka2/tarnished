@@ -216,7 +216,7 @@ Schema (full table in [data-model.md](./data-model.md) :: "modules.json schema")
 | `version` | integer | Currently `1`. Readers MUST reject unknown majors. |
 | `modules[].name` | string | `^[a-z][a-z0-9_-]*$`, max 50 chars, unique. |
 | `modules[].path` | string | Relative to repo root; equals `name` for now. |
-| `modules[].language` | string | One of `rust`, `python`, `node`, `deno`, `latex`. |
+| `modules[].language` | string | One of `rust`, `python`, `node`, `deno`, `latex`, `go` (#274). |
 | `modules[].services` | array of string | Informational; actual compose runs project-wide. |
 
 ## Internal API (cross-module function contracts)
@@ -389,6 +389,28 @@ The function is sourced into `.devcontainer/scripts/post.sh` after `setup_plugin
 
 `permissions.allow` includes `"Bash(codex:*)"` so the `/review` skill can invoke `codex exec` and `codex review` without per-call approval. The pre-existing `permissions.deny` list and `hooks` block are unchanged. Other downstream projects opt in via `templates/codex/.claude/settings.json`.
 
+### `templates/github-actions/project-integration/plugin.sh` — gh helper contract (#276)
+
+The project-integration plugin auto-detects GitHub Projects via the `gh` CLI during `plugin_interactive_setup`. All gh invocations go through a private `_gh_run` wrapper so that:
+
+- gh's first-line stderr is captured to a process-wide tempfile `GH_LAST_ERROR_FILE` (path established once at plugin source time via `mktemp`; empty content on success). A tempfile is required because helpers are invoked inside `$(...)` command substitution and a plain variable would not survive the subshell.
+- Each helper always returns `0` — failure is signaled by empty stdout, not exit status. This restores the non-fatal-warning invariant documented under `architecture.md :: "Cross-cutting Concerns / Plugin failures"`, broken pre-#276 by `var=$(gh ... 2>/dev/null)` aborting under `set -e`.
+- Callers emit a `print_warning` that includes the captured cause via `_print_gh_warning`.
+- No `EXIT` trap is installed on `GH_LAST_ERROR_FILE`: this plugin is sourced from inside `setup.sh`'s plugin dispatch, and `setup.sh --upgrade` registers `cleanup_upstream_dir EXIT` earlier; replacing that trap would leak the upstream clone.
+
+| Function | Signature | Stdout on success | Stdout on failure | `GH_LAST_ERROR_FILE` |
+| --- | --- | --- | --- | --- |
+| `_gh_run` | `<cmd> [args...]` | gh's stdout | gh's stdout (often empty) | first line of gh's stderr (empty on success) |
+| `check_gh_available` | `()` | (empty) | (empty) | unchanged |
+| `get_current_repo` | `()` | `owner/repo` | (empty) | first-line gh stderr |
+| `get_current_user` | `()` | `<login>` | (empty) | first-line gh stderr |
+| `get_owner_projects` | `(owner)` | `<JSON>` | (empty) | first-line gh stderr |
+| `get_project_fields` | `(owner, number)` | `<JSON>` | (empty) | first-line gh stderr |
+| `get_project_fields_detailed` | `(owner, number)` | `<JSON>` (GraphQL or basic fallback) | (empty) | first-line gh stderr (last gh attempt) |
+| `_print_gh_warning` | `(prefix)` | (none) | (none) | reads `GH_LAST_ERROR_FILE`; emits `print_warning` |
+
+Control-flow guarantee: `plugin_interactive_setup` always reaches an interactive prompt (auto-selected project list or `prompt_manual_project_config` + `prompt_manual_field_defaults`). Silent default-fallback is forbidden. The decision tree is documented in `docs/design/#276/flowchart.md`.
+
 ### `setup_plugins.sh` (workspace + `templates/claude/.devcontainer/scripts/`, #249, #255, #273)
 
 The workspace dogfooded copy (`/workspace/.devcontainer/scripts/setup_plugins.sh`) and the downstream template copy (`templates/claude/.devcontainer/scripts/setup_plugins.sh`) are now structurally identical (#273); a future change to one MUST be applied to the other in the same commit, mirroring the workspace-Codex dogfooding convention from #261.
@@ -404,7 +426,7 @@ Contract: under `set -e` (in `post.sh`), this script MUST `return 0` even when i
 
 ### Language plugin contract (`templates/languages/<lang>/plugin.sh`, #263)
 
-Language plugins (currently `python`, `rust`, `node`, `deno`, `latex`) expose a split `plugin_post_copy`:
+Language plugins (currently `python`, `rust`, `node`, `deno`, `latex`, `go` — #274 added `go`) expose a split `plugin_post_copy`:
 
 ```bash
 # REQUIRED today, kept verbatim:
@@ -488,6 +510,8 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 | `--target-version <ref>` not resolvable | shell error, exit 1 | upstream tarnished clone failure (#265) |
 | Plugin failure during staged copy in `--upgrade` | per-plugin warning, continue | same isolation pattern as `setup_plugins.sh` (#255), reused (#265) |
 | sha256 tool missing | shell error, exit 1 | `sha256_file` finds neither `sha256sum` nor `shasum` (#265) |
+| `curl: (23) Failure writing output to destination` from remote bootstrap | (eliminated, #276) | Outer curl pipe inherited by `exec bash` in `setup.sh:29-69` bootstrap | Suppressed by `< /dev/null` on the `exec` line; never printed to user terminal |
+| `gh` helper auth/API/empty-result failure | shell warning, non-fatal (#276) | `gh` unauthenticated, network error, or empty response inside `templates/github-actions/project-integration/plugin.sh` | `print_warning` includes captured first-line stderr (read from `GH_LAST_ERROR_FILE`); control flow falls through to `prompt_manual_project_config` + `prompt_manual_field_defaults` |
 
 ## Versioning Policy
 

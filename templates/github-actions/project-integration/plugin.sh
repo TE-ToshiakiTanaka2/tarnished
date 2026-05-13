@@ -33,15 +33,62 @@ plugin_description() {
 # Helper Functions for gh CLI Integration
 # =============================================================================
 
+# Process-wide file holding the most recent gh helper's first-line stderr.
+# A file (not a variable) is required because helpers are invoked via
+# command substitution `$(get_current_user)`; the subshell would discard a
+# plain variable. mktemp gives an unpredictable name owned 0600 by the
+# caller, avoiding the symlink/clobber risk a predictable `/tmp/...$$`
+# path would expose (#276). The file is small and per-PID; we deliberately
+# do NOT install an EXIT trap here because this plugin is sourced inside
+# setup.sh's plugin dispatch and would otherwise stomp on any trap the
+# parent script (e.g. the --upgrade flow) registered earlier.
+# If mktemp fails (e.g. TMPDIR unwritable), GH_LAST_ERROR_FILE stays empty
+# and _gh_run skips the cross-subshell capture — the helpers still work,
+# just without the diagnostic line in warnings.
+GH_LAST_ERROR_FILE="$(mktemp -t tarnished-gh-last-error.XXXXXX 2>/dev/null || true)"
+
 # Check if gh CLI is available
 check_gh_available() {
     command -v gh &> /dev/null
 }
 
+# Run a gh command, capture first-line stderr to GH_LAST_ERROR_FILE,
+# swallow the exit code. Stdout is emitted verbatim. Always returns 0 so
+# callers under `set -e` are not aborted by gh failures (#276).
+_gh_run() {
+    local err_file
+    err_file=$(mktemp 2>/dev/null) || err_file=""
+    [[ -n "$GH_LAST_ERROR_FILE" ]] && : > "$GH_LAST_ERROR_FILE"
+    if [[ -n "$err_file" ]]; then
+        "$@" </dev/null 2>"$err_file" || true
+        if [[ -n "$GH_LAST_ERROR_FILE" ]]; then
+            head -n1 "$err_file" > "$GH_LAST_ERROR_FILE" 2>/dev/null || true
+        fi
+        rm -f "$err_file"
+    else
+        "$@" </dev/null 2>/dev/null || true
+    fi
+    return 0
+}
+
+# Emit a print_warning that appends the captured gh stderr when present.
+_print_gh_warning() {
+    local prefix="$1"
+    local err=""
+    if [[ -n "$GH_LAST_ERROR_FILE" ]] && [[ -f "$GH_LAST_ERROR_FILE" ]]; then
+        err=$(cat "$GH_LAST_ERROR_FILE" 2>/dev/null || true)
+    fi
+    if [[ -n "$err" ]]; then
+        print_warning "$prefix (gh: $err)"
+    else
+        print_warning "$prefix"
+    fi
+}
+
 # Get repository in owner/repo format
 get_current_repo() {
     if check_gh_available; then
-        gh repo view --json nameWithOwner --jq '.nameWithOwner' </dev/null 2>/dev/null
+        _gh_run gh repo view --json nameWithOwner --jq '.nameWithOwner'
     else
         # Try to extract from git remote
         local remote_url
@@ -56,7 +103,7 @@ get_current_repo() {
 # Get current user's login
 get_current_user() {
     if check_gh_available; then
-        gh api user --jq '.login' </dev/null 2>/dev/null
+        _gh_run gh api user --jq '.login'
     fi
 }
 
@@ -65,7 +112,7 @@ get_current_user() {
 get_owner_projects() {
     local owner="$1"
     if check_gh_available && [[ -n "$owner" ]]; then
-        gh project list --owner "$owner" --format json </dev/null 2>/dev/null
+        _gh_run gh project list --owner "$owner" --format json
     fi
 }
 
@@ -75,7 +122,7 @@ get_project_fields() {
     local owner="$1"
     local number="$2"
     if check_gh_available && [[ -n "$owner" ]] && [[ -n "$number" ]]; then
-        gh project field-list "$number" --owner "$owner" --format json </dev/null 2>/dev/null
+        _gh_run gh project field-list "$number" --owner "$owner" --format json
     fi
 }
 
@@ -88,12 +135,12 @@ get_project_fields_detailed() {
     local number="$2"
 
     if ! check_gh_available || [[ -z "$owner" ]] || [[ -z "$number" ]]; then
-        return 1
+        return 0
     fi
 
     # Try user-owned project first, then organization
     local result
-    result=$(gh api graphql -f query='
+    result=$(_gh_run gh api graphql -f query='
 query($owner: String!, $number: Int!) {
   user(login: $owner) {
     projectV2(number: $number) {
@@ -128,7 +175,7 @@ query($owner: String!, $number: Int!) {
       }
     }
   }
-}' -f owner="$owner" -F number="$number" </dev/null 2>/dev/null)
+}' -f owner="$owner" -F number="$number")
 
     # Check if user query returned valid data
     if [[ -n "$result" ]] && echo "$result" | jq -e '.data.user.projectV2.fields.nodes' &>/dev/null; then
@@ -137,7 +184,7 @@ query($owner: String!, $number: Int!) {
     fi
 
     # Try organization-owned project
-    result=$(gh api graphql -f query='
+    result=$(_gh_run gh api graphql -f query='
 query($owner: String!, $number: Int!) {
   organization(login: $owner) {
     projectV2(number: $number) {
@@ -172,14 +219,14 @@ query($owner: String!, $number: Int!) {
       }
     }
   }
-}' -f owner="$owner" -F number="$number" </dev/null 2>/dev/null)
+}' -f owner="$owner" -F number="$number")
 
     if [[ -n "$result" ]] && echo "$result" | jq -e '.data.organization.projectV2.fields.nodes' &>/dev/null; then
         echo "$result"
         return 0
     fi
 
-    return 1
+    return 0
 }
 
 # Categorize fields by type from GraphQL response
@@ -894,10 +941,10 @@ plugin_interactive_setup() {
                     print_warning "No projects found for $current_user"
                 fi
             else
-                print_warning "Could not fetch projects for $current_user"
+                _print_gh_warning "Could not fetch projects for $current_user"
             fi
         else
-            print_warning "Could not determine current user"
+            _print_gh_warning "Could not determine current user"
         fi
     else
         print_info "gh CLI not found, using manual configuration"
@@ -1088,14 +1135,14 @@ plugin_interactive_setup() {
                 PR_OPEN_STATUS="${PR_OPEN_STATUS:-In Review}"
             fi
         else
-            print_warning "Could not fetch project details via GraphQL, trying basic field-list..."
+            _print_gh_warning "Could not fetch project details via GraphQL, trying basic field-list..."
             # Fallback to basic gh project field-list
             local basic_fields
             basic_fields=$(get_project_fields "$PROJECT_OWNER" "$PROJECT_NUMBER")
             if [[ -n "$basic_fields" ]]; then
                 configure_fields_from_basic_list "$basic_fields"
             else
-                print_warning "Could not fetch project details, using manual input"
+                _print_gh_warning "Could not fetch project details, using manual input"
                 prompt_manual_field_defaults
             fi
         fi

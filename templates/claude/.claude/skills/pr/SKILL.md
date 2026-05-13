@@ -9,6 +9,8 @@ disable-model-invocation: true
 
 Pull Request creation skill for projects. Handles code analysis, improvements, cleanup, PR creation, CI monitoring, and validation.
 
+This skill is the Claude Code projection of `.tarnished/workflows/pr.md`. Keep the shared workflow source and this tool-specific entrypoint aligned.
+
 ## Usage
 
 ```
