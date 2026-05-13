@@ -1,0 +1,126 @@
+# Go Quality Check
+#
+# Assumes a single Go module rooted at the repository root (i.e., `go.mod` at
+# the top level). All jobs invoke `./...` from the repo root, which Go resolves
+# against the module containing the working directory.
+#
+# For monorepo layouts (one `go.mod` per module under `<module>/`):
+#   - Add a `go.work` at the root listing each module to enable `./...` to
+#     resolve across modules, OR
+#   - Fork this workflow into per-module jobs (e.g., one matrix entry per
+#     `<module>/go.mod`) and `cd` into each module before invoking go tooling.
+# See `templates/languages/go/.claude/rules/go.md` for the project's
+# coding-rules baseline.
+
+name: Go Quality Check
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+
+env:
+  GO_VERSION: "stable"
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run go build
+        run: go build ./...
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run go vet
+        run: go vet ./...
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run gofmt
+        run: |
+          diff=$(gofmt -l .)
+          if [[ -n "$diff" ]]; then
+            echo "The following files need gofmt:"
+            echo "$diff"
+            exit 1
+          fi
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run unit tests
+        run: gotestsum --format pkgname -- ./...

@@ -216,7 +216,7 @@ Schema (full table in [data-model.md](./data-model.md) :: "modules.json schema")
 | `version` | integer | Currently `1`. Readers MUST reject unknown majors. |
 | `modules[].name` | string | `^[a-z][a-z0-9_-]*$`, max 50 chars, unique. |
 | `modules[].path` | string | Relative to repo root; equals `name` for now. |
-| `modules[].language` | string | One of `rust`, `python`, `node`, `deno`, `latex`. |
+| `modules[].language` | string | One of `rust`, `python`, `node`, `deno`, `latex`, `go` (#274). |
 | `modules[].services` | array of string | Informational; actual compose runs project-wide. |
 
 ## Internal API (cross-module function contracts)
@@ -401,7 +401,7 @@ Contract: under `set -e` (in `post.sh`), this script MUST `return 0` even when i
 
 ### Language plugin contract (`templates/languages/<lang>/plugin.sh`, #263)
 
-Language plugins (currently `python`, `rust`, `node`, `deno`, `latex`) expose a split `plugin_post_copy`:
+Language plugins (currently `python`, `rust`, `node`, `deno`, `latex`, `go` — #274 added `go`) expose a split `plugin_post_copy`:
 
 ```bash
 # REQUIRED today, kept verbatim:
