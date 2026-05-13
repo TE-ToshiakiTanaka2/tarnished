@@ -25,3 +25,23 @@
 `bats` is not installed in this environment, so I could not execute the new test files; the review is based on static inspection and shell-level spot checks.
 
 **Final verdict: REQUEST_CHANGES**
+
+---
+
+## Fixes Applied
+
+All four items addressed in commit `1bef170` (`fix: address review feedback for #276`).
+
+- **W1 (predictable /tmp path)** — `GH_LAST_ERROR_FILE` is now obtained via `mktemp -t tarnished-gh-last-error.XXXXXX` (unpredictable name, 0600 perms). `_gh_run` and `_print_gh_warning` tolerate an empty path (degraded no-capture mode) so the helpers stay functional if mktemp fails.
+- **W2 (sourced plugin stomped on caller's EXIT trap)** — Removed the `trap "rm -f ..." EXIT` from the plugin. The per-PID tempfile is small and uniquely named; we let the OS clean it. Verified by spot-check: sourcing the plugin no longer overwrites a pre-existing EXIT trap.
+- **S1 (design docs lagged implementation)** — Updated `docs/design/#276/{design,api-spec}.md` and the shared layer (`architecture.md`, `api-spec.md`, `sequence.md`) to describe `GH_LAST_ERROR_FILE` (file-based), the `mktemp` rationale, and the deliberate absence of the EXIT trap. `GH_LAST_ERROR` no longer appears anywhere in the design corpus.
+- **S2 (misleading bats test name)** — Renamed the behavioral bootstrap test to "pipe-fed invocation completes cleanly through clone-and-exec" and added a comment clarifying that the test does not invoke real curl (the EPIPE is timing-dependent). The static-invariant test above it is what actually pins the `< /dev/null` redirect. Also silenced SC2030/SC2031 false positives in `project_integration_gh.bats` with an explanatory disable.
+
+### Verification
+- `shellcheck` on `plugin.sh` + both bats files: clean (exit 0).
+- `bats` (12 cases): all pass.
+- EXIT-trap spot-check: a pre-existing `trap "echo OLD-TRAP-PRESERVED" EXIT` survives sourcing `plugin.sh`.
+- `mktemp` produces a 0600-perm file with a random suffix (verified locally).
+
+Commit: `1bef170`
+
