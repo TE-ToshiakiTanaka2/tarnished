@@ -11,7 +11,7 @@ A GitHub Issue/Tag management CLI tool built in Rust.
 
 ## Quick Start (DevContainer)
 
-Set up a DevContainer environment with Claude Code and SuperClaude support:
+Set up a DevContainer environment with shared Claude Code / Codex workflows:
 
 ```bash
 # Create a new project directory
@@ -22,6 +22,35 @@ curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develo
 ```
 
 Then open the folder in VS Code and click "Reopen in Container" when prompted.
+
+### AI workflow profiles
+
+Tarnished keeps the implementation lifecycle in `.tarnished/workflows/` and
+projects it into the agent-specific entrypoints used by Claude Code and Codex.
+This keeps the workflow shape consistent across Claude-main and Codex-main
+projects.
+
+```bash
+# Default: Claude Code primary
+./setup.sh --ai-profile claude-main
+
+# Codex primary, Claude Code as review handoff
+./setup.sh --ai-profile codex-main
+
+# Install both projections and document cross-agent operation
+./setup.sh --ai-profile dual
+
+# Backward-compatible alias: Claude primary + Codex reviewer
+./setup.sh --codex
+```
+
+Generated projects include:
+
+- `.tarnished/agent-profile.json` — selected profile and primary/review agents
+- `.tarnished/workflows/` — shared lifecycle source
+- `.tarnished/workflows/erd/` — Codex-readable projection of the existing erd command assets
+- `CLAUDE.md` — Claude Code entrypoint when Claude is installed
+- `AGENTS.md` — Codex entrypoint when Codex is installed
 
 ### Monorepo support
 
@@ -37,12 +66,19 @@ curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develo
 # Answer "y" to the "Monorepo configuration?" prompt, then enter modules in
 # the dialogue loop. Empty module name finishes.
 
-# Or non-interactively
+# Or non-interactively (use --postgresql or --mysql for the DB service)
 curl -fsSL .../setup.sh | bash -s -- \
   --monorepo \
   --module backend:python \
   --module frontend:node \
   --postgresql -y
+
+# Same shape with MySQL instead:
+curl -fsSL .../setup.sh | bash -s -- \
+  --monorepo \
+  --module backend:python \
+  --module frontend:node \
+  --mysql -y
 
 # Add a module to an existing monorepo (auto-detected via modules.json,
 # or explicit via --add-module):

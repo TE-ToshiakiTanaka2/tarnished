@@ -112,6 +112,10 @@ declare -A SERVICE_DISPLAY_NAMES=(
 GITHUB_ACTIONS_ENABLED=false
 AUTO_TAG_ENABLED=false
 CODEX_ENABLED=false
+AI_PROFILE="claude-main"
+AI_PROFILE_SET=false
+AI_PRIMARY_AGENT="Claude Code"
+AI_REVIEW_AGENT="Manual review"
 POSTGRESQL_ENABLED=false
 MYSQL_ENABLED=false
 REDIS_ENABLED=false
@@ -137,8 +141,8 @@ PRUNE_ENABLED=false
 SHARED_ONLY=false
 declare -a UPGRADE_MODULES=()
 
-# Core plugins that are always loaded
-declare -a CORE_PLUGINS=("core" "claude")
+# Core plugins that are always loaded in root scaffold modes
+declare -a CORE_PLUGINS=("core" "agent-workflows" "claude")
 
 # =============================================================================
 # Help Function
@@ -168,6 +172,9 @@ Options:
     --add-module <name> Add a single module to an existing monorepo. Pair with --lang.
                         Auto-detected when CWD already contains modules.json. (#263)
     --codex             Include OpenAI Codex CLI integration (code review)
+    --ai-profile <profile>
+                        Select AI workflow profile:
+                        claude-main (default), codex-main, or dual
     --postgresql        Include PostgreSQL database service
     --mysql             Include MySQL database service
     --redis             Include Redis cache/broker service
@@ -229,6 +236,8 @@ Examples:
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
     ./setup.sh --lang go                    # Go only
     ./setup.sh --lang go --github-actions   # Go with GitHub Project integration
+    ./setup.sh --ai-profile codex-main      # Codex primary + Claude reviewer
+    ./setup.sh --codex                      # Claude primary + Codex reviewer
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
 
     # Monorepo mode (#263)
@@ -263,11 +272,10 @@ Generated Files:
     docker/
         Dockerfile.dev              # Development Docker image
     docker-compose.yml              # Docker Compose configuration
-    .claude/
-        settings.json               # Claude Code settings
-        commands/                   # Custom slash commands
-        scripts/                    # Helper scripts
-    CLAUDE.md                       # Claude Code project context
+    .tarnished/workflows/           # Shared agent workflow source
+    .claude/                        # Claude Code projection (when installed)
+    .codex/                         # Codex CLI projection (when installed)
+    CLAUDE.md / AGENTS.md           # Agent-specific entrypoints
 
 Remote Execution:
     Run directly from GitHub without cloning first:
@@ -507,6 +515,11 @@ load_selected_plugins() {
     # 1. Core plugin first (skipped in add-module mode)
     if [[ "$skip_root_plugins" != true ]] && [[ -f "${TEMPLATES_DIR}/core/plugin.sh" ]]; then
         load_order+=("${TEMPLATES_DIR}/core/plugin.sh")
+    fi
+
+    # 1.5. Shared agent workflow source (skipped in add-module mode)
+    if [[ "$skip_root_plugins" != true ]] && [[ -f "${TEMPLATES_DIR}/agent-workflows/plugin.sh" ]]; then
+        load_order+=("${TEMPLATES_DIR}/agent-workflows/plugin.sh")
     fi
 
     # 2. Selected language plugins
@@ -919,6 +932,15 @@ parse_arguments() {
                 CODEX_ENABLED=true
                 shift
                 ;;
+            --ai-profile)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--ai-profile requires a value (claude-main, codex-main, dual)"
+                    exit 1
+                fi
+                AI_PROFILE="$2"
+                AI_PROFILE_SET=true
+                shift 2
+                ;;
             --postgresql)
                 POSTGRESQL_ENABLED=true
                 SELECTED_SERVICES+=("postgresql")
@@ -1012,6 +1034,14 @@ parse_arguments() {
 # (#263, #265). Documented in docs/design/shared/api-spec.md ::
 # Setup / Plugin Surface.
 validate_argument_combinations() {
+    case "$AI_PROFILE" in
+        claude-main|codex-main|dual) ;;
+        *)
+            print_error "Unknown --ai-profile '$AI_PROFILE' (expected: claude-main, codex-main, dual)"
+            exit 1
+            ;;
+    esac
+
     # Manifest modes (#265) are mutually exclusive with each other.
     if [[ "$CREATE_MANIFEST_MODE" == true ]] && [[ "$UPGRADE_MODE" == true ]]; then
         print_error "--create-manifest and --upgrade are mutually exclusive"
@@ -1042,6 +1072,10 @@ validate_argument_combinations() {
         fi
         if [[ "$CODEX_ENABLED" == true ]] || [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
             print_error "--create-manifest does not accept feature flags (--codex, --github-actions)"
+            exit 1
+        fi
+        if [[ "$AI_PROFILE_SET" == true ]]; then
+            print_error "--create-manifest does not accept --ai-profile (no scaffold work is done)"
             exit 1
         fi
         if [[ "$SHARED_ONLY" == true ]] || [[ "$PRUNE_ENABLED" == true ]] || [[ "$FORCE" == true ]] || [[ -n "$TARGET_VERSION" ]]; then
@@ -1078,6 +1112,10 @@ validate_argument_combinations() {
         fi
         if [[ "$CODEX_ENABLED" == true ]] || [[ "$GITHUB_ACTIONS_ENABLED" == true ]] || [[ "$AUTO_TAG_ENABLED" == true ]]; then
             print_error "--upgrade does not accept feature flags (--codex, --github-actions, --auto-tag)"
+            exit 1
+        fi
+        if [[ "$AI_PROFILE_SET" == true ]]; then
+            print_error "--upgrade does not accept --ai-profile (the manifest records it)"
             exit 1
         fi
         if [[ -n "$FROM_VERSION" ]]; then
@@ -1167,6 +1205,73 @@ validate_language() {
     done
     print_error "Unknown language '$lang' (available: ${AVAILABLE_LANGUAGES[*]})"
     return 1
+}
+
+# =============================================================================
+# AI Profile Functions
+# =============================================================================
+
+configure_ai_profile() {
+    case "$AI_PROFILE" in
+        claude-main)
+            AI_PRIMARY_AGENT="Claude Code"
+            if [[ "$CODEX_ENABLED" == true ]]; then
+                AI_REVIEW_AGENT="Codex CLI"
+            else
+                AI_REVIEW_AGENT="Manual review"
+            fi
+            ;;
+        codex-main)
+            CODEX_ENABLED=true
+            AI_PRIMARY_AGENT="Codex CLI"
+            AI_REVIEW_AGENT="Claude Code"
+            ;;
+        dual)
+            CODEX_ENABLED=true
+            AI_PRIMARY_AGENT="Claude Code + Codex CLI"
+            AI_REVIEW_AGENT="Cross-agent review"
+            ;;
+    esac
+}
+
+prompt_ai_profile_selection() {
+    if ! check_tty_available || [[ "$AI_PROFILE_SET" == true ]]; then
+        configure_ai_profile
+        return
+    fi
+
+    echo "" > /dev/tty
+    print_info "Select AI assistant profile:"
+    echo "  1. Claude Code primary (default)" > /dev/tty
+    echo "  2. Claude Code primary + Codex reviewer" > /dev/tty
+    echo "  3. Codex primary + Claude Code reviewer" > /dev/tty
+    echo "  4. Dual Claude/Codex workflow projection" > /dev/tty
+    echo -n "Enter selection [1]: " > /dev/tty
+
+    local profile_response
+    IFS='' read -r profile_response < /dev/tty
+
+    case "$profile_response" in
+        ""|1)
+            AI_PROFILE="claude-main"
+            ;;
+        2)
+            AI_PROFILE="claude-main"
+            CODEX_ENABLED=true
+            ;;
+        3)
+            AI_PROFILE="codex-main"
+            ;;
+        4)
+            AI_PROFILE="dual"
+            ;;
+        *)
+            print_warning "Invalid AI profile selection '$profile_response'; using claude-main"
+            AI_PROFILE="claude-main"
+            ;;
+    esac
+
+    configure_ai_profile
 }
 
 # =============================================================================
@@ -1495,14 +1600,18 @@ infer_scaffold_options() {
         fi
     fi
 
-    local gha=false ata=false codex=false
+    local gha=false ata=false codex=false ai_profile="claude-main"
     [[ -f "$target_dir/.github/workflows/project-integration.yml" ]] && gha=true
     [[ -f "$target_dir/.github/workflows/auto-tag.yml" ]] && ata=true
     [[ -f "$target_dir/.codex/config.toml" ]] && codex=true
+    if [[ -f "$target_dir/.tarnished/agent-profile.json" ]]; then
+        ai_profile=$(jq -r '.ai_profile // "claude-main"' "$target_dir/.tarnished/agent-profile.json" 2>/dev/null || echo "claude-main")
+    fi
 
     jq -n \
         --argjson languages "$languages_json" \
         --argjson services "$services_json" \
+        --arg ai_profile "$ai_profile" \
         --argjson gha "$gha" \
         --argjson ata "$ata" \
         --argjson codex "$codex" \
@@ -1512,6 +1621,7 @@ infer_scaffold_options() {
             services: $services,
             github_actions_enabled: $gha,
             auto_tag_enabled: $ata,
+            ai_profile: $ai_profile,
             codex_enabled: $codex,
             monorepo: $monorepo
         }'
@@ -2134,6 +2244,10 @@ populate_setup_state_from_manifest() {
     GITHUB_ACTIONS_ENABLED=false
     AUTO_TAG_ENABLED=false
     CODEX_ENABLED=false
+    AI_PROFILE="claude-main"
+    AI_PROFILE_SET=false
+    AI_PRIMARY_AGENT="Claude Code"
+    AI_REVIEW_AGENT="Manual review"
     LOADED_PLUGINS=()
     PLUGIN_NAMES=()
 
@@ -2158,8 +2272,10 @@ populate_setup_state_from_manifest() {
 
     GITHUB_ACTIONS_ENABLED=$(echo "$manifest_json" | jq -r '.scaffold_options.github_actions_enabled // false')
     AUTO_TAG_ENABLED=$(echo "$manifest_json" | jq -r '.scaffold_options.auto_tag_enabled // false')
+    AI_PROFILE=$(echo "$manifest_json" | jq -r '.scaffold_options.ai_profile // "claude-main"')
     CODEX_ENABLED=$(echo "$manifest_json" | jq -r '.scaffold_options.codex_enabled // false')
     MONOREPO_MODE=$(echo "$manifest_json" | jq -r '.scaffold_options.monorepo // false')
+    configure_ai_profile
 
     # In monorepo per-module scopes we want the language plugins to take
     # the _module path, not _shared. Easiest way: pretend we're in
@@ -2268,16 +2384,7 @@ main() {
     # already installed by the original --monorepo init), so prompting would
     # create a silent no-op (Warning #5 from #263 review).
     if check_tty_available && [[ "$IS_ADD_MODULE_MODE" != true ]]; then
-        # Ask about Codex CLI integration
-        if [[ "$CODEX_ENABLED" != true ]]; then
-            echo "" > /dev/tty
-            echo -n "Enable OpenAI Codex CLI integration (code review)? (y/n) [n]: " > /dev/tty
-            local codex_response
-            read -r codex_response < /dev/tty
-            if [[ "$codex_response" == "y" || "$codex_response" == "Y" ]]; then
-                CODEX_ENABLED=true
-            fi
-        fi
+        prompt_ai_profile_selection
 
         # Ask about project-integration
         if [[ "$GITHUB_ACTIONS_ENABLED" != true ]]; then
@@ -2317,7 +2424,14 @@ main() {
             print_warning "--auto-tag is ignored in add-module mode (already installed by the original --monorepo init)"
             AUTO_TAG_ENABLED=false
         fi
+        if [[ "$AI_PROFILE_SET" == true ]]; then
+            print_warning "--ai-profile is ignored in add-module mode (AI workflow assets were set up by the original --monorepo init)"
+            AI_PROFILE="claude-main"
+            AI_PROFILE_SET=false
+        fi
     fi
+
+    configure_ai_profile
 
     # Confirm settings
     print_section "Setup Configuration"
@@ -2332,6 +2446,9 @@ main() {
     fi
     echo "Language:             ${SELECTED_LANGUAGES[*]:-none}"
     echo "Services:             ${SELECTED_SERVICES[*]:-none}"
+    echo "AI Profile:           $AI_PROFILE"
+    echo "Primary Agent:        $AI_PRIMARY_AGENT"
+    echo "Review Agent:         $AI_REVIEW_AGENT"
     echo "Codex CLI:            $CODEX_ENABLED"
     echo "Project Integration:  $GITHUB_ACTIONS_ENABLED"
     echo "Auto-Tag:             $AUTO_TAG_ENABLED"
@@ -2384,7 +2501,7 @@ main() {
     fi
 
     # Replace placeholders
-    replace_placeholders "$TARGET_DIR" "$PROJECT_NAME"
+    replace_placeholders "$TARGET_DIR" "$PROJECT_NAME" "$AI_PROFILE" "$AI_PRIMARY_AGENT" "$AI_REVIEW_AGENT"
 
     # Update .gitignore
     update_gitignore "$TARGET_DIR"
@@ -2441,12 +2558,19 @@ main() {
     echo "  1. Open in VS Code: code ."
     echo "  2. Reopen in Container: F1 > Dev Containers: Reopen in Container"
     echo ""
-    echo "Available Claude Code commands:"
-    echo "  /issue     - Create a GitHub Issue"
-    echo "  /design    - Design architecture for a GitHub Issue"
-    echo "  /implement - Implement a GitHub Issue"
-    echo "  /review    - Code review via Codex CLI"
-    echo "  /pr        - Create a Pull Request"
+    echo "AI workflow profile: $AI_PROFILE"
+    echo "  Primary: $AI_PRIMARY_AGENT"
+    echo "  Review:  $AI_REVIEW_AGENT"
+    echo ""
+    echo "Shared workflow source:"
+    echo "  .tarnished/workflows/"
+    echo ""
+    echo "Available workflow steps:"
+    echo "  issue     - Create a GitHub Issue"
+    echo "  design    - Design architecture for a GitHub Issue"
+    echo "  implement - Implement a GitHub Issue"
+    echo "  review    - Independent review handoff"
+    echo "  pr        - Create a Pull Request"
     echo ""
     echo "Workflow: /issue → /design → /implement → /review → /pr"
 }
