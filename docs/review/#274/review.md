@@ -88,3 +88,25 @@ fail in that arrangement.
 4. Pinning `golangci-lint`/`gotestsum` to explicit versions — Quality
    improvement, but introduces maintenance burden (someone has to bump the
    pins). The design.md explicitly chose `@latest` for simplicity.
+
+---
+
+## Fixes Applied
+
+- **Warning 1 (Claude hook)**: Dropped `go vet ./...` from
+  `settings.json`. The hook now runs only `gofmt -w "$CLAUDE_FILE_PATH"`.
+- **Warning 2 (CI workflow)**: Added a header comment to
+  `go-quality-check.yml` documenting the single-module-at-root assumption
+  and explicit guidance for monorepo users (add `go.work` or fork into
+  per-module jobs).
+- **Suggestion 3 (`files.exclude`)**: Dropped the `**/bin`, `**/pkg`
+  block from `devcontainer.json`. Go has no canonical build-output
+  directory to exclude.
+- **Suggestion 4 (version pinning)**: Declined per design preference for
+  `@latest` (simplicity over reproducibility).
+
+- Commit: `30c0c5a fix: address review feedback for #274`
+
+Re-verified via `setup.sh --lang go` against a throwaway directory: hook
+command, devcontainer.json structure, and workflow header all reflect the
+fixes correctly.
