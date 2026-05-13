@@ -35,6 +35,7 @@ teardown() {
 @test "bootstrap: exec line redirects stdin from /dev/null" {
     # Static invariant — protects the #276 fix from accidental regression
     # ("clean up dead redirect" style reverts).
+    # shellcheck disable=SC2016
     run grep -E 'exec bash "\$BOOTSTRAP_TEMP_DIR/setup\.sh" "\$@" < /dev/null' "$SETUP_SH"
     assert_success
 }
@@ -42,6 +43,7 @@ teardown() {
 @test "bootstrap: pipe-execution detection logic is intact" {
     # The detection guard at setup.sh:29 still matches the three pipe shapes:
     # empty BASH_SOURCE[0], "-", or a path that is not a regular file.
+    # shellcheck disable=SC2016
     run grep -F 'if [[ -z "${BASH_SOURCE[0]}" ]] || [[ "${BASH_SOURCE[0]}" == "-" ]] || [[ ! -f "${BASH_SOURCE[0]}" ]]' "$SETUP_SH"
     assert_success
 }
