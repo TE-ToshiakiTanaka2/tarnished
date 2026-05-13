@@ -88,13 +88,14 @@ declare -a PLUGIN_NAMES=()
 
 # Language selection
 declare -a SELECTED_LANGUAGES=()
-declare -a AVAILABLE_LANGUAGES=("rust" "python" "node" "deno" "latex")
+declare -a AVAILABLE_LANGUAGES=("rust" "python" "node" "deno" "latex" "go")
 declare -A LANGUAGE_DISPLAY_NAMES=(
     ["rust"]="Rust"
     ["python"]="Python"
     ["node"]="Node.js/TypeScript"
     ["deno"]="Deno"
     ["latex"]="LaTeX"
+    ["go"]="Go"
 )
 
 # Service selection
@@ -208,6 +209,7 @@ Available Languages:
     python              Python (uv, ruff, mypy, pytest)
     node                Node.js/TypeScript (pnpm, Biome, Vitest)
     deno                Deno (built-in fmt, lint, test)
+    go                  Go (gofmt, golangci-lint, gotestsum)
 
 Available Services:
     postgresql          PostgreSQL 16 database with psql client
@@ -225,6 +227,8 @@ Examples:
     ./setup.sh --lang rust --postgresql     # Rust with PostgreSQL
     ./setup.sh --lang python --celery       # Python with Celery + Redis (auto-enabled)
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
+    ./setup.sh --lang go                    # Go only
+    ./setup.sh --lang go --github-actions   # Go with GitHub Project integration
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
 
     # Monorepo mode (#263)
@@ -1459,6 +1463,7 @@ infer_scaffold_options() {
         [[ -f "$target_dir/pyproject.toml" ]] && langs+=(python)
         [[ -f "$target_dir/package.json" ]] && langs+=(node)
         [[ -f "$target_dir/deno.json" || -f "$target_dir/deno.jsonc" ]] && langs+=(deno)
+        [[ -f "$target_dir/go.mod" ]] && langs+=(go)
         # LaTeX has no canonical root manifest; the build-pdf workflow is
         # the cleanest indicator.
         [[ -f "$target_dir/.github/workflows/build-pdf.yml" ]] && langs+=(latex)
