@@ -16,7 +16,18 @@
 # Failure policy:
 #   `setup_plugins` is best-effort: marketplace or plugin install failures are
 #   reported as warnings and do NOT abort post.sh (which runs under `set -e`).
+#   On a fresh container where `claude` has never been logged in, the
+#   `is_claude_authenticated` pre-flight gate skips the entire flow with a
+#   one-line guidance message so post.sh proceeds to subsequent steps (#273).
 # =============================================================================
+
+# Returns 0 iff `claude` has been logged in at least once on this machine,
+# detected by the presence of a non-empty OAuth credentials file. Pure read-only
+# check — no subprocess, no network — added in #273 to prevent first-run
+# `claude plugins ...` calls from tripping `set -e` in post.sh.
+is_claude_authenticated() {
+    [[ -s "$HOME/.claude/.credentials.json" ]]
+}
 
 # Ensure the given marketplace (GitHub <owner>/<repo>) is registered in
 # ~/.claude/plugins/known_marketplaces.json. Idempotent.
@@ -73,6 +84,18 @@ setup_plugins() {
         return 0
     fi
 
+    # Pre-flight: skip cleanly when `claude` has never been logged in (#273).
+    # Without this gate, every `claude plugins ...` call would fail with a
+    # non-zero exit on first-run containers and (under `set -e` in post.sh)
+    # abort the rest of the post-create flow.
+    if ! is_claude_authenticated; then
+        echo "  - Claude Code CLI detected, but not yet authenticated"
+        echo "  - To install Claude plugins, run \`claude\` to log in,"
+        echo "    then re-run .devcontainer/scripts/setup_plugins.sh"
+        echo "  - Skipping plugin setup"
+        return 0
+    fi
+
     echo "  - Claude Code CLI detected"
 
     # Marketplace add is a hard prerequisite for any subsequent install.
@@ -82,8 +105,14 @@ setup_plugins() {
         return 0
     fi
 
+    # Wrap `claude plugins list` in an `if`-guard so a failed command
+    # substitution cannot trip `set -e` in post.sh — symmetric with the
+    # marketplace registration failure path above (#273 review).
     local plugins_output
-    plugins_output=$(claude plugins list 2>/dev/null)
+    if ! plugins_output=$(claude plugins list 2>/dev/null); then
+        echo "  - Warning: failed to query installed plugins; skipping plugin install" >&2
+        return 0
+    fi
 
     # -----------------------------------------------------------------
     # context7: Library documentation lookup

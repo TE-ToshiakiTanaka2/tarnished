@@ -411,15 +411,18 @@ The project-integration plugin auto-detects GitHub Projects via the `gh` CLI dur
 
 Control-flow guarantee: `plugin_interactive_setup` always reaches an interactive prompt (auto-selected project list or `prompt_manual_project_config` + `prompt_manual_field_defaults`). Silent default-fallback is forbidden. The decision tree is documented in `docs/design/#276/flowchart.md`.
 
-### `templates/claude/.devcontainer/scripts/setup_plugins.sh` (#249, #255)
+### `setup_plugins.sh` (workspace + `templates/claude/.devcontainer/scripts/`, #249, #255, #273)
+
+The workspace dogfooded copy (`/workspace/.devcontainer/scripts/setup_plugins.sh`) and the downstream template copy (`templates/claude/.devcontainer/scripts/setup_plugins.sh`) are now structurally identical (#273); a future change to one MUST be applied to the other in the same commit, mirroring the workspace-Codex dogfooding convention from #261.
 
 | Function | Purpose |
 | --- | --- |
-| `ensure_claude_marketplace()` | Idempotent registration of `anthropics/claude-plugins-official` marketplace |
-| `try_install_plugin(name)` | Install one plugin via `claude plugins install <name>@claude-plugins-official -s project`; absorb failures so siblings continue |
-| `setup_plugins()` | Calls `ensure_claude_marketplace`, then `try_install_plugin` for `context7`, `serena`, optionally `playwright` |
+| `is_claude_authenticated()` | (#273) Pure read-only check — returns `0` iff `$HOME/.claude/.credentials.json` exists and is non-empty (`[[ -s … ]]`). No subprocess, no network. |
+| `ensure_claude_marketplace(repo)` | Idempotent registration of `anthropics/claude-plugins-official` marketplace. Returns `1` only on registration failure. |
+| `try_install_plugin(name, marketplace, plugins_output)` | Install one plugin via `claude plugins install <name>@<marketplace> -s project`; absorb failures so siblings continue. Always returns `0`. |
+| `setup_plugins()` | (1) `command -v claude` prerequisite; (2) **`is_claude_authenticated` pre-flight gate (#273)** — if false, print guidance ("run `claude` to log in, then re-run setup_plugins.sh") and `return 0`; (3) `ensure_claude_marketplace`; (4) `try_install_plugin` for `context7`, `serena`, optionally `playwright` (interactive prompt). |
 
-Contract: under `set -e` (in `post.sh`), this script MUST `return 0` even when individual plugins fail; surface them as warnings.
+Contract: under `set -e` (in `post.sh`), this script MUST `return 0` even when individual plugins fail or when authentication is missing; surface auth-missing as one-line guidance and per-plugin failures as warnings. The auth gate (#273) ensures `claude plugins …` is never invoked on a fresh container, so `post.sh` continues to `setup_codex` on first run instead of aborting under `set -e`.
 
 ### Language plugin contract (`templates/languages/<lang>/plugin.sh`, #263)
 
@@ -487,6 +490,8 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 | `anyhow::Error` (boundary) | Anywhere | Wrapped at command boundary |
 | Plugin install failure | shell warning | `setup_plugins.sh` per-plugin; non-fatal |
 | Marketplace registration failure | shell warning, `return 0` | `setup_plugins.sh` ensure_claude_marketplace; non-fatal so `post.sh` continues |
+| Claude not yet authenticated (`~/.claude/.credentials.json` missing or empty) | shell info + guidance, `return 0` | `setup_plugins.sh` `is_claude_authenticated` gate (#273); skips marketplace/plugin steps entirely so `post.sh` proceeds to `setup_codex` on first run |
+| `claude plugins list` query failure | shell warning, `return 0` | `setup_plugins.sh` if-guarded command substitution (#273 review); symmetric with marketplace failure path so a degraded `claude` CLI cannot trip `set -e` in `post.sh` |
 | `update_gitignore` write failure | shell error (propagates under `set -euo pipefail`) | `${target_dir}/.gitignore` not writable |
 | Mutually-exclusive setup.sh flags | shell error, exit 1 | `--monorepo --add-module`, `--module --add-module`, `--monorepo --lang` (no `--module`) (#263); `--upgrade --monorepo`, `--upgrade --add-module`, `--upgrade --create-manifest`, `--create-manifest --monorepo`, `--create-manifest --add-module` (#265) |
 | `--add-module` outside monorepo | shell error, exit 1 | CWD lacks `modules.json` (#263) |

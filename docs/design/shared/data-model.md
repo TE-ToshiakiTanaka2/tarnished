@@ -218,6 +218,7 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `.github/project.yml` | `label_projects` map added (optional) | #230 |
 | `setup.sh` completion message | Expanded to 5 commands + workflow line | #246 |
 | `setup_plugins.sh` (templates/claude/.devcontainer/scripts/) | `setup_mcp.sh` renamed; `claude mcp add` → `claude plugins install`; per-plugin failure isolation; marketplace registration helper added | #249, #255 |
+| `setup_plugins.sh` (workspace + template) | `is_claude_authenticated` pre-flight gate added (`[[ -s "$HOME/.claude/.credentials.json" ]]`); skips with guidance when unauthenticated so first-run `post.sh` no longer aborts. Template variant also adopts `ensure_claude_marketplace` + `try_install_plugin` from the workspace variant; the two files are now structurally aligned. | #273 |
 | `_shared/{branch,issue}/SKILL.md` | Common branch & issue creation logic extracted | #242 |
 | `_shared/design-migration/SKILL.md` | One-shot migration of `docs/design/#{issue}/` → `docs/design/shared/*` | #257 |
 | `docs/design/shared/*` | New layer for cumulative project truth | #257 |

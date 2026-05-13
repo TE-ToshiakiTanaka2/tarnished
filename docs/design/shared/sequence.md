@@ -75,41 +75,69 @@ sequenceDiagram
     CLI-->>CI: new tag
 ```
 
-## devcontainer plugin install (#249, #255)
+## devcontainer plugin install (#249, #255, #273)
+
+`setup_plugins.sh` is sourced by `post.sh` (which runs under `set -e`) and is contractually required to `return 0`. The flow has three early-exit gates before any `claude plugins …` invocation: (a) the `claude` CLI must be present, (b) the user must be authenticated (`~/.claude/.credentials.json` exists and is non-empty — added in #273), (c) the marketplace must register successfully. Only after all three pass does the per-plugin install loop run, and even then each install failure is isolated by `try_install_plugin` so siblings continue.
 
 ```mermaid
 sequenceDiagram
     participant Container as devcontainer onCreate
     participant Post as post.sh (set -e)
     participant Setup as setup_plugins.sh
+    participant Creds as ~/.claude/.credentials.json
     participant Claude as claude CLI
 
     Container->>Post: source post.sh
-    Post->>Setup: source setup_plugins.sh
-    Setup->>Setup: ensure_claude_marketplace()
-    Setup->>Claude: claude plugins marketplace add anthropics/claude-plugins-official
-    alt marketplace registration ok
-        Claude-->>Setup: ok
-    else registration fails
-        Claude-->>Setup: error
-        Setup->>Post: warning + return 0
-        Note over Post: set -e is respected; post.sh continues
-    end
+    Post->>Setup: source setup_plugins.sh; setup_plugins
+    Setup->>Setup: command -v claude
+    alt claude missing
+        Setup-->>Post: warning + return 0
+    else claude present
+        Setup->>Setup: is_claude_authenticated()
+        Setup->>Creds: [[ -s ~/.claude/.credentials.json ]]
+        alt credentials missing or empty (first run, #273)
+            Creds-->>Setup: false
+            Setup-->>Post: guidance ("run claude to log in,<br/>then re-run setup_plugins.sh") + return 0
+            Note over Post: set -e respected; post.sh proceeds to setup_codex
+        else credentials present
+            Creds-->>Setup: true
+            Setup->>Setup: ensure_claude_marketplace()
+            Setup->>Claude: claude plugins marketplace add anthropics/claude-plugins-official
+            alt registration ok
+                Claude-->>Setup: ok
+            else registration fails
+                Claude-->>Setup: error
+                Setup-->>Post: warning + return 0
+                Note over Post: set -e respected; post.sh continues
+            end
 
-    loop each plugin in [context7, serena, optionally playwright]
-        Setup->>Setup: try_install_plugin(name)
-        Setup->>Claude: claude plugins install <name>@claude-plugins-official -s project
-        alt install ok
-            Claude-->>Setup: installed
-        else install fails
-            Claude-->>Setup: error
-            Note over Setup: log warning, continue with next plugin
+            Setup->>Claude: claude plugins list (if-guarded, #273 review)
+            alt query ok
+                Claude-->>Setup: plugins_output
+            else query fails
+                Claude-->>Setup: error
+                Setup-->>Post: warning + return 0
+                Note over Post: set -e respected; post.sh continues
+            end
+
+            loop each plugin in [context7, serena, optionally playwright]
+                Setup->>Setup: try_install_plugin(name)
+                Setup->>Claude: claude plugins install <name>@claude-plugins-official -s project
+                alt install ok
+                    Claude-->>Setup: installed
+                else install fails
+                    Claude-->>Setup: error
+                    Note over Setup: log warning, continue with next plugin
+                end
+            end
+
+            Setup-->>Post: return 0
         end
     end
-
-    Setup-->>Post: return 0
     Post-->>Container: post-create complete
 ```
+
+The `is_claude_authenticated` gate (#273) is identical in the workspace `setup_plugins.sh` and the `templates/claude/.devcontainer/scripts/setup_plugins.sh` template variant — those two files are now structurally aligned (the template variant also adopted `ensure_claude_marketplace` + `try_install_plugin` from the workspace variant in #273), mirroring the workspace-Codex dogfooding convention from #261.
 
 ## Claude Code skill workflow (`/issue` → `/design` → `/implement` → `/review` → `/pr`)
 
