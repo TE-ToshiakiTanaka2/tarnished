@@ -167,15 +167,17 @@ bootstrap_and_commit() {
     seed_scaffold
     bootstrap_and_commit
 
-    # Edit a tracked file post-bootstrap.
-    echo "" >> .claude/commands/erd/build.md
-    echo "user customization line" >> .claude/commands/erd/build.md
+    # Edit a tracked file post-bootstrap. We use Dockerfile.dev because
+    # .claude/commands/erd/build.md is now governed by always-latest sync
+    # (#279) and excluded from manifest tracking entirely.
+    echo "" >> docker/Dockerfile.dev
+    echo "# user customization line" >> docker/Dockerfile.dev
     git add -A; git commit -q -m "user edit"
 
     run bash "$SETUP_SH" --upgrade --dry-run -y
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"Skipped (edited)"* ]]
-    [[ "$output" == *".claude/commands/erd/build.md"* ]]
+    [[ "$output" == *"docker/Dockerfile.dev"* ]]
 }
 
 @test "FR-4 row 4: NEW — staging emits files not in old manifest" {
