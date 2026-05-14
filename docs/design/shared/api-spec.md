@@ -275,15 +275,17 @@ Composite actions (`dtolnay/rust-toolchain@stable`, `taiki-e/install-action@*`) 
 
 ### `setup.sh`
 
-See "CLI Surface :: `setup.sh`" above for flags and modes (#263). The completion message is unchanged from #246.
+See "CLI Surface :: `setup.sh`" above for flags and modes (#263). The completion message is unchanged from #246. Per #279, `setup.sh`'s `--upgrade` mode automatically excludes the always-latest path whitelist via the `MANIFEST_EXCLUDE_GLOBS` extension — no new flags or modes are required, and the eight-case `manifest_decide` state machine is unchanged. Pre-#279 manifests that contain hashes for now-excluded paths become inert; the next `--create-manifest` produces a clean manifest.
 
 ### `scripts/lib/common.sh::sha256_file()` (#265)
 
 Signature: `sha256_file <path>`. Cross-platform sha256 wrapper. Picks `sha256sum` (Linux/devcontainer default) or `shasum -a 256` (macOS), extracts the leading 64-hex-char digest, and emits `sha256:<lowercase-hex>` on stdout. Returns `1` if neither tool is available or if the file is missing. The `sha256:` prefix reserves space for future algorithm migrations (e.g., `blake3:`) without rewriting old manifests.
 
-### `scripts/lib/common.sh::copy_with_confirm()` manifest extension (#265)
+### `scripts/lib/common.sh::copy_with_confirm()` manifest extension (#265, extended #279)
 
-`copy_with_confirm` and `copy_dir_with_confirm` retain their pre-#265 behavior by default. When the global `MANIFEST_RECORDING` is `true`, every successful copy additionally appends `(<rel_path>, "sha256:<hex>")` to the global associative array `MANIFEST_TRACKED`, where `<rel_path>` is computed against the global `MANIFEST_RECORDING_ROOT`. Paths matching `MANIFEST_EXCLUDE_GLOBS` (defined in `scripts/lib/manifest.sh`) and paths outside `MANIFEST_RECORDING_ROOT` are skipped. The plugin contract is unchanged — plugins that already use `copy_with_confirm` (per `.claude/rules/shell.md`) automatically participate in tracking.
+`copy_with_confirm` and `copy_dir_with_confirm` retain their pre-#265 behavior by default. When the global `MANIFEST_RECORDING` is `true`, every successful copy additionally appends `(<rel_path>, "sha256:<hex>")` to the global associative array `MANIFEST_TRACKED`, where `<rel_path>` is computed against the global `MANIFEST_RECORDING_ROOT`. Paths matching `MANIFEST_EXCLUDE_GLOBS` (defined in `scripts/lib/common.sh:126-138`, re-exported by `scripts/lib/manifest.sh`) and paths outside `MANIFEST_RECORDING_ROOT` are skipped. The plugin contract is unchanged — plugins that already use `copy_with_confirm` (per `.claude/rules/shell.md`) automatically participate in tracking.
+
+`MANIFEST_EXCLUDE_GLOBS` was extended in #279 with the always-latest path whitelist and its `.local/` overlay sidecars (16 patterns, both directory and `dir/*` forms): `.claude/commands{,/*}`, `.claude/skills{,/*}`, `.claude/scripts{,/*}`, `.claude/rules{,/*}`, `.claude/commands.local{,/*}`, `.claude/skills.local{,/*}`, `.claude/scripts.local{,/*}`, `.claude/rules.local{,/*}`. The build-time exclusion (here) is kept in sync with the runtime whitelist (`refresh.json :: managed_paths[]`) by code review and a unit test (`tests/refresh_assets.bats :: "refresh.json defaults subset of MANIFEST_EXCLUDE_GLOBS"`). Always-latest tracking and manifest-tracked upgrades are disjoint per path.
 
 | Function | Purpose |
 | --- | --- |
@@ -410,6 +412,77 @@ The project-integration plugin auto-detects GitHub Projects via the `gh` CLI dur
 | `_print_gh_warning` | `(prefix)` | (none) | (none) | reads `GH_LAST_ERROR_FILE`; emits `print_warning` |
 
 Control-flow guarantee: `plugin_interactive_setup` always reaches an interactive prompt (auto-selected project list or `prompt_manual_project_config` + `prompt_manual_field_defaults`). Silent default-fallback is forbidden. The decision tree is documented in `docs/design/#276/flowchart.md`.
+
+### `templates/core/.devcontainer/scripts/refresh-assets.sh` and workspace counterpart (#279)
+
+Always-latest asset sync script. Distributed verbatim to every scaffolded project and dogfooded in the workspace at `/workspace/.devcontainer/scripts/refresh-assets.sh`. Two invocation paths converge on the same entry point: (a) on the very first container boot, `post.sh` calls it via the marker-guarded block (`# Tarnished Asset Refresh`) appended by `templates/core/plugin.sh::plugin_post_copy`; (b) on every subsequent container start, `templates/core/.devcontainer/devcontainer.json`'s `postStartCommand` invokes it directly. The double-call on first boot is benign — the second invocation hits the SHA cache and exits early.
+
+```
+Usage: refresh-assets.sh [--config <path>] [--dry-run] [--force-pull] [--quiet]
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--config <path>` | `<repo_root>/.tarnished/refresh.json` | Override the whitelist config location |
+| `--dry-run` | off | Print intended actions; perform no `git pull` or `rsync` |
+| `--force-pull` | off | Skip the `git ls-remote` SHA cache check; always fetch + reset |
+| `--quiet` | off | Suppress per-path "no change" lines; warnings still print |
+
+Contract: always returns `0` for non-fatal paths (success, skipped, warnings, network failure with cache hit). The only `1` exit is for an unknown CLI flag (programmer error). Container start MUST NOT block on this script — same FR-5 invariant as `setup_plugins` and `setup_codex`. The script defines minimal local `print_*` fallbacks so it works whether sourced from `post.sh` (where `scripts/lib/common.sh` is already loaded) or invoked standalone by `postStartCommand` (where it is not).
+
+| Function | Purpose |
+| --- | --- |
+| `load_config()` | Locate and parse `refresh.json` via `jq`. Warn-and-exit-0 on missing/malformed/unsupported `schema_version`. |
+| `ensure_clone()` | Clone-if-missing into `clone_dir`. On parent-dir-not-writable, fall back to `${HOME}/.cache/tarnished` with a `print_warning`. On clone failure (network, DNS), warn and exit 0; the project keeps its original scaffolded bytes. |
+| `check_upstream()` | `git ls-remote origin <branch>` and compare against `git rev-parse HEAD` of the cache. Returns the new SHA when fetch is needed, empty when no-op. Treats `ls-remote` failure as no-op (cache used as-is). |
+| `fetch_upstream()` | `git fetch origin <branch>` then `git reset --hard origin/<branch>`. The cache is treated as an immutable mirror; users wanting to test a local upstream patch should set `DEVCONTAINER_REPO_URL=file:///path/to/local/clone`. |
+| `sync_paths()` | For each `managed_paths[]` entry: `rsync -a --delete <clone_dir>/<src>/ <project>/<dst>/` then, if `<project>/<overlay>/` exists, `rsync -a <project>/<overlay>/ <project>/<dst>/` (no `--delete`, so overlay wins). |
+| `print_summary()` | Emit one structured line: `[OK] refresh-assets: N paths synced (A added, R removed); O overlay files preserved` or `[OK] refresh-assets: upstream unchanged (sha=<short>)`. |
+
+Three-state lifecycle of `clone_dir`: **Absent** (first boot or after manual cleanup) → **Cloned** (successful first refresh) → **Updated** (subsequent fetch+reset). The script reaches **Error** only when `<clone_dir>` exists without a `.git/` subdirectory — it refuses to silently delete the directory because it cannot distinguish a corrupted clone from intentional non-tarnished content; `print_error` + exit 0 is the response.
+
+The full decision tree (15 leaves, 11 of which are non-fatal warning paths) is documented in `docs/design/#279/flowchart.md`.
+
+### `templates/agent-workflows/.tarnished/refresh.json` (#279)
+
+JSON file at `<project>/.tarnished/refresh.json`, distributed verbatim by `templates/agent-workflows/plugin.sh` along with the rest of the `.tarnished/` directory. Read by `refresh-assets.sh` on every invocation. Schema documented in `data-model.md :: ".tarnished/refresh.json schema (always-latest asset sync, #279)"`.
+
+Default `managed_paths[]` (Claude assets only — Codex `config.toml` is not in the initial whitelist because downstream projects may legitimately customize it):
+
+| `src` | `dst` | `overlay` |
+| --- | --- | --- |
+| `.claude/commands` | `.claude/commands` | `.claude/commands.local` |
+| `.claude/skills`   | `.claude/skills`   | `.claude/skills.local`   |
+| `.claude/scripts`  | `.claude/scripts`  | `.claude/scripts.local`  |
+| `.claude/rules`    | `.claude/rules`    | `.claude/rules.local`    |
+
+Defaults for `upstream.repo_url` and `upstream.branch` track `setup.sh:25-26`'s `REMOTE_REPO_URL` / `REMOTE_BRANCH` constants. Both are env-overridable via `DEVCONTAINER_REPO_URL` / `DEVCONTAINER_BRANCH` (consistent with `setup.sh`'s curl-bootstrap path).
+
+### `templates/core/plugin.sh::plugin_post_copy` — refresh-assets wiring (#279)
+
+`templates/core/plugin.sh::plugin_post_copy` gains a marker-guarded `cat >> post.sh` block (mirroring the Codex pattern at `templates/codex/plugin.sh:113-128` and the Claude pattern at `templates/claude/plugin.sh:113-129`):
+
+| Marker (line-anchored) | Block contents |
+| --- | --- |
+| `# Tarnished Asset Refresh` | `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` + `if [[ -x "${SCRIPT_DIR}/refresh-assets.sh" ]]; then "${SCRIPT_DIR}/refresh-assets.sh" || true; fi` |
+
+The trailing `|| true` is defense in depth — `refresh-assets.sh` already always returns 0, but the guard is consistent with how `setup_plugins` and `setup_codex` are invoked (`source` inside an `if [[ -f ... ]]` shell, with each inner function `return 0`-ing).
+
+Rationale for placing in `core` (not `claude`): `refresh-assets.sh` is universal infrastructure. A non-Claude scaffold receives the script + an empty (or absent) `refresh.json` `managed_paths[]` and the script becomes a no-op. The initial whitelist happens to be Claude-only, but the mechanism is flavor-agnostic.
+
+### `templates/claude/plugin.sh::plugin_copy` — `.claude/rules/` distribution (#279)
+
+`plugin_copy` gains one additional `copy_dir_with_confirm` call after the existing `commands/`, `skills/`, `scripts/` copies:
+
+```bash
+if [[ -d "${PLUGIN_DIR}/.claude/rules" ]]; then
+    copy_dir_with_confirm "${PLUGIN_DIR}/.claude/rules" "${target_dir}/.claude/rules"
+fi
+```
+
+The `templates/claude/.claude/rules/` directory is new (was missing pre-#279). Initial contents: `shell.md` (moved from `/workspace/.claude/rules/`). Language-specific rules (`rust.md`, `go.md`, `python.md`, `typescript.md`, `deno.md`) continue to ship via their respective language plugins (`templates/languages/<lang>/.claude/rules/<lang>.md`) — the always-latest pipeline only governs language-agnostic rules so language plugins stay self-contained.
+
+`plugin_post_copy` is unchanged; the `post.sh` wiring lives in `templates/core/plugin.sh::plugin_post_copy` (see above).
 
 ### `setup_plugins.sh` (workspace + `templates/claude/.devcontainer/scripts/`, #249, #255, #273)
 
