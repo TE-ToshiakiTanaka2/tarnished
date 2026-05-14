@@ -72,6 +72,38 @@ plugin_post_copy() {
         chmod +x "${target_dir}/.devcontainer/scripts/post.sh"
         print_success "Made post.sh executable"
     fi
+
+    # Make refresh-assets.sh executable (always-latest sync, #279).
+    if [[ -f "${target_dir}/.devcontainer/scripts/refresh-assets.sh" ]]; then
+        chmod +x "${target_dir}/.devcontainer/scripts/refresh-assets.sh"
+    fi
+
+    # -------------------------------------------------------------------------
+    # Tarnished Asset Refresh — append marker-guarded block to post.sh so the
+    # very first container boot also performs a refresh (postStartCommand
+    # handles every subsequent boot). The double-call on first boot is
+    # benign: the second invocation hits the SHA cache and exits early.
+    # The trailing `|| true` mirrors how setup_plugins / setup_codex are
+    # invoked — refresh-assets.sh already always returns 0, but the guard
+    # keeps post.sh robust if the file is later removed (#279 FR-5).
+    # -------------------------------------------------------------------------
+    local post_sh="${target_dir}/.devcontainer/scripts/post.sh"
+    local refresh_marker="# Tarnished Asset Refresh"
+
+    if [[ -f "$post_sh" ]] && ! grep -q "$refresh_marker" "$post_sh"; then
+        print_info "Integrating Tarnished asset refresh into post.sh..."
+        cat >> "$post_sh" << 'EOF'
+
+# -----------------------------------------------------------------------------
+# Tarnished Asset Refresh
+# -----------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "${SCRIPT_DIR}/refresh-assets.sh" ]]; then
+    "${SCRIPT_DIR}/refresh-assets.sh" || true
+fi
+EOF
+        print_success "Tarnished asset refresh integrated into post.sh"
+    fi
 }
 
 # Monorepo registry helpers (#263). Invoked directly by setup.sh after the
