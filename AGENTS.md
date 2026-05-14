@@ -84,6 +84,16 @@ Helpers sourced into `post.sh` run under `set -e`. They MUST:
 
 The `plugin_post_copy` step must append a guarded block to `${target_dir}/.devcontainer/scripts/post.sh` that sources the new helper and calls its entry function — using the same `${SCRIPT_DIR}` re-derivation pattern shown in existing blocks. Verify the marker (`# <Tool> Setup`) is unique and the block is appended exactly once (`grep -q` check before append).
 
+### 6. Always-latest asset sync (`templates/core/.devcontainer/scripts/refresh-assets.sh`, `<project>/.tarnished/refresh.json`, #279)
+
+`.claude/{commands,skills,scripts,rules}/` are mirrored from upstream tarnished by `refresh-assets.sh` on every container start (`postStartCommand`) and on first boot (via `post.sh`). When reviewing changes that touch this surface, verify:
+
+- Any new path added to `templates/agent-workflows/.tarnished/refresh.json :: managed_paths[]` is also listed in `scripts/lib/common.sh::MANIFEST_EXCLUDE_GLOBS` (both the directory entry and the `dir/*` glob form). The two lists are kept in sync by `tests/refresh_assets.bats :: "refresh.json default managed_paths are excluded from manifest tracking"`.
+- New defaults in `refresh.json` MUST also appear in `/workspace/.tarnished/refresh.json` (workspace dogfooding mirror).
+- Edits to `templates/core/.devcontainer/scripts/refresh-assets.sh` MUST be applied to `/workspace/.devcontainer/scripts/refresh-assets.sh` in the same commit. The two are byte-identical (modulo absolute paths) by convention.
+- The script's FR-5 invariant is preserved: every failure path emits `print_warning` and exits 0 (the only `exit 1` is for an unknown CLI flag). `set -e` is deliberately omitted in favor of explicit per-call error handling so container start (`postStartCommand`) is never blocked.
+- User-customizable assets MUST be overridden via `.claude/<dir>.local/` sidecars, not by editing the synced base file (the next refresh would overwrite it).
+
 ## Output Format
 
 When reviewing, structure your feedback as:
