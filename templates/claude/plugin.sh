@@ -57,6 +57,13 @@ plugin_copy() {
         copy_dir_with_confirm "${PLUGIN_DIR}/.claude/scripts" "${target_dir}/.claude/scripts"
     fi
 
+    # Copy rules directory (language-agnostic rules; language-specific rules
+    # ship from each language plugin under templates/languages/<lang>/.claude/rules/).
+    # Refreshed always-latest at container start by refresh-assets.sh (#279).
+    if [[ -d "${PLUGIN_DIR}/.claude/rules" ]]; then
+        copy_dir_with_confirm "${PLUGIN_DIR}/.claude/rules" "${target_dir}/.claude/rules"
+    fi
+
     # Copy CLAUDE.md
     if [[ -f "${PLUGIN_DIR}/CLAUDE.md" ]]; then
         copy_with_confirm "${PLUGIN_DIR}/CLAUDE.md" "${target_dir}/CLAUDE.md"
