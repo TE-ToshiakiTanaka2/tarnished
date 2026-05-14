@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repo_url": "https://github.com/TE-ToshiakiTanaka2/tarnished.git",
+    "branch": "develop"
+  },
+  "clone_dir": "/opt/tarnished",
+  "managed_paths": [
+    {
+      "src": ".claude/commands",
+      "dst": ".claude/commands",
+      "overlay": ".claude/commands.local"
+    },
+    {
+      "src": ".claude/skills",
+      "dst": ".claude/skills",
+      "overlay": ".claude/skills.local"
+    },
+    {
+      "src": ".claude/scripts",
+      "dst": ".claude/scripts",
+      "overlay": ".claude/scripts.local"
+    },
+    {
+      "src": ".claude/rules",
+      "dst": ".claude/rules",
+      "overlay": ".claude/rules.local"
+    }
+  ]
+}
