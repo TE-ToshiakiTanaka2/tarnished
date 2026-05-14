@@ -155,6 +155,67 @@ How it works:
 - The pre-flight requires a clean git tree (use `git stash` or `--force`
   to override).
 
+### Always-latest assets (`refresh-assets.sh`)
+
+Operational assets that are intended to be **identical across every
+project** — `.claude/commands/`, `.claude/skills/`, `.claude/scripts/`,
+and language-agnostic `.claude/rules/` — are kept always-latest by
+`refresh-assets.sh` rather than by the manifest-driven `--upgrade`
+flow above. The script runs from your devcontainer's `postStartCommand`
+on every container start (and from `post.sh` on the very first boot)
+so a project scaffolded a month ago still picks up the latest
+skill/command revisions automatically.
+
+```text
+DevContainer onCreate           DevContainer onStart (every container start)
+─────────────────────           ────────────────────────────────────────────
+  postCreateCommand                postStartCommand
+       │                               │
+       └─→ post.sh                     └─→ refresh-assets.sh
+            │                                │
+            ├─→ setup_plugins                ├─→ git ls-remote upstream HEAD
+            ├─→ setup_codex                  ├─→ if SHA changed → git pull
+            └─→ refresh_assets (FIRST RUN)   ├─→ rsync --delete  upstream → base
+                                             ├─→ rsync (no-del)  *.local/ → base
+                                             └─→ summary print
+```
+
+How it works:
+
+- `<project>/.tarnished/refresh.json` declares the always-latest path
+  whitelist (`schema_version: 1`). The defaults track upstream `develop`
+  for the four `.claude/*` directories above; override `upstream.repo_url`
+  / `upstream.branch` / `clone_dir` to redirect to a fork or a pinned ref.
+- The upstream clone lives at `/opt/tarnished` (or `~/.cache/tarnished`
+  if `/opt` is not writable). `git ls-remote` checks the upstream HEAD
+  on every invocation; only `git fetch` + `git reset --hard origin/<branch>`
+  + `rsync` runs when the SHA differs.
+- All failure paths emit a warning and exit 0 — container start is
+  never blocked. Offline first-boot keeps the original scaffolded
+  bytes; offline subsequent runs use the cached upstream as-is.
+
+To customize an always-latest asset locally without losing the
+upstream sync, write to the sidecar `.local/` directory mirroring
+the upstream layout:
+
+```bash
+# Override the brainstorm command for this project only
+mkdir -p .claude/commands.local/erd
+cp .claude/commands/erd/brainstorm.md .claude/commands.local/erd/brainstorm.md
+$EDITOR .claude/commands.local/erd/brainstorm.md
+```
+
+After the next container start (or `bash .devcontainer/scripts/refresh-assets.sh`),
+`.claude/commands/erd/brainstorm.md` will reflect your `.local/`
+override; everything else under `.claude/commands/` keeps tracking
+upstream. The `.local/` directory is user-owned and never touched by
+the refresh.
+
+The always-latest mechanism and `--upgrade` are **disjoint per path**:
+the always-latest whitelist is excluded from manifest tracking
+(`scripts/lib/common.sh::MANIFEST_EXCLUDE_GLOBS`). Files outside the
+whitelist continue to flow through the manifest-driven upgrade path.
+
 ## Installation
 
 ```bash

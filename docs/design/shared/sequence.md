@@ -564,6 +564,87 @@ sequenceDiagram
     Setup-->>User: print_success "Project configuration collected"
 ```
 
+## Always-latest asset refresh — `refresh-assets.sh` (#279)
+
+`refresh-assets.sh` is a complementary distribution mechanism to `setup.sh --upgrade`. The manifest-driven upgrade path (#265) is opt-in and rarely run; for high-update-frequency operational assets (`.claude/commands/`, `.claude/skills/`, `.claude/scripts/`, `.claude/rules/`) the script runs **on every container start** so a project scaffolded a month ago still picks up the latest skill/command revisions automatically. Two invocation paths converge on the same entry: (a) on the very first container boot, `post.sh` calls it via the marker-guarded block (`# Tarnished Asset Refresh`); (b) on every subsequent container start, `templates/core/.devcontainer/devcontainer.json`'s `postStartCommand` invokes it directly. The double-call on first boot is benign — the second invocation hits the SHA cache and exits early. The script always returns 0 (FR-5: container start MUST NOT block on it). The full decision tree (15 leaves, 11 of which are non-fatal warning paths) is documented in `docs/design/#279/flowchart.md`.
+
+```mermaid
+sequenceDiagram
+    participant Container as devcontainer onStart
+    participant Refresh as refresh-assets.sh
+    participant Cfg as <project>/.tarnished/refresh.json
+    participant Cache as /opt/tarnished (cache)
+    participant Upstream as github.com/.../tarnished
+    participant Project as <project>/
+
+    Container->>Refresh: postStartCommand
+    Refresh->>Cfg: jq parse refresh.json
+    alt missing or malformed or schema_version > 1
+        Cfg-->>Refresh: error
+        Refresh-->>Container: print_warning + exit 0
+    else parse ok
+        Cfg-->>Refresh: {upstream, clone_dir, managed_paths}
+
+        alt clone_dir absent
+            Refresh->>Cache: mkdir -p $(dirname clone_dir)
+            alt parent not writable
+                Cache-->>Refresh: EPERM
+                Refresh->>Refresh: clone_dir := $HOME/.cache/tarnished<br/>(print_warning fallback)
+            end
+            Refresh->>Upstream: git clone --depth 1 --branch <ref> <url> <clone_dir>
+            alt clone fails (network/DNS)
+                Upstream-->>Refresh: error
+                Refresh-->>Container: print_warning + exit 0<br/>(project keeps original scaffolded bytes)
+            else clone ok
+                Upstream-->>Cache: populated
+                Note over Refresh,Cache: skip ls-remote (just cloned)
+            end
+        else clone_dir present
+            alt clone_dir/.git absent (corrupted)
+                Refresh-->>Container: print_error + exit 0<br/>(refuse to silently delete)
+            else .git present
+                alt --force-pull
+                    Note over Refresh: skip ls-remote
+                else default
+                    Refresh->>Upstream: git ls-remote origin <branch>
+                    alt ls-remote fails
+                        Upstream-->>Refresh: error
+                        Refresh-->>Container: print_warning + exit 0<br/>(use cached as-is)
+                    else ls-remote ok
+                        Upstream-->>Refresh: remote_sha
+                        Refresh->>Cache: git rev-parse HEAD
+                        Cache-->>Refresh: local_sha
+                        alt remote_sha == local_sha
+                            Refresh-->>Container: print_info "upstream unchanged" + exit 0
+                        end
+                    end
+                end
+                Refresh->>Cache: git fetch origin <branch>
+                alt fetch fails
+                    Refresh-->>Container: print_warning + exit 0
+                else fetch ok
+                    Refresh->>Cache: git reset --hard origin/<branch><br/>(cache is treated as immutable mirror)
+                end
+            end
+        end
+
+        loop each managed_paths entry
+            Refresh->>Project: rsync -a --delete<br/>cache/<src>/ project/<dst>/
+            alt rsync fails
+                Note over Refresh,Project: print_warning per path; continue with siblings
+            end
+            alt project/<overlay>/ exists
+                Refresh->>Project: rsync -a (no --delete)<br/>project/<overlay>/ project/<dst>/
+                Note over Refresh,Project: overlay wins; user customizations<br/>survive across refreshes
+            end
+        end
+
+        Refresh->>Container: print_summary "[OK] N paths synced (...)" + exit 0
+    end
+```
+
+The cache `/opt/tarnished` is owned by `vscode` (the default `remoteUser` in `templates/core/.devcontainer/devcontainer.json:37`); the script falls back to `${HOME}/.cache/tarnished` when `/opt` is not writable. Always-latest paths are excluded from `--upgrade`'s manifest tracking via the `MANIFEST_EXCLUDE_GLOBS` extension in `scripts/lib/common.sh:126-138`, so the two mechanisms never fight per path.
+
 ## `setup.sh --add-module` — incremental add to existing monorepo (#263)
 
 Detects an existing `modules.json` in CWD (or accepts `--add-module` flag) and adds a single module. Idempotent against shared assets via marker-guarded blocks and JSON merge helpers.

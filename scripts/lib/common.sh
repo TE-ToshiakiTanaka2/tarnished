@@ -135,6 +135,31 @@ if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
         ".claude/settings.local.json"
         ".devcontainer/devcontainer.json"
         ".codex/config.local.toml"
+        # Always-latest paths managed by refresh-assets.sh (#279). These
+        # are mirrored on every container start from upstream tarnished;
+        # they MUST NOT participate in manifest-driven --upgrade tracking
+        # (the runtime whitelist lives in <project>/.tarnished/refresh.json).
+        # Both the directory entry and the dir/* form are listed because
+        # _manifest_path_excluded uses bash glob match.
+        ".claude/commands"
+        ".claude/commands/*"
+        ".claude/skills"
+        ".claude/skills/*"
+        ".claude/scripts"
+        ".claude/scripts/*"
+        ".claude/rules"
+        ".claude/rules/*"
+        # User-owned overlay sidecars (#279 FR-4). Files in these
+        # directories survive every refresh and MUST never be tracked
+        # by the manifest either.
+        ".claude/commands.local"
+        ".claude/commands.local/*"
+        ".claude/skills.local"
+        ".claude/skills.local/*"
+        ".claude/scripts.local"
+        ".claude/scripts.local/*"
+        ".claude/rules.local"
+        ".claude/rules.local/*"
     )
 fi
 

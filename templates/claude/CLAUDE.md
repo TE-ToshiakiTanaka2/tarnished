@@ -95,6 +95,24 @@ Available skills (slash commands):
 - `/review` - Cross-agent code review using the configured review workflow
 - `/pr [--merge]` - Create a Pull Request (uses erd:analyze, erd:improve, erd:cleanup, erd:reflect)
 
+### Always-latest assets and `.local/` overrides
+
+`.claude/{commands,skills,scripts,rules}/` are kept always-latest by
+`refresh-assets.sh` (runs on every container start). To customize a
+command or skill locally, write to the sidecar `.local/` directory
+instead of editing the file in place — direct edits will be
+overwritten on the next refresh. Example:
+
+```bash
+mkdir -p .claude/commands.local/erd
+cp .claude/commands/erd/brainstorm.md .claude/commands.local/erd/brainstorm.md
+$EDITOR .claude/commands.local/erd/brainstorm.md
+```
+
+After the next refresh, `.claude/commands/erd/brainstorm.md` reflects
+your override; everything else under `.claude/commands/` keeps
+tracking upstream.
+
 Available erd commands (callable independently):
 
 - `/erd:brainstorm` - Interactive requirements discovery

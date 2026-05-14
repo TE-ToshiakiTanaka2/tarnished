@@ -21,6 +21,7 @@ This is the cumulative project-wide data model. Per-issue deltas may add or modi
 | `ModulesRegistry` (logical) | downstream `<project>/modules.json` (#263) | Monorepo module registry — `{ version, modules: [{ name, path, language, services }] }` |
 | `Manifest` (logical) | downstream `<scope>/.tarnished-manifest.json` (#265) | Hash manifest of "verbatim copy" files for one upgrade scope (root or per-module) — `{ manifest_version, tarnished_version, tarnished_commit, created_at, scaffold_options, files: { path: "sha256:<hex>" } }` |
 | `LifecycleDecision` (internal) | `scripts/lib/manifest.sh` (#265) | Pure enum used by `manifest_decide` to tag each file's upgrade outcome — `NOOP \| UPDATE \| SKIP_EDITED \| NEW \| SKIP_NEW_CONFLICT \| LEAVE_REMOVED \| PRUNE \| SKIP_USER_DELETED` |
+| `RefreshConfig` (logical) | downstream `<project>/.tarnished/refresh.json` (#279) | Always-latest sync whitelist + overlay declaration — `{ schema_version, upstream: { repo_url, branch }, clone_dir, managed_paths: [{ src, dst, overlay }] }` |
 
 ## Type Definitions
 
@@ -236,8 +237,56 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `copy_with_confirm` / `copy_dir_with_confirm` (`scripts/lib/common.sh`) | Extended to opportunistically record `(<rel_path>, sha256)` into a global `MANIFEST_TRACKED` map when `MANIFEST_RECORDING=true`. Default off — pre-#265 callers see byte-equivalent behavior (NFR-1). | #265 |
 | `templates/core/plugin.sh` and `templates/languages/<lang>/plugin.sh` | Direct `cp` calls migrated to `copy_with_confirm` so manifest recording captures every verbatim file. The plugin contract itself is unchanged. | #265 |
 | `.github/workflows/*.yml` JS-action pins (root) | Migrated to Node-24-native majors: `actions/checkout@v5`, `actions/cache@v5`, `actions/github-script@v8`, `actions/upload-artifact@v6`, `softprops/action-gh-release@v3`. Composite actions (`dtolnay/rust-toolchain@stable`, `taiki-e/install-action`) unchanged. Selection rule: earliest major with `action.yml` `runs.using: node24` as default. Driven by GitHub's 2026-06-02 forced cutover and 2026-09-16 removal of Node 20 from runners. Templates under `templates/github-actions/*` and `templates/languages/*/.github/workflows/` are out of scope here and will be migrated in a follow-up issue. | #267 |
+| `templates/agent-workflows/.tarnished/refresh.json` (downstream + workspace) | New file introduced for always-latest asset sync; `schema_version: 1`. Distributed verbatim with the rest of `.tarnished/` by `templates/agent-workflows/plugin.sh`. Forward-compatible via unknown-key tolerance and a `schema_version` escape hatch. | #279 |
+| `templates/claude/.claude/rules/shell.md` | New file in the Claude template — moved from `/workspace/.claude/rules/shell.md` so the language-agnostic shell rules are distributed to every Claude-enabled scaffold (and refreshed always-latest by `refresh-assets.sh`). The workspace copy is kept in sync as dogfooding (#261-style). | #279 |
+| `templates/core/.devcontainer/scripts/refresh-assets.sh` (downstream + workspace) | New script that performs the always-latest sync. Wired into `post.sh` by `templates/core/plugin.sh::plugin_post_copy` (marker-guarded block `# Tarnished Asset Refresh`) and into `templates/core/.devcontainer/devcontainer.json` as `postStartCommand`. Always returns `0` (FR-5). | #279 |
+| `MANIFEST_EXCLUDE_GLOBS` (`scripts/lib/common.sh:126-138`) | Extended with `.claude/{commands,skills,scripts,rules}` and their `*.local/` overlay sidecars (16 new patterns, both directory and `dir/*` forms). Excludes always-latest paths from manifest tracking — keeps `--create-manifest` from hashing them and keeps `--upgrade` from applying lifecycle decisions to them. Pre-#279 manifests that already contain hashes for these paths become inert; the next `--create-manifest` produces a clean manifest. | #279 |
 
 No SQL, no database migrations — config files, the JSON modules registry, and the seeded `.gitignore` are the only schemas.
+
+### `.tarnished/refresh.json` schema (always-latest asset sync, #279)
+
+JSON file at `<project>/.tarnished/refresh.json`. Read by
+`templates/core/.devcontainer/scripts/refresh-assets.sh` on every
+container start (`postStartCommand`) and on first boot (via `post.sh`).
+Distributed verbatim by `templates/agent-workflows/plugin.sh` along
+with the rest of the `.tarnished/` directory.
+
+```json
+{
+  "schema_version": 1,
+  "upstream": {
+    "repo_url": "https://github.com/TE-ToshiakiTanaka2/tarnished.git",
+    "branch": "develop"
+  },
+  "clone_dir": "/opt/tarnished",
+  "managed_paths": [
+    { "src": ".claude/commands",   "dst": ".claude/commands",   "overlay": ".claude/commands.local" },
+    { "src": ".claude/skills",     "dst": ".claude/skills",     "overlay": ".claude/skills.local" },
+    { "src": ".claude/scripts",    "dst": ".claude/scripts",    "overlay": ".claude/scripts.local" },
+    { "src": ".claude/rules",      "dst": ".claude/rules",      "overlay": ".claude/rules.local" }
+  ]
+}
+```
+
+| Field | Type | Required | Constraints / notes |
+| --- | --- | --- | --- |
+| `schema_version` | integer | yes | Currently `1`. Readers MUST reject unknown majors with `print_warning` + exit 0 (never block container start). |
+| `upstream.repo_url` | string | yes | git URL of upstream tarnished. Default: `https://github.com/TE-ToshiakiTanaka2/tarnished.git` (matches `setup.sh:25`'s `REMOTE_REPO_URL`). Env-overridable via `DEVCONTAINER_REPO_URL`. |
+| `upstream.branch` | string | yes | Branch ref. Default: `develop` (matches `setup.sh:26`'s `REMOTE_BRANCH`). Env-overridable via `DEVCONTAINER_BRANCH`. |
+| `clone_dir` | string | yes | Absolute path of the long-lived upstream cache. Default: `/opt/tarnished`. Falls back to `${HOME}/.cache/tarnished` when the parent is not writable; the script announces the fallback via `print_warning`. |
+| `managed_paths` | array | yes | List of `{src, dst, overlay}` triples. May be empty (script becomes a no-op). |
+| `managed_paths[].src` | string | yes | Path within the upstream clone, relative to `clone_dir`. |
+| `managed_paths[].dst` | string | yes | Path within the project, relative to project root. |
+| `managed_paths[].overlay` | string \| null | yes | Path within the project for the user-owned sidecar. `null` (or omitted) disables overlay for that path. |
+
+**Override semantics**: Pass 1 of refresh runs `rsync --delete <clone_dir>/<src>/ <project>/<dst>/` (so the project mirror exactly tracks upstream). Pass 2 runs `rsync <project>/<overlay>/ <project>/<dst>/` (no `--delete`), so files in `<overlay>/` win. To override `commands/erd/brainstorm.md`, write `.claude/commands.local/erd/brainstorm.md`; everything else in `commands/` keeps tracking upstream.
+
+**Mutual exclusivity with `.tarnished-manifest.json` tracking**: Every `managed_paths[].dst` (and every `managed_paths[].overlay`) MUST also be listed in `MANIFEST_EXCLUDE_GLOBS` (in `scripts/lib/common.sh`). This is enforced by code review and a unit test (`tests/refresh_assets.bats :: "refresh.json defaults subset of MANIFEST_EXCLUDE_GLOBS"`). Always-latest tracking and manifest-tracked upgrades are disjoint per path.
+
+**Forward compatibility**: Unknown top-level keys ignored. Adding fields like `exclude_globs` or `upstream.pinned_commit` is non-breaking. The `schema_version` field is the breaking-change escape hatch.
+
+**Idempotency**: `refresh-assets.sh` is fully idempotent. Running it twice in a row with no upstream change is a no-op (single `git ls-remote` call returns the same SHA, no `rsync` invoked).
 
 ### `.codex/config.toml` schema (project-level Codex CLI config, #261)
 
