@@ -276,4 +276,12 @@ if [[ -f "${SCRIPT_DIR}/setup_codex.sh" ]]; then
     setup_codex
 fi
 
+# -----------------------------------------------------------------------------
+# Tarnished Asset Refresh
+# -----------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "${SCRIPT_DIR}/refresh-assets.sh" ]]; then
+    "${SCRIPT_DIR}/refresh-assets.sh" || true
+fi
+
 echo "Post-creation setup complete!"
