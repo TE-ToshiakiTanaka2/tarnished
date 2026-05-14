@@ -48,3 +48,20 @@ REQUEST_CHANGES
 REQUEST_CHANGES
 
 **Verdict**: REQUEST_CHANGES
+
+---
+
+## Fixes Applied
+
+- **Critical** — `ensure_clone` now sets `JUST_CLONED=true` on a successful fresh clone; `pull_if_changed` short-circuits to "sync needed" when the flag is set, so first-boot now mirrors assets correctly. Subsequent runs unchanged.
+- **Warning (path traversal)** — Added `safe_join()` defending against absolute paths, "..", and any join that escapes `PROJECT_ROOT`/`CLONE_DIR`. Offending entries are skipped with a warning.
+- **Warning (--config validation)** — `--config` now requires a non-flag argument; lone `--config` or `--config --dry-run` exits 1 with a clear error.
+- **Warning (test invariant)** — Subset test now asserts both `${path}` and `${path}/*` exist in `MANIFEST_EXCLUDE_GLOBS` for every managed_paths entry.
+- **Suggestion (log levels)** — `jq missing` and `clone_dir not git repo` downgraded from `print_error` to `print_warning` to match the FR-5 always-return-0 contract.
+- **Suggestion (regression tests)** — Added 4 bats cases: `--config` without value, `--config` followed by another flag, absolute-path dst rejection, `..`-bearing dst rejection.
+
+Workspace dogfood copy `/workspace/.devcontainer/scripts/refresh-assets.sh` resynced byte-identical with the template.
+
+- Commit: `e565a3c fix: address review feedback for #279`
+- Test status post-fix: `bats tests/*.bats` → 182/182 pass, 0 fail (10 skipped — env has no rsync; CI provides it)
+- Lint status post-fix: `shellcheck` clean across `refresh-assets.sh` (template + workspace), `templates/core/plugin.sh`, `templates/claude/plugin.sh`
