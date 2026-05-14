@@ -68,6 +68,11 @@ declare -a MANAGED_SRC=()
 declare -a MANAGED_DST=()
 declare -a MANAGED_OVERLAY=()
 
+# Set true by ensure_clone when it performs a fresh clone, so pull_if_changed
+# does not short-circuit the very first sync (the just-cloned cache trivially
+# matches origin/HEAD but the project still needs the initial mirror).
+JUST_CLONED=false
+
 # Globals tracking summary tallies
 SYNCED_PATHS=0
 ADDED_FILES=0
@@ -84,7 +89,11 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --config)
-                CONFIG_PATH="${2:-}"
+                if [[ $# -lt 2 ]] || [[ "${2:0:2}" == "--" ]]; then
+                    print_error "refresh-assets: --config requires a path argument"
+                    return 1
+                fi
+                CONFIG_PATH="$2"
                 shift 2
                 ;;
             --dry-run)
@@ -169,7 +178,7 @@ load_config() {
     fi
 
     if ! command -v jq &>/dev/null; then
-        print_error "refresh-assets: jq not found on PATH; cannot parse refresh.json"
+        print_warning "refresh-assets: jq not found on PATH; cannot parse refresh.json"
         return 1
     fi
 
@@ -233,7 +242,9 @@ ensure_clone() {
         fi
         # Directory exists but is not a git repo. Refuse to silently delete —
         # we cannot distinguish a corrupted clone from intentional content.
-        print_error "refresh-assets: ${CLONE_DIR} exists but is not a git repo; remove it manually to enable refresh"
+        # Manual cleanup is required, but we still exit 0 (FR-5: never block
+        # container start); print_warning matches that contract.
+        print_warning "refresh-assets: ${CLONE_DIR} exists but is not a git repo; remove it manually to enable refresh"
         return 1
     fi
 
@@ -271,6 +282,9 @@ ensure_clone() {
         return 1
     fi
 
+    # Mark for main() so pull_if_changed does not short-circuit the very
+    # first sync — local SHA trivially equals the just-cloned origin SHA.
+    JUST_CLONED=true
     return 0
 }
 
@@ -280,6 +294,12 @@ ensure_clone() {
 # sync (no-op or fetch failed but cache still usable).
 # -----------------------------------------------------------------------------
 pull_if_changed() {
+    # Just-cloned caches always need the first sync, even though local SHA
+    # trivially equals origin's. ensure_clone sets JUST_CLONED for us.
+    if $JUST_CLONED; then
+        return 0
+    fi
+
     local local_sha
     local_sha=$(git -C "$CLONE_DIR" rev-parse HEAD 2>/dev/null) || local_sha=""
 
@@ -319,6 +339,43 @@ pull_if_changed() {
 }
 
 # -----------------------------------------------------------------------------
+# safe_join — verify that joining <root>/<rel> stays within <root>. Rejects
+# absolute paths, "..", and any segment escape after canonicalization. Returns
+# the joined absolute path on stdout (no trailing slash) on success.
+# Returns: 0 on success; 1 if <rel> escapes <root> or contains a forbidden
+# pattern. The script is the only caller; refresh.json may be edited by the
+# user, so this is a defensive check, not a trust gate.
+# -----------------------------------------------------------------------------
+safe_join() {
+    local root="$1"
+    local rel="$2"
+
+    # Reject empty, absolute, or "..-bearing" inputs up front. Even with
+    # canonicalization, an attacker-controlled refresh.json should never be
+    # able to produce a joined path that resolves outside <root>.
+    if [[ -z "$rel" ]]; then
+        return 1
+    fi
+    if [[ "${rel:0:1}" == "/" ]]; then
+        return 1
+    fi
+    case "/$rel/" in
+        */../*) return 1 ;;
+    esac
+
+    local joined="${root%/}/${rel}"
+    # Canonicalize WITHOUT requiring the path to exist (-m). Compare prefix.
+    local canonical_root canonical_joined
+    canonical_root=$(realpath -m "$root" 2>/dev/null) || return 1
+    canonical_joined=$(realpath -m "$joined" 2>/dev/null) || return 1
+    if [[ "$canonical_joined" != "$canonical_root" ]] \
+        && [[ "$canonical_joined" != "${canonical_root%/}/"* ]]; then
+        return 1
+    fi
+    printf '%s' "$canonical_joined"
+}
+
+# -----------------------------------------------------------------------------
 # sync_paths — for each managed_paths entry, mirror upstream into project,
 # then overlay <project>/<overlay>/ on top.
 # -----------------------------------------------------------------------------
@@ -334,8 +391,18 @@ sync_paths() {
         local dst_rel="${MANAGED_DST[$i]}"
         local overlay_rel="${MANAGED_OVERLAY[$i]}"
 
-        local src_abs="${CLONE_DIR}/${src_rel}"
-        local dst_abs="${PROJECT_ROOT}/${dst_rel}"
+        # Defensive: refresh.json values must stay inside CLONE_DIR/PROJECT_ROOT.
+        # Anything else (absolute paths, "..", etc.) is treated as a configuration
+        # error — skip the entry with a warning, never write outside the bounds.
+        local src_abs dst_abs
+        src_abs=$(safe_join "$CLONE_DIR" "$src_rel") || {
+            print_warning "refresh-assets: src ${src_rel} escapes clone_dir; skipping"
+            continue
+        }
+        dst_abs=$(safe_join "$PROJECT_ROOT" "$dst_rel") || {
+            print_warning "refresh-assets: dst ${dst_rel} escapes project root; skipping"
+            continue
+        }
 
         if [[ ! -d "$src_abs" ]]; then
             print_warning "refresh-assets: upstream ${src_rel} missing in cache; skipping"
@@ -365,7 +432,11 @@ sync_paths() {
 
         # Pass 2: overlay sidecar (no --delete; user files win).
         if [[ -n "$overlay_rel" ]]; then
-            local overlay_abs="${PROJECT_ROOT}/${overlay_rel}"
+            local overlay_abs
+            overlay_abs=$(safe_join "$PROJECT_ROOT" "$overlay_rel") || {
+                print_warning "refresh-assets: overlay ${overlay_rel} escapes project root; skipping"
+                continue
+            }
             if [[ -d "$overlay_abs" ]]; then
                 local overlay_opts=(-a)
                 $DRY_RUN && overlay_opts+=(--dry-run)

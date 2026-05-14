@@ -321,7 +321,10 @@ EOF
 @test "refresh.json default managed_paths are excluded from manifest tracking" {
     # Source the constant from common.sh in a subshell, then check that
     # every dst (and overlay) in the template refresh.json appears in the
-    # exclusion list (either as 'dir' or 'dir/*').
+    # exclusion list as BOTH the directory entry AND the dir/* glob form
+    # (since _manifest_path_excluded uses bash glob match — a missing
+    # dir/* would silently leak files under the directory back into
+    # manifest tracking).
     local rc=0
     bash -c '
         # shellcheck disable=SC1090
@@ -342,8 +345,68 @@ EOF
                 echo "MISSING from MANIFEST_EXCLUDE_GLOBS: $path" >&2
                 rc=1
             fi
+            if ! is_excluded "${path}/*"; then
+                echo "MISSING from MANIFEST_EXCLUDE_GLOBS: ${path}/*" >&2
+                rc=1
+            fi
         done
         exit $rc
     ' || rc=$?
     [[ $rc -eq 0 ]]
+}
+
+# -----------------------------------------------------------------------------
+# CLI argument validation (regression guards from /review)
+# -----------------------------------------------------------------------------
+
+@test "--config without value exits 1 with a clear error" {
+    run "$SUT" --config
+    assert_failure
+    assert_output --partial "--config requires a path"
+}
+
+@test "--config followed by another flag exits 1" {
+    run "$SUT" --config --dry-run
+    assert_failure
+    assert_output --partial "--config requires a path"
+}
+
+# -----------------------------------------------------------------------------
+# Path traversal defenses (managed_paths must stay under PROJECT_ROOT/CLONE_DIR)
+# -----------------------------------------------------------------------------
+
+@test "absolute path in managed_paths.dst is rejected" {
+    cat > "${PROJECT}/.tarnished/refresh.json" <<EOF
+{
+  "schema_version": 1,
+  "upstream": { "repo_url": "${UPSTREAM_BARE}", "branch": "develop" },
+  "clone_dir": "${CLONE_DIR}",
+  "managed_paths": [
+    { "src": ".claude/commands", "dst": "/etc/passwd_evil", "overlay": null }
+  ]
+}
+EOF
+    $HAS_RSYNC || skip "rsync not available (test asserts sync stage runs)"
+    run "$SUT"
+    assert_success
+    assert_output --partial "escapes project root"
+    assert [ ! -e "/etc/passwd_evil" ]
+}
+
+@test "../-bearing managed_paths.dst is rejected" {
+    cat > "${PROJECT}/.tarnished/refresh.json" <<EOF
+{
+  "schema_version": 1,
+  "upstream": { "repo_url": "${UPSTREAM_BARE}", "branch": "develop" },
+  "clone_dir": "${CLONE_DIR}",
+  "managed_paths": [
+    { "src": ".claude/commands", "dst": "../escape", "overlay": null }
+  ]
+}
+EOF
+    $HAS_RSYNC || skip "rsync not available (test asserts sync stage runs)"
+    run "$SUT"
+    assert_success
+    assert_output --partial "escapes project root"
+    assert [ ! -d "${SCRATCH}/escape" ]
 }
