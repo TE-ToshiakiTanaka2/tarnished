@@ -161,6 +161,16 @@ if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
         ".claude/rules.local/shell.md"
         ".claude/rules.local"
         ".claude/rules.local/*"
+        # CI workflow / GitHub-side configuration is routinely customized per
+        # project (project numbers, owners, runner labels, additional jobs).
+        # Treat .github/ as user-owned: scaffold still emits the templates
+        # (copy_with_confirm performs the actual copy regardless of this
+        # list — only recording is skipped), but --upgrade never records,
+        # decides, or prunes these paths. Bash glob `*` inside `[[ == ]]`
+        # spans `/`, so the single `.github/*` entry covers arbitrary depth
+        # (e.g. .github/workflows/auto-tag.yml). (#286)
+        ".github"
+        ".github/*"
     )
 fi
 
