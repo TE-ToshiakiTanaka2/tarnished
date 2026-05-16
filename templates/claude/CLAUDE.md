@@ -97,11 +97,12 @@ Available skills (slash commands):
 
 ### Always-latest assets and `.local/` overrides
 
-`.claude/{commands,skills,scripts,rules}/` are kept always-latest by
-`refresh-assets.sh` (runs on every container start). To customize a
-command or skill locally, write to the sidecar `.local/` directory
-instead of editing the file in place — direct edits will be
-overwritten on the next refresh. Example:
+`.claude/{commands,skills,scripts}/` and shared rules such as
+`.claude/rules/shell.md` are kept always-latest by `refresh-assets.sh`
+(runs on every container start). To customize a command, skill, script,
+or shared rule locally, write to the sidecar `.local/` path instead of
+editing the file in place — direct edits will be overwritten on the next
+refresh. Example:
 
 ```bash
 mkdir -p .claude/commands.local/erd

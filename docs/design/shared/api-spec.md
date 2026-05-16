@@ -285,7 +285,7 @@ Signature: `sha256_file <path>`. Cross-platform sha256 wrapper. Picks `sha256sum
 
 `copy_with_confirm` and `copy_dir_with_confirm` retain their pre-#265 behavior by default. When the global `MANIFEST_RECORDING` is `true`, every successful copy additionally appends `(<rel_path>, "sha256:<hex>")` to the global associative array `MANIFEST_TRACKED`, where `<rel_path>` is computed against the global `MANIFEST_RECORDING_ROOT`. Paths matching `MANIFEST_EXCLUDE_GLOBS` (defined in `scripts/lib/common.sh:126-138`, re-exported by `scripts/lib/manifest.sh`) and paths outside `MANIFEST_RECORDING_ROOT` are skipped. The plugin contract is unchanged — plugins that already use `copy_with_confirm` (per `.claude/rules/shell.md`) automatically participate in tracking.
 
-`MANIFEST_EXCLUDE_GLOBS` was extended in #279 with the always-latest path whitelist and its `.local/` overlay sidecars (16 patterns, both directory and `dir/*` forms): `.claude/commands{,/*}`, `.claude/skills{,/*}`, `.claude/scripts{,/*}`, `.claude/rules{,/*}`, `.claude/commands.local{,/*}`, `.claude/skills.local{,/*}`, `.claude/scripts.local{,/*}`, `.claude/rules.local{,/*}`. The build-time exclusion (here) is kept in sync with the runtime whitelist (`refresh.json :: managed_paths[]`) by code review and a unit test (`tests/refresh_assets.bats :: "refresh.json defaults subset of MANIFEST_EXCLUDE_GLOBS"`). Always-latest tracking and manifest-tracked upgrades are disjoint per path.
+`MANIFEST_EXCLUDE_GLOBS` was extended in #279/#281 with the always-latest path whitelist and its `.local/` overlay sidecars. Directory-managed paths list both the directory and `dir/*` forms (`.claude/commands{,/*}`, `.claude/skills{,/*}`, `.claude/scripts{,/*}`, and corresponding `.local` directories). File-managed paths list the exact file (`.claude/rules/shell.md`), while `.claude/rules.local{,/*}` remains user-owned. The build-time exclusion (here) is kept in sync with the runtime whitelist (`refresh.json :: managed_paths[]`) by code review and a unit test (`tests/refresh_assets.bats :: "refresh.json defaults subset of MANIFEST_EXCLUDE_GLOBS"`). Always-latest tracking and manifest-tracked upgrades are disjoint per path.
 
 | Function | Purpose |
 | --- | --- |
@@ -436,7 +436,7 @@ Contract: always returns `0` for non-fatal paths (success, skipped, warnings, ne
 | `ensure_clone()` | Clone-if-missing into `clone_dir`. On parent-dir-not-writable, fall back to `${HOME}/.cache/tarnished` with a `print_warning`. On clone failure (network, DNS), warn and exit 0; the project keeps its original scaffolded bytes. |
 | `check_upstream()` | `git ls-remote origin <branch>` and compare against `git rev-parse HEAD` of the cache. Returns the new SHA when fetch is needed, empty when no-op. Treats `ls-remote` failure as no-op (cache used as-is). |
 | `fetch_upstream()` | `git fetch origin <branch>` then `git reset --hard origin/<branch>`. The cache is treated as an immutable mirror; users wanting to test a local upstream patch should set `DEVCONTAINER_REPO_URL=file:///path/to/local/clone`. |
-| `sync_paths()` | For each `managed_paths[]` entry: `rsync -a --delete <clone_dir>/<src>/ <project>/<dst>/` then, if `<project>/<overlay>/` exists, `rsync -a <project>/<overlay>/ <project>/<dst>/` (no `--delete`, so overlay wins). |
+| `sync_paths()` | For each `managed_paths[]` entry: directory sources use `rsync -a --delete <clone_dir>/<src>/ <project>/<dst>/`; file sources use `rsync -a <clone_dir>/<src> <project>/<dst>`. Then, if `<project>/<overlay>` exists, overlay it on top. Directory overlays omit `--delete`, so overlay wins without pruning user sidecars. |
 | `print_summary()` | Emit one structured line: `[OK] refresh-assets: N paths synced (A added, R removed); O overlay files preserved` or `[OK] refresh-assets: upstream unchanged (sha=<short>)`. |
 
 Three-state lifecycle of `clone_dir`: **Absent** (first boot or after manual cleanup) → **Cloned** (successful first refresh) → **Updated** (subsequent fetch+reset). The script reaches **Error** only when `<clone_dir>` exists without a `.git/` subdirectory — it refuses to silently delete the directory because it cannot distinguish a corrupted clone from intentional non-tarnished content; `print_error` + exit 0 is the response.
@@ -451,10 +451,10 @@ Default `managed_paths[]` (Claude assets only — Codex `config.toml` is not in 
 
 | `src` | `dst` | `overlay` |
 | --- | --- | --- |
-| `.claude/commands` | `.claude/commands` | `.claude/commands.local` |
-| `.claude/skills`   | `.claude/skills`   | `.claude/skills.local`   |
-| `.claude/scripts`  | `.claude/scripts`  | `.claude/scripts.local`  |
-| `.claude/rules`    | `.claude/rules`    | `.claude/rules.local`    |
+| `templates/claude/.claude/commands`       | `.claude/commands`       | `.claude/commands.local`       |
+| `templates/claude/.claude/skills`         | `.claude/skills`         | `.claude/skills.local`         |
+| `templates/claude/.claude/scripts`        | `.claude/scripts`        | `.claude/scripts.local`        |
+| `templates/claude/.claude/rules/shell.md` | `.claude/rules/shell.md` | `.claude/rules.local/shell.md` |
 
 Defaults for `upstream.repo_url` and `upstream.branch` track `setup.sh:25-26`'s `REMOTE_REPO_URL` / `REMOTE_BRANCH` constants. Both are env-overridable via `DEVCONTAINER_REPO_URL` / `DEVCONTAINER_BRANCH` (consistent with `setup.sh`'s curl-bootstrap path).
 

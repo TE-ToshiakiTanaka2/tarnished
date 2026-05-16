@@ -2,9 +2,9 @@
 # =============================================================================
 # refresh-assets.sh — Always-latest sync for shared Claude/Codex assets (#279)
 # =============================================================================
-# Mirrors a whitelist of operational assets (.claude/{commands,skills,scripts,
-# rules}/) from upstream tarnished into the project, so a project scaffolded a
-# month ago still picks up the latest skill/command revisions automatically.
+# Mirrors a whitelist of operational assets from upstream tarnished into the
+# project, so a project scaffolded a month ago still picks up the latest
+# skill/command/script/shared-rule revisions automatically.
 #
 # Invocation paths (both converge here):
 #   1. First container boot — post.sh sources nothing; instead, the marker
@@ -376,8 +376,53 @@ safe_join() {
 }
 
 # -----------------------------------------------------------------------------
+# apply_overlay — copy a user-owned overlay path on top of a managed path.
+# Directory overlays are copied without --delete; file overlays replace the
+# managed file. Missing overlays are valid no-ops.
+# -----------------------------------------------------------------------------
+apply_overlay() {
+    local overlay_rel="$1"
+    local dst_abs="$2"
+    local is_dir="$3"
+
+    [[ -z "$overlay_rel" ]] && return 0
+
+    local overlay_abs
+    overlay_abs=$(safe_join "$PROJECT_ROOT" "$overlay_rel") || {
+        print_warning "refresh-assets: overlay ${overlay_rel} escapes project root; skipping"
+        return 0
+    }
+
+    local overlay_opts=(-a)
+    $DRY_RUN && overlay_opts+=(--dry-run)
+
+    local overlay_log
+    if [[ "$is_dir" == true ]]; then
+        [[ -d "$overlay_abs" ]] || return 0
+        overlay_log=$(rsync "${overlay_opts[@]}" --itemize-changes \
+                        "${overlay_abs}/" "${dst_abs}/" 2>&1) || {
+            print_warning "refresh-assets: overlay rsync of ${overlay_rel} failed"
+            return 0
+        }
+    else
+        [[ -f "$overlay_abs" ]] || return 0
+        mkdir -p "$(dirname "$dst_abs")" 2>/dev/null || true
+        overlay_log=$(rsync "${overlay_opts[@]}" --itemize-changes \
+                        "$overlay_abs" "$dst_abs" 2>&1) || {
+            print_warning "refresh-assets: overlay rsync of ${overlay_rel} failed"
+            return 0
+        }
+    fi
+
+    local overlaid
+    overlaid=$(grep -cE '^>f' <<<"$overlay_log" 2>/dev/null)
+    OVERLAY_FILES=$((OVERLAY_FILES + overlaid))
+}
+
+# -----------------------------------------------------------------------------
 # sync_paths — for each managed_paths entry, mirror upstream into project,
-# then overlay <project>/<overlay>/ on top.
+# then overlay <project>/<overlay>/ on top. Directory entries use --delete;
+# file entries replace only that file so sibling files remain untouched.
 # -----------------------------------------------------------------------------
 sync_paths() {
     if ! command -v rsync &>/dev/null; then
@@ -404,23 +449,47 @@ sync_paths() {
             continue
         }
 
-        if [[ ! -d "$src_abs" ]]; then
+        if [[ ! -d "$src_abs" ]] && [[ ! -f "$src_abs" ]]; then
             print_warning "refresh-assets: upstream ${src_rel} missing in cache; skipping"
             continue
         fi
 
-        # Pass 1: mirror upstream → project (delete stale entries).
-        local rsync_opts=(-a --delete)
+        local rsync_opts=(-a)
+        local is_dir=false
+        if [[ -d "$src_abs" ]]; then
+            is_dir=true
+            rsync_opts+=(--delete)
+        fi
         $DRY_RUN && rsync_opts+=(--dry-run)
 
-        mkdir -p "$dst_abs" 2>/dev/null || true
+        if [[ "$is_dir" == true ]]; then
+            if [[ -f "$dst_abs" ]]; then
+                print_warning "refresh-assets: dst ${dst_rel} is a file but upstream source is a directory; skipping"
+                continue
+            fi
+            mkdir -p "$dst_abs" 2>/dev/null || true
+        else
+            if [[ -d "$dst_abs" ]]; then
+                print_warning "refresh-assets: dst ${dst_rel} is a directory but upstream source is a file; skipping"
+                continue
+            fi
+            mkdir -p "$(dirname "$dst_abs")" 2>/dev/null || true
+        fi
 
         local rsync_log
-        rsync_log=$(rsync "${rsync_opts[@]}" --itemize-changes \
-                        "${src_abs}/" "${dst_abs}/" 2>&1) || {
-            print_warning "refresh-assets: rsync of ${dst_rel} failed; skipping (sibling paths still attempted)"
-            continue
-        }
+        if [[ "$is_dir" == true ]]; then
+            rsync_log=$(rsync "${rsync_opts[@]}" --itemize-changes \
+                            "${src_abs}/" "${dst_abs}/" 2>&1) || {
+                print_warning "refresh-assets: rsync of ${dst_rel} failed; skipping (sibling paths still attempted)"
+                continue
+            }
+        else
+            rsync_log=$(rsync "${rsync_opts[@]}" --itemize-changes \
+                            "$src_abs" "$dst_abs" 2>&1) || {
+                print_warning "refresh-assets: rsync of ${dst_rel} failed; skipping (sibling paths still attempted)"
+                continue
+            }
+        fi
 
         # Tally added/removed from --itemize-changes output.
         local added removed
@@ -430,28 +499,7 @@ sync_paths() {
         REMOVED_FILES=$((REMOVED_FILES + removed))
         SYNCED_PATHS=$((SYNCED_PATHS + 1))
 
-        # Pass 2: overlay sidecar (no --delete; user files win).
-        if [[ -n "$overlay_rel" ]]; then
-            local overlay_abs
-            overlay_abs=$(safe_join "$PROJECT_ROOT" "$overlay_rel") || {
-                print_warning "refresh-assets: overlay ${overlay_rel} escapes project root; skipping"
-                continue
-            }
-            if [[ -d "$overlay_abs" ]]; then
-                local overlay_opts=(-a)
-                $DRY_RUN && overlay_opts+=(--dry-run)
-
-                local overlay_log
-                overlay_log=$(rsync "${overlay_opts[@]}" --itemize-changes \
-                                "${overlay_abs}/" "${dst_abs}/" 2>&1) || {
-                    print_warning "refresh-assets: overlay rsync of ${overlay_rel} failed"
-                    continue
-                }
-                local overlaid
-                overlaid=$(grep -cE '^>f' <<<"$overlay_log" 2>/dev/null)
-                OVERLAY_FILES=$((OVERLAY_FILES + overlaid))
-            fi
-        fi
+        apply_overlay "$overlay_rel" "$dst_abs" "$is_dir"
     done
 }
 

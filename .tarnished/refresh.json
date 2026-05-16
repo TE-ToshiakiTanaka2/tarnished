@@ -7,24 +7,24 @@
   "clone_dir": "/opt/tarnished",
   "managed_paths": [
     {
-      "src": ".claude/commands",
+      "src": "templates/claude/.claude/commands",
       "dst": ".claude/commands",
       "overlay": ".claude/commands.local"
     },
     {
-      "src": ".claude/skills",
+      "src": "templates/claude/.claude/skills",
       "dst": ".claude/skills",
       "overlay": ".claude/skills.local"
     },
     {
-      "src": ".claude/scripts",
+      "src": "templates/claude/.claude/scripts",
       "dst": ".claude/scripts",
       "overlay": ".claude/scripts.local"
     },
     {
-      "src": ".claude/rules",
-      "dst": ".claude/rules",
-      "overlay": ".claude/rules.local"
+      "src": "templates/claude/.claude/rules/shell.md",
+      "dst": ".claude/rules/shell.md",
+      "overlay": ".claude/rules.local/shell.md"
     }
   ]
 }

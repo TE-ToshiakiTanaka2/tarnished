@@ -36,13 +36,13 @@ setup() {
     git -C "$UPSTREAM_WORK" config user.email "test@example.com"
     git -C "$UPSTREAM_WORK" config user.name "test"
 
-    mkdir -p "${UPSTREAM_WORK}/.claude/commands/erd" \
-             "${UPSTREAM_WORK}/.claude/skills" \
-             "${UPSTREAM_WORK}/.claude/scripts" \
-             "${UPSTREAM_WORK}/.claude/rules"
-    echo "v1-brainstorm" > "${UPSTREAM_WORK}/.claude/commands/erd/brainstorm.md"
-    echo "v1-skill"      > "${UPSTREAM_WORK}/.claude/skills/issue.md"
-    echo "v1-shell"      > "${UPSTREAM_WORK}/.claude/rules/shell.md"
+    mkdir -p "${UPSTREAM_WORK}/templates/claude/.claude/commands/erd" \
+             "${UPSTREAM_WORK}/templates/claude/.claude/skills" \
+             "${UPSTREAM_WORK}/templates/claude/.claude/scripts" \
+             "${UPSTREAM_WORK}/templates/claude/.claude/rules"
+    echo "v1-brainstorm" > "${UPSTREAM_WORK}/templates/claude/.claude/commands/erd/brainstorm.md"
+    echo "v1-skill"      > "${UPSTREAM_WORK}/templates/claude/.claude/skills/issue.md"
+    echo "v1-shell"      > "${UPSTREAM_WORK}/templates/claude/.claude/rules/shell.md"
     git -C "$UPSTREAM_WORK" add -A
     git -C "$UPSTREAM_WORK" commit -q -m "v1"
     git -C "$UPSTREAM_WORK" remote add origin "$UPSTREAM_BARE"
@@ -66,9 +66,9 @@ setup() {
   },
   "clone_dir": "${CLONE_DIR}",
   "managed_paths": [
-    { "src": ".claude/commands", "dst": ".claude/commands", "overlay": ".claude/commands.local" },
-    { "src": ".claude/skills",   "dst": ".claude/skills",   "overlay": ".claude/skills.local"   },
-    { "src": ".claude/rules",    "dst": ".claude/rules",    "overlay": ".claude/rules.local"    }
+    { "src": "templates/claude/.claude/commands",       "dst": ".claude/commands",       "overlay": ".claude/commands.local"       },
+    { "src": "templates/claude/.claude/skills",         "dst": ".claude/skills",         "overlay": ".claude/skills.local"         },
+    { "src": "templates/claude/.claude/rules/shell.md", "dst": ".claude/rules/shell.md", "overlay": ".claude/rules.local/shell.md" }
   ]
 }
 EOF
@@ -127,8 +127,8 @@ teardown() {
 @test "upstream advances: fetch + reset + rsync brings new content" {
     $HAS_RSYNC || skip "rsync not available"
     "$SUT" >/dev/null
-    echo "v2-brainstorm" > "${UPSTREAM_WORK}/.claude/commands/erd/brainstorm.md"
-    echo "v2-newfile"    > "${UPSTREAM_WORK}/.claude/commands/erd/newcmd.md"
+    echo "v2-brainstorm" > "${UPSTREAM_WORK}/templates/claude/.claude/commands/erd/brainstorm.md"
+    echo "v2-newfile"    > "${UPSTREAM_WORK}/templates/claude/.claude/commands/erd/newcmd.md"
     git -C "$UPSTREAM_WORK" add -A
     git -C "$UPSTREAM_WORK" commit -q -m "v2"
     git -C "$UPSTREAM_WORK" push -q origin develop
@@ -143,13 +143,36 @@ teardown() {
 @test "upstream removes a file: rsync --delete drops it from the project" {
     $HAS_RSYNC || skip "rsync not available"
     "$SUT" >/dev/null
-    git -C "$UPSTREAM_WORK" rm -q .claude/commands/erd/brainstorm.md
+    git -C "$UPSTREAM_WORK" rm -q templates/claude/.claude/commands/erd/brainstorm.md
     git -C "$UPSTREAM_WORK" commit -q -m "v2-remove"
     git -C "$UPSTREAM_WORK" push -q origin develop
 
     run "$SUT"
     assert_success
     assert [ ! -f "${PROJECT}/.claude/commands/erd/brainstorm.md" ]
+}
+
+@test "file-managed shell rule refresh preserves language-specific rules" {
+    $HAS_RSYNC || skip "rsync not available"
+    mkdir -p "${PROJECT}/.claude/rules"
+    echo "python-rule" > "${PROJECT}/.claude/rules/python.md"
+
+    "$SUT" >/dev/null
+    assert [ -f "${PROJECT}/.claude/rules/shell.md" ]
+    run cat "${PROJECT}/.claude/rules/python.md"
+    assert_output "python-rule"
+
+    echo "v2-shell" > "${UPSTREAM_WORK}/templates/claude/.claude/rules/shell.md"
+    git -C "$UPSTREAM_WORK" add -A
+    git -C "$UPSTREAM_WORK" commit -q -m "v2-shell"
+    git -C "$UPSTREAM_WORK" push -q origin develop
+
+    run "$SUT"
+    assert_success
+    run cat "${PROJECT}/.claude/rules/shell.md"
+    assert_output "v2-shell"
+    run cat "${PROJECT}/.claude/rules/python.md"
+    assert_output "python-rule"
 }
 
 # -----------------------------------------------------------------------------
@@ -163,7 +186,7 @@ teardown() {
     echo "OVERRIDDEN" > "${PROJECT}/.claude/commands.local/erd/brainstorm.md"
 
     # Force a refresh by advancing upstream
-    echo "v2-brainstorm" > "${UPSTREAM_WORK}/.claude/commands/erd/brainstorm.md"
+    echo "v2-brainstorm" > "${UPSTREAM_WORK}/templates/claude/.claude/commands/erd/brainstorm.md"
     git -C "$UPSTREAM_WORK" add -A
     git -C "$UPSTREAM_WORK" commit -q -m "v2"
     git -C "$UPSTREAM_WORK" push -q origin develop
@@ -172,6 +195,23 @@ teardown() {
     assert_success
     run cat "${PROJECT}/.claude/commands/erd/brainstorm.md"
     assert_output "OVERRIDDEN"
+}
+
+@test "file overlay overrides file-managed shell rule" {
+    $HAS_RSYNC || skip "rsync not available"
+    "$SUT" >/dev/null
+    mkdir -p "${PROJECT}/.claude/rules.local"
+    echo "LOCAL-SHELL" > "${PROJECT}/.claude/rules.local/shell.md"
+
+    echo "v2-shell" > "${UPSTREAM_WORK}/templates/claude/.claude/rules/shell.md"
+    git -C "$UPSTREAM_WORK" add -A
+    git -C "$UPSTREAM_WORK" commit -q -m "v2-shell"
+    git -C "$UPSTREAM_WORK" push -q origin develop
+
+    run "$SUT"
+    assert_success
+    run cat "${PROJECT}/.claude/rules/shell.md"
+    assert_output "LOCAL-SHELL"
 }
 
 @test "overlay survives multiple refreshes (rsync --delete does not touch overlay source)" {
@@ -321,10 +361,8 @@ EOF
 @test "refresh.json default managed_paths are excluded from manifest tracking" {
     # Source the constant from common.sh in a subshell, then check that
     # every dst (and overlay) in the template refresh.json appears in the
-    # exclusion list as BOTH the directory entry AND the dir/* glob form
-    # (since _manifest_path_excluded uses bash glob match — a missing
-    # dir/* would silently leak files under the directory back into
-    # manifest tracking).
+    # exclusion list. Directory-managed paths require BOTH the directory entry
+    # and the dir/* glob form; file-managed paths require the exact file path.
     local rc=0
     bash -c '
         # shellcheck disable=SC1090
@@ -340,16 +378,23 @@ EOF
         }
 
         rc=0
-        for path in $(jq -r ".managed_paths[] | (.dst, .overlay) | select(.)" "'"$TEMPLATE_REFRESH_JSON"'"); do
-            if ! is_excluded "$path"; then
-                echo "MISSING from MANIFEST_EXCLUDE_GLOBS: $path" >&2
+        while IFS=$'\''\t'\'' read -r src dst overlay; do
+            if [[ ! -e "'"$REPO_ROOT"'/${src}" ]]; then
+                echo "MISSING refresh source: $src" >&2
                 rc=1
             fi
-            if ! is_excluded "${path}/*"; then
-                echo "MISSING from MANIFEST_EXCLUDE_GLOBS: ${path}/*" >&2
-                rc=1
-            fi
-        done
+            for path in "$dst" "$overlay"; do
+                [[ -z "$path" ]] && continue
+                if ! is_excluded "$path"; then
+                    echo "MISSING from MANIFEST_EXCLUDE_GLOBS: $path" >&2
+                    rc=1
+                fi
+                if [[ -d "'"$REPO_ROOT"'/${src}" ]] && ! is_excluded "${path}/*"; then
+                    echo "MISSING from MANIFEST_EXCLUDE_GLOBS: ${path}/*" >&2
+                    rc=1
+                fi
+            done
+        done < <(jq -r ".managed_paths[] | [.src, .dst, (.overlay // \"\")] | @tsv" "'"$TEMPLATE_REFRESH_JSON"'")
         exit $rc
     ' || rc=$?
     [[ $rc -eq 0 ]]
@@ -382,7 +427,7 @@ EOF
   "upstream": { "repo_url": "${UPSTREAM_BARE}", "branch": "develop" },
   "clone_dir": "${CLONE_DIR}",
   "managed_paths": [
-    { "src": ".claude/commands", "dst": "/etc/passwd_evil", "overlay": null }
+    { "src": "templates/claude/.claude/commands", "dst": "/etc/passwd_evil", "overlay": null }
   ]
 }
 EOF
@@ -400,7 +445,7 @@ EOF
   "upstream": { "repo_url": "${UPSTREAM_BARE}", "branch": "develop" },
   "clone_dir": "${CLONE_DIR}",
   "managed_paths": [
-    { "src": ".claude/commands", "dst": "../escape", "overlay": null }
+    { "src": "templates/claude/.claude/commands", "dst": "../escape", "overlay": null }
   ]
 }
 EOF
