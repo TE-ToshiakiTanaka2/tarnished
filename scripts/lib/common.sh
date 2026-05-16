@@ -386,6 +386,7 @@ _strip_json_comments() {
                 }
 
                 if (c == "/" && n == "*") {
+                    printf " "
                     in_block_comment = 1
                     i += 2
                     continue

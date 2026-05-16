@@ -188,3 +188,21 @@ JSONC
     assert_failure
     [[ ! -e "$output_file" ]]
 }
+
+@test "merge_devcontainer_json treats block comments as whitespace" {
+    local base_file="$SCRATCH/base.jsonc"
+    local overlay_file="$SCRATCH/overlay.json"
+    local output_file="$SCRATCH/output.json"
+
+    cat > "$base_file" <<'JSONC'
+{
+  "value": 1/* this must not become 12 */2
+}
+JSONC
+    echo '{"features": {}}' > "$overlay_file"
+    echo "stale" > "$output_file"
+
+    run merge_devcontainer_json "$base_file" "$overlay_file" "$output_file"
+    assert_failure
+    [[ ! -e "$output_file" ]]
+}
