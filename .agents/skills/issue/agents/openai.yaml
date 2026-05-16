@@ -1,0 +1,3 @@
+interface:
+  display_name: "Issue"
+  short_description: "Create GitHub Issues using the Tarnished lifecycle"

@@ -1,244 +1,39 @@
+# =============================================================================
+# Auto Tag Workflow (Caller)
+# =============================================================================
+# Calls the reusable workflow from TE-ToshiakiTanaka2/tarnished to automatically
+# create semantic version tags when commits are merged to develop or main.
+#
+# Prerequisites:
+#   1. Create .github/versioning.yml with your version configuration:
+#      ```yaml
+#      versioning:
+#        branch_prefixes:
+#          major:
+#            - "major/"
+#          minor:
+#            - "release/"
+#          patch:
+#            - "feature/"
+#            - "fix/"
+#      ```
+#
+# For more information about erd: https://github.com/TE-ToshiakiTanaka2/tarnished
+# =============================================================================
+
 name: Auto Tag
 
 on:
   push:
     branches: [develop, main]
-  workflow_call:
-    inputs:
-      config-path:
-        description: "Path to versioning.yml config file"
-        required: false
-        default: ".github/versioning.yml"
-        type: string
-      erd-version:
-        description: "Version of erd to download (e.g., v1.0.0, latest)"
-        required: false
-        default: "latest"
-        type: string
-    # Note: GITHUB_TOKEN is automatically available, no need to declare it
 
 permissions:
   contents: write
   pull-requests: write
 
-env:
-  CARGO_TERM_COLOR: always
-  ERD_REPO: TE-ToshiakiTanaka2/tarnished
-
 jobs:
-  auto-tag:
-    name: Create Version Tag
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0 # Need full history for tags
-
-      - name: Get branch name from PR
-        id: branch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          COMMIT_MSG=$(git log -1 --pretty=%s)
-          echo "Commit message: $COMMIT_MSG"
-
-          BRANCH=""
-
-          # Method 1: Try to extract from merge commit message
-          # Format: "Merge pull request #N from owner/branch-name"
-          if echo "$COMMIT_MSG" | grep -q "Merge pull request"; then
-            BRANCH=$(echo "$COMMIT_MSG" | sed -n 's/.*from [^/]*\/\([^ ]*\).*/\1/p')
-            echo "Detected from merge commit: $BRANCH"
-          fi
-
-          # Method 2: For squash merges, extract PR number and get branch via API
-          # Format: "feat: some message (#123)"
-          if [ -z "$BRANCH" ]; then
-            PR_NUMBER=$(echo "$COMMIT_MSG" | grep -o '(#[0-9]\+)' | tail -1 | tr -d '(#)')
-            if [ -n "$PR_NUMBER" ]; then
-              echo "Found PR number: $PR_NUMBER"
-              # Get the head branch name from PR via GitHub API
-              BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName' 2>/dev/null || echo "")
-              echo "Detected from PR API: $BRANCH"
-            fi
-          fi
-
-          # Method 3: Check if this is a direct push with branch-like commit message
-          if [ -z "$BRANCH" ]; then
-            # Try to detect branch pattern from conventional commit prefix
-            # e.g., "feat:" might indicate a feature branch
-            if echo "$COMMIT_MSG" | grep -qE "^(feat|feature):"; then
-              echo "Conventional commit detected but no PR number found"
-            fi
-          fi
-
-          echo "Final detected branch: $BRANCH"
-          echo "name=$BRANCH" >> $GITHUB_OUTPUT
-
-      # === Local invocation: Build erd from source ===
-      # Use repository check instead of event_name because workflow_call
-      # preserves the caller's event context (e.g., push)
-      - name: Setup Rust (local)
-        if: github.repository == 'TE-ToshiakiTanaka2/tarnished' && steps.branch.outputs.name != ''
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry (local)
-        if: github.repository == 'TE-ToshiakiTanaka2/tarnished' && steps.branch.outputs.name != ''
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-release-
-            ${{ runner.os }}-cargo-
-
-      - name: Build erd (local)
-        if: github.repository == 'TE-ToshiakiTanaka2/tarnished' && steps.branch.outputs.name != ''
-        run: cargo build --release
-
-      # === External invocation: Download erd from Releases ===
-      # Use repository check instead of event_name because workflow_call
-      # preserves the caller's event context (e.g., push)
-      - name: Download erd (external)
-        if: github.repository != 'TE-ToshiakiTanaka2/tarnished' && steps.branch.outputs.name != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ inputs.erd-version }}"
-
-          if [ "$VERSION" = "latest" ]; then
-            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/latest/download/erd-linux-x86_64"
-          else
-            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/download/${VERSION}/erd-linux-x86_64"
-          fi
-
-          echo "Downloading erd from: $DOWNLOAD_URL"
-          mkdir -p target/release
-          curl -fsSL -o target/release/erd "$DOWNLOAD_URL"
-          chmod +x target/release/erd
-
-          echo "erd version:"
-          ./target/release/erd --version || echo "Version check failed (binary may not support --version)"
-
-      # === Common steps ===
-      - name: Configure git
-        if: steps.branch.outputs.name != ''
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Create and push tag
-        id: create-tag
-        if: steps.branch.outputs.name != ''
-        run: |
-          CONFIG_PATH="${{ inputs.config-path || '.github/versioning.yml' }}"
-          OUTPUT=$(./target/release/erd tag auto --branch "${{ steps.branch.outputs.name }}" --config "$CONFIG_PATH" 2>&1)
-          echo "$OUTPUT"
-          # Extract tag name from output (assumes erd outputs "Created tag: vX.Y.Z" or similar)
-          TAG_NAME=$(echo "$OUTPUT" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' | tail -1 || echo "")
-          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      - name: Get previous tag
-        id: prev-tag
-        if: steps.branch.outputs.name != '' && steps.create-tag.outcome == 'success' && steps.create-tag.outputs.tag != ''
-        run: |
-          # Get the previous tag before the current one
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "none")
-          echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
-
-      - name: Determine tag type
-        id: tag-type
-        if: steps.branch.outputs.name != '' && steps.create-tag.outcome == 'success' && steps.create-tag.outputs.tag != ''
-        run: |
-          TAG_NAME="${{ steps.create-tag.outputs.tag }}"
-          if echo "$TAG_NAME" | grep -qE '\-rc\.[0-9]+$'; then
-            echo "type=rc" >> $GITHUB_OUTPUT
-          elif echo "$TAG_NAME" | grep -qE '\-beta\.[0-9]+$'; then
-            echo "type=beta" >> $GITHUB_OUTPUT
-          elif echo "$TAG_NAME" | grep -qE '\-alpha\.[0-9]+$'; then
-            echo "type=alpha" >> $GITHUB_OUTPUT
-          else
-            echo "type=release" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Find PR number from commit
-        id: find-pr
-        if: steps.branch.outputs.name != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          COMMIT_SHA="${{ github.sha }}"
-          # Find PR associated with this commit
-          PR_NUMBER=$(gh pr list --state merged --search "$COMMIT_SHA" --json number --jq '.[0].number' 2>/dev/null || echo "")
-          if [ -z "$PR_NUMBER" ]; then
-            # Try to extract from commit message
-            COMMIT_MSG=$(git log -1 --pretty=%s)
-            PR_NUMBER=$(echo "$COMMIT_MSG" | grep -oE '#[0-9]+' | head -1 | tr -d '#' || echo "")
-          fi
-          echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
-
-      - name: Comment on PR (tag created)
-        if: steps.create-tag.outcome == 'success' && steps.find-pr.outputs.number != '' && steps.create-tag.outputs.tag != ''
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const prNumber = parseInt('${{ steps.find-pr.outputs.number }}');
-            const tagName = '${{ steps.create-tag.outputs.tag }}';
-            const prevTag = '${{ steps.prev-tag.outputs.tag }}';
-            const tagType = '${{ steps.tag-type.outputs.type }}';
-            const branchName = '${{ steps.branch.outputs.name }}';
-            if (prNumber && tagName) {
-              const lines = [
-                '## 🏷️ Auto Tag Created',
-                '',
-                '| Item | Value |',
-                '|------|-------|',
-                `| **Version** | \`${tagName}\` |`,
-                `| **Previous** | \`${prevTag}\` |`,
-                `| **Type** | ${tagType} |`,
-                `| **Branch** | \`${branchName}\` |`,
-                '',
-                'Tag created successfully!',
-                '',
-                `[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
-              ];
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: lines.join('\n')
-              });
-            }
-
-      - name: Comment on PR (tag failed)
-        if: steps.create-tag.outcome == 'failure' && steps.find-pr.outputs.number != ''
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const prNumber = parseInt('${{ steps.find-pr.outputs.number }}');
-            if (prNumber) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `⚠️ **Auto Tag Failed**\n\nFailed to automatically create a tag for this merge. This may be due to:\n- Invalid versioning configuration\n- Branch name not matching any bump rules\n- Git permission issues\n\n[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`
-              });
-            }
-
-      - name: Skip tagging (no branch detected)
-        if: steps.branch.outputs.name == ''
-        run: |
-          echo "No branch name detected from commit message."
-          echo "This might be a direct push without PR reference."
-          echo "Skipping auto-tagging."
-
-      - name: Fail job if tag creation failed
-        if: steps.create-tag.outcome == 'failure' && steps.branch.outputs.name != ''
-        run: exit 1
+  call-auto-tag:
+    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/auto-tag.yml@develop
+    with:
+      config-path: ".github/versioning.yml"
+    secrets: inherit

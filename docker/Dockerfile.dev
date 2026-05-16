@@ -9,8 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim \
     ripgrep \
     rsync \
-    wget \
-    shellcheck \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user 'vscode' for DevContainer compatibility

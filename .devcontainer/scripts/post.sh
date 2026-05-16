@@ -10,14 +10,16 @@ echo "Running post-creation setup script..."
 # -----------------------------------------------------------------------------
 # Environment Detection
 # -----------------------------------------------------------------------------
-# Returns 0 (true) if interactive, 1 (false) if non-interactive
 is_interactive() {
+    # Skip prompts if CI environment variable is set
     if [ -n "${CI:-}" ]; then
         return 1
     fi
+    # Skip prompts if NONINTERACTIVE is set
     if [ -n "${NONINTERACTIVE:-}" ]; then
         return 1
     fi
+    # Skip prompts if stdin is not a terminal
     if [ ! -t 0 ]; then
         return 1
     fi
@@ -25,8 +27,56 @@ is_interactive() {
 }
 
 # -----------------------------------------------------------------------------
-# Setup Git Configuration
+# Setup sudo PATH for nvm-installed Node.js
 # -----------------------------------------------------------------------------
+setup_sudo_path() {
+    echo "Setting up sudo PATH for nvm..."
+
+    local nvm_bin
+    nvm_bin=$(dirname "$(which node 2>/dev/null)" 2>/dev/null)
+
+    if [ -z "$nvm_bin" ] || [ ! -d "$nvm_bin" ]; then
+        echo "  - Node.js not found, skipping sudo PATH setup"
+        return 0
+    fi
+
+    echo "  - Detected nvm bin path: $nvm_bin"
+
+    if [ -f /etc/sudoers.d/nvm-path ]; then
+        if grep -q "$nvm_bin" /etc/sudoers.d/nvm-path 2>/dev/null; then
+            echo "  - sudo PATH already configured"
+            return 0
+        fi
+    fi
+
+    local current_secure_path
+    current_secure_path=$(sudo grep -oP 'secure_path="\K[^"]+' /etc/sudoers 2>/dev/null || echo "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+
+    if [[ "$current_secure_path" == *"$nvm_bin"* ]]; then
+        echo "  - nvm path already in secure_path"
+        return 0
+    fi
+
+    local new_secure_path="$nvm_bin:$current_secure_path"
+    echo "Defaults secure_path=\"$new_secure_path\"" | sudo tee /etc/sudoers.d/nvm-path > /dev/null
+    sudo chmod 0440 /etc/sudoers.d/nvm-path
+
+    if sudo visudo -c -f /etc/sudoers.d/nvm-path >/dev/null 2>&1; then
+        echo "  - sudo PATH configured successfully"
+    else
+        echo "  - Error: Invalid sudoers syntax, removing file"
+        sudo rm -f /etc/sudoers.d/nvm-path
+        return 1
+    fi
+}
+
+setup_sudo_path
+
+# -----------------------------------------------------------------------------
+# Git Configuration
+# -----------------------------------------------------------------------------
+echo "Setting up Git configuration..."
+
 # Ensure .gitconfig includes .gitconfig.local
 setup_git_include() {
     local include_path
@@ -40,7 +90,8 @@ setup_git_include() {
     fi
 }
 
-# Creates .gitconfig.local as fallback when host's .gitconfig is not mounted
+setup_git_include
+
 setup_gitconfig_local() {
     if [ -f "$HOME/.gitconfig.local" ]; then
         echo "  - .gitconfig.local already exists, skipping"
@@ -51,7 +102,6 @@ setup_gitconfig_local() {
     local email=""
     local needs_file=false
 
-    # Check if user.name is already configured
     local existing_name
     existing_name=$(git config --global user.name 2>/dev/null || echo "")
     if [ -z "$existing_name" ]; then
@@ -67,7 +117,6 @@ setup_gitconfig_local() {
         echo "  - Git user.name already set: $existing_name"
     fi
 
-    # Check if user.email is already configured
     local existing_email
     existing_email=$(git config --global user.email 2>/dev/null || echo "")
     if [ -z "$existing_email" ]; then
@@ -83,7 +132,6 @@ setup_gitconfig_local() {
         echo "  - Git user.email already set: $existing_email"
     fi
 
-    # Create .gitconfig.local only if values were provided
     if [ "$needs_file" = true ]; then
         {
             echo "[user]"
@@ -96,13 +144,13 @@ setup_gitconfig_local() {
     fi
 }
 
-echo "Setting up Git configuration..."
-setup_git_include
 setup_gitconfig_local
 
 # -----------------------------------------------------------------------------
-# Setup SSH Configuration
+# SSH Configuration
 # -----------------------------------------------------------------------------
+echo "Setting up SSH configuration..."
+
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 
@@ -137,7 +185,8 @@ EOF
     fi
 }
 
-# Creates host_config template when SSH agent is not available
+setup_ssh_include
+
 setup_ssh_host_config() {
     if [ -f "$HOME/.ssh/host_config" ]; then
         echo "  - host_config already exists, skipping SSH check"
@@ -150,25 +199,23 @@ setup_ssh_host_config() {
     local ssh_exit_code
     ssh_output=$(timeout 15 ssh -T -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@github.com 2>&1) || ssh_exit_code=$?
 
-    # Timeout (exit code 124)
     if [ "${ssh_exit_code:-0}" -eq 124 ]; then
         echo "  - Warning: SSH connection timed out"
+        echo "  - Continuing without host_config setup"
         return 0
     fi
 
-    # GitHub returns exit code 1 on successful authentication
     if [ "${ssh_exit_code:-0}" -eq 1 ] && echo "$ssh_output" | grep -q "successfully authenticated"; then
         echo "  - SSH agent working (GitHub authentication successful)"
         return 0
     fi
 
-    # Network error (exit code 255)
     if [ "${ssh_exit_code:-0}" -eq 255 ]; then
-        echo "  - Warning: SSH connection failed (network error)"
+        echo "  - Warning: SSH connection failed (network error or timeout)"
+        echo "  - Continuing without host_config setup"
         return 0
     fi
 
-    # SSH agent not available - prompt for host_config creation
     echo "  - SSH agent not detected or authentication failed"
 
     if ! is_interactive; then
@@ -181,6 +228,8 @@ setup_ssh_host_config() {
         [yY]|[yY][eE][sS])
             cat > "$HOME/.ssh/host_config" << 'EOF'
 # Host-specific SSH configuration
+# Add your host configurations here
+#
 # Example:
 # Host github.com
 #     IdentityFile ~/.ssh/id_ed25519
@@ -195,68 +244,46 @@ EOF
     esac
 }
 
-setup_ssh_include
 setup_ssh_host_config
 
 # -----------------------------------------------------------------------------
-# Rust Development Setup
+# Claude Code Setup
 # -----------------------------------------------------------------------------
-setup_rust() {
-    echo "Setting up Rust development environment..."
+if command -v claude &> /dev/null; then
+    echo "Claude Code CLI is available"
+    mkdir -p "$HOME/.claude"
+fi
 
-    # Check if Rust is installed (should be via DevContainer feature)
-    if ! command -v rustc &> /dev/null; then
-        echo "  - Warning: Rust is not installed"
-        echo "  - Rust should be installed via DevContainer feature"
-        return 1
-    fi
-
-    echo "  - Rust $(rustc --version | cut -d' ' -f2) detected"
-    echo "  - Cargo $(cargo --version | cut -d' ' -f2) detected"
-
-    # Ensure common components are installed
-    echo "  - Verifying Rust components..."
-    rustup component add clippy rustfmt 2>/dev/null || true
-
-    # Fetch project dependencies if Cargo.toml exists
-    if [ -f "/workspace/Cargo.toml" ]; then
-        echo "  - Fetching project dependencies..."
-        cd /workspace && cargo fetch 2>/dev/null || true
-        echo "  - Dependencies fetched"
-    fi
-
-    echo "  - Rust setup complete"
-}
-
-setup_rust
+echo "Post-creation setup script finished."
 
 # -----------------------------------------------------------------------------
-# Code Quality Tools Setup
+# Tarnished Asset Refresh
 # -----------------------------------------------------------------------------
-setup_code_quality_tools() {
-    echo "Setting up code quality tools..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "${SCRIPT_DIR}/refresh-assets.sh" ]]; then
+    "${SCRIPT_DIR}/refresh-assets.sh" || true
+fi
 
-    # Install codespell for code spell checking
-    if command -v uv &> /dev/null; then
-        echo "  - Installing codespell..."
-        uv tool install codespell 2>/dev/null || true
-        echo "  - codespell installed"
-    else
-        echo "  - Warning: uv not found, skipping codespell installation"
+# -----------------------------------------------------------------------------
+# Rust Development Tools Setup
+# -----------------------------------------------------------------------------
+if command -v cargo &> /dev/null; then
+    echo "Installing Rust development tools..."
+
+    # Install cargo-watch for auto-rebuild on file changes
+    if ! command -v cargo-watch &> /dev/null; then
+        echo "  - Installing cargo-watch..."
+        cargo install --locked cargo-watch
     fi
 
-    # Verify shellcheck (should be installed via Dockerfile)
-    if command -v shellcheck &> /dev/null; then
-        echo "  - shellcheck $(shellcheck --version | head -2 | tail -1) detected"
-    else
-        echo "  - Warning: shellcheck not found"
-        echo "  - Install via: sudo apt-get install shellcheck"
+    # Install cargo-edit for easy dependency management (cargo add/rm)
+    if ! cargo add --version &> /dev/null 2>&1; then
+        echo "  - Installing cargo-edit..."
+        cargo install --locked cargo-edit
     fi
 
-    echo "  - Code quality tools setup complete"
-}
-
-setup_code_quality_tools
+    echo "Rust development tools installed."
+fi
 
 # -----------------------------------------------------------------------------
 # Claude Code Plugin Setup
@@ -275,13 +302,3 @@ if [[ -f "${SCRIPT_DIR}/setup_codex.sh" ]]; then
     source "${SCRIPT_DIR}/setup_codex.sh"
     setup_codex
 fi
-
-# -----------------------------------------------------------------------------
-# Tarnished Asset Refresh
-# -----------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -x "${SCRIPT_DIR}/refresh-assets.sh" ]]; then
-    "${SCRIPT_DIR}/refresh-assets.sh" || true
-fi
-
-echo "Post-creation setup complete!"

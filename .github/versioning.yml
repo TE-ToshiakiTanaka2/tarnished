@@ -1,24 +1,21 @@
-# Semantic Versioning Branch Prefix Configuration
-# This file defines the mapping between branch prefixes and version bump types
-# for automatic Git tagging in GitHub Actions.
+# Auto-Tag Version Configuration
+# For use with erd CLI: https://github.com/TE-ToshiakiTanaka2/tarnished
 
 versioning:
-  # Branch prefix to version type mapping
-  # Each version type can have multiple prefixes
   branch_prefixes:
     # Major version bump (X.0.0)
-    # Used for breaking changes or major releases
     major:
       - "major/"
 
     # Minor version bump (0.X.0)
-    # Used for new features that are backwards compatible
     minor:
       - "release/"
 
     # Patch version bump (0.0.X)
-    # Used for bug fixes and small improvements
     patch:
       - "feature/"
+      - "fix/"
+      - "bugfix/"
+      - "hotfix/"
 
-    # Note: Any branches that don't match the prefixes above will default to RC (0.0.0-rc.X)
+    # Note: Branches that don't match any prefix default to RC (0.0.0-rc.X)
