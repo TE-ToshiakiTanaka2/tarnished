@@ -686,3 +686,44 @@ sequenceDiagram
     Setup->>Common: update_gitignore(root) [idempotent]
     Setup-->>User: completion: "Module 'anisette' added"
 ```
+
+## Devcontainer JSON merge with comment normalization
+
+Language and service plugins call `merge_devcontainer_json` to merge
+devcontainer features, VS Code extensions, and VS Code settings. The helper
+accepts strict JSON or comment-bearing devcontainer JSON, normalizes comments
+away in private temp files, and then runs the structural `jq` merge. The output
+is strict JSON.
+
+```mermaid
+sequenceDiagram
+    participant Plugin as template plugin
+    participant Common as scripts/lib/common.sh
+    participant Base as target .devcontainer/devcontainer.json
+    participant Overlay as plugin .devcontainer/devcontainer.json
+    participant Jq as jq
+    participant Out as caller temp output
+
+    Plugin->>Common: merge_devcontainer_json(base, overlay, output)
+    Common->>Base: read base file
+    Common->>Common: _jsonc_to_json_file(base, base_tmp)
+    alt base invalid after comment stripping
+        Common-->>Plugin: print_error + return 1
+    else base ok
+        Common->>Overlay: read overlay file
+        Common->>Common: _jsonc_to_json_file(overlay, overlay_tmp)
+        alt overlay invalid after comment stripping
+            Common-->>Plugin: cleanup temps/output + return 1
+        else overlay ok
+            Common->>Jq: jq -s devcontainer merge base_tmp overlay_tmp
+            alt jq merge fails
+                Jq-->>Common: non-zero
+                Common-->>Plugin: cleanup temps/output + return 1
+            else merge ok
+                Jq-->>Out: strict merged JSON
+                Common-->>Plugin: return 0
+                Plugin->>Base: mv output to target devcontainer
+            end
+        end
+    end
+```

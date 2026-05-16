@@ -293,6 +293,45 @@ Signature: `sha256_file <path>`. Cross-platform sha256 wrapper. Picks `sha256sum
 | `manifest_recording_start <root>` | Sets `MANIFEST_RECORDING=true`, `MANIFEST_RECORDING_ROOT=<root>`, clears `MANIFEST_TRACKED`. Idempotent. |
 | `manifest_recording_stop` | Sets `MANIFEST_RECORDING=false`. Does NOT clear `MANIFEST_TRACKED`. |
 
+### `scripts/lib/common.sh::merge_devcontainer_json()`
+
+Signature: `merge_devcontainer_json <base_file> <overlay_file> <output_file>`.
+Merges devcontainer JSON files with special handling for `features` and
+`customizations.vscode`. Inputs may be strict JSON or JSON with `//` and
+`/* */` comments. The helper normalizes each input to strict JSON in private
+temp files before invoking `jq`; the merged output is strict JSON and comments
+are not preserved.
+
+Merge semantics:
+
+| Field | Behavior |
+| --- | --- |
+| Other top-level keys | Deep-merged with overlay values taking precedence. |
+| `features` | Object merge: base feature map overlaid by plugin feature map. |
+| `customizations.vscode.extensions` | Base and overlay arrays concatenated and de-duplicated with `unique`. |
+| `customizations.vscode.settings` | Object merge: base settings overlaid by plugin settings. |
+
+Private helpers:
+
+| Function | Purpose |
+| --- | --- |
+| `_strip_json_comments <input_file>` | Streams input with `//` and `/* */` comments removed only outside string literals. Preserves URLs and escaped quotes inside strings. |
+| `_jsonc_to_json_file <input_file> <output_file>` | Runs the comment stripper, validates the result with `jq empty`, and writes strict JSON to `output_file`. |
+
+Failure behavior:
+
+- Missing base or overlay file returns non-zero with the existing
+  `print_error` message.
+- Invalid comment syntax or invalid JSON after stripping returns non-zero,
+  removes temp files, and removes the caller-provided output path.
+- A failed final merge returns non-zero, removes temp files, and removes the
+  caller-provided output path so stale `.devcontainer/devcontainer.json.tmp`
+  files do not survive.
+
+Scope boundary: direct plugin mutations that invoke `jq` themselves, such as
+service plugins appending to `runServices`, remain strict JSON until they opt
+into a shared devcontainer-filter helper.
+
 ### `scripts/lib/manifest.sh` — manifest module (#265)
 
 Loaded by `setup.sh` in `--create-manifest` and `--upgrade` modes. Provides manifest read/write, the `manifest_decide` lifecycle state machine, `manifest_apply`, and the end-of-run summary printer. Constants:
@@ -580,6 +619,7 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 | Claude not yet authenticated (`~/.claude/.credentials.json` missing or empty) | shell info + guidance, `return 0` | `setup_plugins.sh` `is_claude_authenticated` gate (#273); skips marketplace/plugin steps entirely so `post.sh` proceeds to `setup_codex` on first run |
 | `claude plugins list` query failure | shell warning, `return 0` | `setup_plugins.sh` if-guarded command substitution (#273 review); symmetric with marketplace failure path so a degraded `claude` CLI cannot trip `set -e` in `post.sh` |
 | `update_gitignore` write failure | shell error (propagates under `set -euo pipefail`) | `${target_dir}/.gitignore` not writable |
+| Devcontainer JSON comment normalization failure | shell error, non-zero helper return | `merge_devcontainer_json` receives malformed comments or JSON invalid after comment stripping |
 | Mutually-exclusive setup.sh flags | shell error, exit 1 | `--monorepo --add-module`, `--module --add-module`, `--monorepo --lang` (no `--module`) (#263); `--upgrade --monorepo`, `--upgrade --add-module`, `--upgrade --create-manifest`, `--create-manifest --monorepo`, `--create-manifest --add-module` (#265) |
 | `--add-module` outside monorepo | shell error, exit 1 | CWD lacks `modules.json` (#263) |
 | Unknown `--module` language | shell error, exit 1 | `--module name:foo` where `foo` ∉ `AVAILABLE_LANGUAGES` (#263) |
