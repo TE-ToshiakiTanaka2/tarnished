@@ -1,0 +1,17 @@
+# Rust formatter configuration
+# See: https://rust-lang.github.io/rustfmt/
+
+# Use Rust 2021 edition formatting rules
+edition = "2021"
+
+# Maximum line width
+max_width = 100
+
+# Number of spaces per tab
+tab_spaces = 4
+
+# Unix-style line endings
+newline_style = "Unix"
+
+# Use default heuristics for formatting decisions
+use_small_heuristics = "Default"
