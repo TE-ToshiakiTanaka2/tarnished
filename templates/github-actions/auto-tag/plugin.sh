@@ -120,6 +120,15 @@ plugin_post_copy() {
     # Note: This plugin is only loaded when AUTO_TAG_ENABLED=true in setup.sh
     # So we don't need to check ENABLE_AUTO_TAG here - if this function runs, it's enabled
 
+    # #286: .github/ is user-owned for `--upgrade`. The orchestrator re-runs
+    # plugin_post_copy on the real target tree via rerun_post_copy_on_target
+    # to re-apply merge logic; we must opt out entirely here so a user who
+    # has deleted versioning.yml does not get it resurrected on upgrade.
+    # Initial scaffold (UPGRADE_MODE=false) continues to write it as before.
+    if [[ "${UPGRADE_MODE:-false}" == true ]]; then
+        return 0
+    fi
+
     # Create .github/versioning.yml
     local versioning_config="${target_dir}/.github/versioning.yml"
 

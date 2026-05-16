@@ -290,10 +290,10 @@ bootstrap_and_commit() {
     bootstrap_and_commit
 
     # Simulate a pre-#286 manifest: inject a .github/workflows entry into
-    # the existing manifest.files map. Use a sha that does not match the
-    # current file so a non-filtered run would decide PRUNE (current == old,
-    # has_new=false, PRUNE_ENABLED=true would fire). We use the real hash to
-    # exercise the "unedited locally" branch.
+    # the existing manifest.files map. We use the real current-file hash so
+    # that (current == old) and (has_new == false), which is the exact
+    # combination that triggers PRUNE under --prune; without the FR-2
+    # OLD_HASHES filter, this entry would be deleted.
     local real_hash
     real_hash=$(sha256sum .github/workflows/auto-tag.yml | awk '{print "sha256:"$1}')
     jq --arg h "$real_hash" \
@@ -311,4 +311,19 @@ bootstrap_and_commit() {
     # New manifest must no longer list it.
     run jq -r '.files | keys[]' .tarnished-manifest.json
     ! echo "$output" | grep -q "^\.github/"
+}
+
+@test "#286: --upgrade does not resurrect a deleted .github/versioning.yml" {
+    seed_scaffold
+    bootstrap_and_commit
+
+    # Pre-condition: versioning.yml is not part of the seed, so .github/
+    # contains only the workflows/ directory. Without the github-actions
+    # plugins' UPGRADE_MODE guard, rerun_post_copy_on_target would create
+    # versioning.yml during --upgrade — violating the user-owned contract.
+    [[ ! -f .github/versioning.yml ]]
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+    [[ ! -f .github/versioning.yml ]]
 }

@@ -1407,6 +1407,16 @@ plugin_copy() {
 plugin_post_copy() {
     local target_dir="$1"
 
+    # #286: .github/ is user-owned for `--upgrade`. The orchestrator re-runs
+    # plugin_post_copy on the real target tree via rerun_post_copy_on_target
+    # to re-apply merge logic; we must opt out entirely here so a user who
+    # has deleted project.yml does not get it resurrected (and so the
+    # interactive setup prompt is not re-fired on upgrade). Initial scaffold
+    # (UPGRADE_MODE=false) continues to write it as before.
+    if [[ "${UPGRADE_MODE:-false}" == true ]]; then
+        return 0
+    fi
+
     # Run interactive setup if not already done
     if [[ -z "${PROJECT_OWNER:-}" ]]; then
         plugin_interactive_setup
