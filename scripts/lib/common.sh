@@ -333,6 +333,96 @@ copy_dir_with_confirm() {
 # JSON Utility Functions
 # =============================================================================
 
+# Strip JavaScript-style comments from JSONC while preserving comment markers
+# inside string literals. Supports // line comments and /* block comments */.
+# Usage: _strip_json_comments <input_file>
+_strip_json_comments() {
+    local input_file="$1"
+
+    awk '
+        BEGIN {
+            in_string = 0
+            escaped = 0
+            in_block_comment = 0
+        }
+        {
+            i = 1
+            while (i <= length($0)) {
+                c = substr($0, i, 1)
+                n = (i < length($0)) ? substr($0, i + 1, 1) : ""
+
+                if (in_block_comment) {
+                    if (c == "*" && n == "/") {
+                        in_block_comment = 0
+                        i += 2
+                    } else {
+                        i++
+                    }
+                    continue
+                }
+
+                if (in_string) {
+                    printf "%s", c
+                    if (escaped) {
+                        escaped = 0
+                    } else if (c == "\\") {
+                        escaped = 1
+                    } else if (c == "\"") {
+                        in_string = 0
+                    }
+                    i++
+                    continue
+                }
+
+                if (c == "\"") {
+                    in_string = 1
+                    printf "%s", c
+                    i++
+                    continue
+                }
+
+                if (c == "/" && n == "/") {
+                    break
+                }
+
+                if (c == "/" && n == "*") {
+                    in_block_comment = 1
+                    i += 2
+                    continue
+                }
+
+                printf "%s", c
+                i++
+            }
+            print ""
+        }
+        END {
+            if (in_block_comment) {
+                exit 2
+            }
+        }
+    ' "$input_file"
+}
+
+# Convert devcontainer JSONC to strict JSON and validate the result.
+# Usage: _jsonc_to_json_file <input_file> <output_file>
+_jsonc_to_json_file() {
+    local input_file="$1"
+    local output_file="$2"
+
+    if ! _strip_json_comments "$input_file" > "$output_file"; then
+        print_error "Invalid devcontainer JSON comments: $input_file"
+        rm -f "$output_file"
+        return 1
+    fi
+
+    if ! jq empty "$output_file"; then
+        print_error "Invalid devcontainer JSON after removing comments: $input_file"
+        rm -f "$output_file"
+        return 1
+    fi
+}
+
 # Merge two JSON files with deep merge strategy
 # Usage: merge_json_files <base_file> <overlay_file> <output_file>
 merge_json_files() {
@@ -374,6 +464,29 @@ merge_devcontainer_json() {
         return 1
     fi
 
+    local base_json
+    local overlay_json
+    if ! base_json="$(mktemp)"; then
+        print_error "Failed to create temporary file for devcontainer JSON merge"
+        rm -f "$output_file"
+        return 1
+    fi
+    if ! overlay_json="$(mktemp)"; then
+        print_error "Failed to create temporary file for devcontainer JSON merge"
+        rm -f "$base_json" "$output_file"
+        return 1
+    fi
+
+    if ! _jsonc_to_json_file "$base_file" "$base_json"; then
+        rm -f "$base_json" "$overlay_json" "$output_file"
+        return 1
+    fi
+
+    if ! _jsonc_to_json_file "$overlay_file" "$overlay_json"; then
+        rm -f "$base_json" "$overlay_json" "$output_file"
+        return 1
+    fi
+
     # Merge preserving all base fields and merging features/customizations
     # First merge all fields from base, then selectively merge features, extensions, and settings
     if ! jq -s '
@@ -389,10 +502,13 @@ merge_devcontainer_json() {
                 }
             }
         }
-    ' "$base_file" "$overlay_file" > "$output_file"; then
+    ' "$base_json" "$overlay_json" > "$output_file"; then
         print_error "Failed to merge devcontainer JSON files"
+        rm -f "$base_json" "$overlay_json" "$output_file"
         return 1
     fi
+
+    rm -f "$base_json" "$overlay_json"
 }
 
 # Merge Claude settings.json files with special handling for permissions and hooks
