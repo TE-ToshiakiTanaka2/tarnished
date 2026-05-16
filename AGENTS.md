@@ -56,7 +56,7 @@ The downstream-project `.gitignore` is built from **marker-guarded whitelist blo
 
 - Each block starts with a stable line-anchored comment marker (e.g., `# Codex CLI (track shared config only)`)
 - Idempotency check is `grep -q "^<marker>$"` — exact line match — before append
-- Whitelist blocks for `.claude/*` and `.codex/*` (`.claude/*` + allow-list of `commands/`, `skills/`, `scripts/`, `agents/`, `rules/`, `hooks/`, `settings.json`; `.codex/*` + `!.codex/config.toml`)
+- Whitelist blocks for `.claude/*`, `.codex/*`, and Codex repo skills (`.claude/*` + allow-list of `commands/`, `skills/`, `scripts/`, `agents/`, `rules/`, `hooks/`, `settings.json`; `.codex/*` + `!.codex/config.toml`; `.agents/*` + allow-list of `skills/`)
 - Always-ignore directives for `.serena/` and `screenshots/`
 - User-authored content between or after blocks is preserved (function only ever appends, never rewrites)
 
@@ -68,7 +68,7 @@ Each flavor directory (`templates/codex/`, `templates/claude/`, `templates/langu
 
 - `plugin.sh` at the root implementing the four-function interface above
 - Optional `AGENTS.md` (Codex flavor only — root-level review-agent definition)
-- Optional `.devcontainer/`, `.claude/`, `.codex/`, `.tarnished/`, `.github/`, `docker/` subdirectories whose contents are copied verbatim into the target by `plugin_copy`
+- Optional `.devcontainer/`, `.claude/`, `.codex/`, `.agents/`, `.tarnished/`, `.github/`, `docker/` subdirectories whose contents are copied verbatim into the target by `plugin_copy`
 - Optional `.devcontainer/scripts/<setup>.sh` shell helpers whose functions are sourced into the target's `post.sh` by `plugin_post_copy`
 
 Reviewers should reject changes that violate this shape (e.g., a plugin that puts setup logic outside `plugin_*` functions, a flavor that ships files outside the listed subdirectories, or a `plugin.sh` that calls `setup.sh` machinery directly instead of going through `common.sh`).

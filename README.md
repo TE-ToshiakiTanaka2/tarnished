@@ -51,6 +51,23 @@ Generated projects include:
 - `.tarnished/workflows/erd/` — Codex-readable projection of the existing erd command assets
 - `CLAUDE.md` — Claude Code entrypoint when Claude is installed
 - `AGENTS.md` — Codex entrypoint when Codex is installed
+- `.agents/skills/` — Codex repo-local skills mirroring `issue`, `design`, `implement`, `review`, and `pr`
+
+Codex users can invoke the shared lifecycle with `$issue`, `$design`,
+`$implement`, `$review`, and `$pr`. The generated `AGENTS.md` also treats
+plain `issue` prompts and natural-language mentions of Claude-style `/issue`
+as aliases for the same workflow. Codex's slash-command namespace remains
+reserved for Codex built-ins, so `$issue` is the native skill invocation. If
+your devcontainer already provides isolation and you want the same hands-off
+behavior as Claude Code's `--dangerously-skip-permissions`, launch Codex
+explicitly with:
+
+```bash
+codex --dangerously-bypass-approvals-and-sandbox
+```
+
+The default generated `.codex/config.toml` remains `workspace-write` +
+`on-request` so projects do not silently disable approvals.
 
 ### Monorepo support
 

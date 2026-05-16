@@ -2574,7 +2574,8 @@ main() {
     echo "  review    - Independent review handoff"
     echo "  pr        - Create a Pull Request"
     echo ""
-    echo "Workflow: /issue → /design → /implement → /review → /pr"
+    echo "Claude workflow: /issue → /design → /implement → /review → /pr"
+    echo "Codex workflow:  \$issue → \$design → \$implement → \$review → \$pr"
 }
 
 # Run main function

@@ -6,6 +6,7 @@
 # This plugin provides OpenAI Codex CLI integration including:
 # - AGENTS.md template for primary or review agent role
 # - Project-level Codex configuration (.codex/config.toml)
+# - Codex repo-local workflow skills (.agents/skills)
 # - Node.js devcontainer feature (for npm-based Codex CLI install)
 # - Codex CLI installation script for post-creation setup
 # - Claude Code integration settings for cross-agent handoff
@@ -47,6 +48,11 @@ plugin_copy() {
     # Copy .codex directory
     if [[ -d "${PLUGIN_DIR}/.codex" ]]; then
         copy_dir_with_confirm "${PLUGIN_DIR}/.codex" "${target_dir}/.codex"
+    fi
+
+    # Copy .agents directory for Codex repo-local skills
+    if [[ -d "${PLUGIN_DIR}/.agents" ]]; then
+        copy_dir_with_confirm "${PLUGIN_DIR}/.agents" "${target_dir}/.agents"
     fi
 
     print_success "Codex CLI template files copied"
@@ -111,7 +117,7 @@ plugin_post_copy() {
     local post_sh="${target_dir}/.devcontainer/scripts/post.sh"
     local codex_marker="# Codex CLI Setup"
 
-    if [[ -f "$post_sh" ]] && ! grep -q "$codex_marker" "$post_sh"; then
+    if [[ -f "$post_sh" ]] && ! grep -q "^${codex_marker}$" "$post_sh"; then
         print_info "Integrating Codex CLI setup into post.sh..."
         cat >> "$post_sh" << 'EOF'
 
@@ -132,15 +138,26 @@ EOF
     # -------------------------------------------------------------------------
 
     local gitignore="${target_dir}/.gitignore"
-    if [[ -f "$gitignore" ]]; then
-        # Block 4: Codex CLI whitelist — ignore .codex/* and allow shared config only
-        if ! grep -q "^# Codex CLI (track shared config only)$" "$gitignore" 2>/dev/null; then
-            {
-                echo ""
-                echo "# Codex CLI (track shared config only)"
-                echo ".codex/*"
-                echo "!.codex/config.toml"
-            } >> "$gitignore"
-        fi
+    touch "$gitignore"
+
+    # Block 4: Codex CLI whitelist — ignore .codex/* and allow shared config only
+    if ! grep -q "^# Codex CLI (track shared config only)$" "$gitignore" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Codex CLI (track shared config only)"
+            echo ".codex/*"
+            echo "!.codex/config.toml"
+        } >> "$gitignore"
+    fi
+
+    # Block 5: Codex repo-local skills — track shared skills, ignore local overrides
+    if ! grep -q "^# Codex Agent Skills (track shared workflow skills)$" "$gitignore" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Codex Agent Skills (track shared workflow skills)"
+            echo ".agents/*"
+            echo "!.agents/skills/"
+            echo "!.agents/skills/**"
+        } >> "$gitignore"
     fi
 }

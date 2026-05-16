@@ -1,0 +1,30 @@
+---
+name: implement
+description: Implement and test a GitHub Issue using Tarnished design artifacts. Use when the user says implement, /implement, $implement, 実装, テスト, or asks Codex to build the designed issue.
+---
+
+# Implement
+
+## Overview
+
+Implement an issue in focused commits, then verify with build, lint, and tests. This is the Codex equivalent of Claude Code's `/implement`.
+
+## Procedure
+
+1. Require an issue number. If none is provided, infer it from the branch or ask for it.
+2. Read `.tarnished/workflows/implement.md`.
+3. If present, read `.claude/skills/implement/SKILL.md` and `_shared/branch/SKILL.md` for compatibility details.
+4. Reuse the design branch when it exists; otherwise create the issue branch using the project convention.
+5. Load both design layers:
+   - `docs/design/shared/*`
+   - `docs/design/#{issue_number}/*`
+6. Inspect relevant code before editing. Prefer narrow, reviewable changes.
+7. Use `.tarnished/workflows/erd/index-repo.md`, `implement.md`, `build.md`, `test.md`, `analyze.md`, `improve.md`, and `troubleshoot.md` as needed.
+8. Run the stack-appropriate formatter, linter, build, and tests.
+9. Commit each logical unit with conventional commit subjects.
+
+## Output
+
+Report the branch, commits, verification commands, failures or skipped checks, and remaining risks.
+
+Do not create or merge a pull request in this skill.
