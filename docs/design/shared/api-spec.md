@@ -131,6 +131,7 @@ Available Claude Code commands:
   /pr        - Create a Pull Request
 
 Workflow: /issue → /design → /implement → /review → /pr
+Codex workflow: $issue → $design → $implement → $review → $pr
 ```
 
 ## Configuration Files
@@ -346,13 +347,26 @@ Signature: `update_gitignore <target_dir>`. Seeds `${target_dir}/.gitignore` wit
 
 ### `templates/codex/plugin.sh::plugin_post_copy` — gitignore step (#259)
 
-Same idempotency contract as above. Appends one block:
+Same idempotency contract as above. Appends Codex-specific blocks:
 
 | Block | Marker (line-anchored) | Contents |
 | --- | --- | --- |
 | Codex whitelist | `# Codex CLI (track shared config only)` | `.codex/*` + `!.codex/config.toml` |
+| Codex repo skills | `# Codex Agent Skills (track shared workflow skills)` | `.agents/*` + allowlist: `skills/` |
 
-The Codex block is gated on the existence of `${target_dir}/.gitignore` (created earlier by `update_gitignore`); the plugin only appends.
+The Codex plugin touches `${target_dir}/.gitignore` if it is missing, then only appends marker-guarded blocks. This keeps fresh Codex projects and existing projects on the same idempotent path even though `setup.sh` runs plugin post-copy hooks before `update_gitignore`.
+
+### `templates/codex/.agents/skills/*` (#Codex workflow parity)
+
+Codex repo-local skills are copied verbatim by `templates/codex/plugin.sh::plugin_copy` into downstream `.agents/skills/`. They mirror the Claude lifecycle names while delegating detailed behavior to `.tarnished/workflows/` and, when present, `.claude/skills/*` compatibility references.
+
+| Skill | Purpose |
+| --- | --- |
+| `issue` | Requirement discovery, estimation, and GitHub Issue creation |
+| `design` | Issue branch creation/reuse and design artifact generation |
+| `implement` | Implementation, build, test, and commits |
+| `review` | Independent branch review and `docs/review/#{issue_number}/review.md` |
+| `pr` | PR creation, CI validation, optional merge, and target branch update |
 
 ### `templates/codex/.codex/config.toml` (#261)
 

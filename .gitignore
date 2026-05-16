@@ -5,3 +5,8 @@
 # Codex CLI (track shared config only)
 .codex/*
 !.codex/config.toml
+
+# Codex Agent Skills (track shared workflow skills)
+.agents/*
+!.agents/skills/
+!.agents/skills/**
