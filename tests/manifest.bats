@@ -121,6 +121,21 @@ teardown() {
     [[ -z "${MANIFEST_TRACKED[.gitignore]:-}" ]]
 }
 
+@test ".github paths are not recorded (#286)" {
+    echo "yaml" > "$SCRATCH/src.yml"
+    mkdir -p "$SCRATCH/.github/workflows"
+    manifest_recording_start "$SCRATCH"
+    copy_with_confirm "$SCRATCH/src.yml" "$SCRATCH/.github/project.yml"
+    copy_with_confirm "$SCRATCH/src.yml" "$SCRATCH/.github/versioning.yml"
+    copy_with_confirm "$SCRATCH/src.yml" "$SCRATCH/.github/workflows/auto-tag.yml"
+    copy_with_confirm "$SCRATCH/src.yml" "$SCRATCH/.github/workflows/project-integration.yml"
+    manifest_recording_stop
+    [[ -z "${MANIFEST_TRACKED[.github/project.yml]:-}" ]]
+    [[ -z "${MANIFEST_TRACKED[.github/versioning.yml]:-}" ]]
+    [[ -z "${MANIFEST_TRACKED[.github/workflows/auto-tag.yml]:-}" ]]
+    [[ -z "${MANIFEST_TRACKED[.github/workflows/project-integration.yml]:-}" ]]
+}
+
 @test "manifest_track_file registers a file written by sed/awk" {
     manifest_recording_start "$SCRATCH"
     echo "from sed" > "$SCRATCH/out.yml"
@@ -146,6 +161,20 @@ teardown() {
     echo "$output" | grep -q "^sub/b.txt"
     ! echo "$output" | grep -q "^.gitignore"
     ! echo "$output" | grep -q "^modules.json"
+}
+
+@test "manifest_walk_directory skips .github/ tree (#286)" {
+    mkdir -p "$SCRATCH/.github/workflows"
+    echo y > "$SCRATCH/keep.txt"
+    : > "$SCRATCH/.github/project.yml"
+    : > "$SCRATCH/.github/versioning.yml"
+    : > "$SCRATCH/.github/workflows/auto-tag.yml"
+    : > "$SCRATCH/.github/workflows/rust-quality-check.yml"
+
+    run manifest_walk_directory "$SCRATCH"
+    [[ "$status" -eq 0 ]]
+    echo "$output" | grep -q "^keep.txt"
+    ! echo "$output" | grep -q "^\.github/"
 }
 
 @test "manifest_walk_directory honors caller-provided skip prefixes" {
