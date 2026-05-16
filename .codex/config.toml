@@ -2,7 +2,7 @@
 # See: https://developers.openai.com/codex/config-advanced/
 
 # Always-latest model with high reasoning effort for review quality
-model = "gpt-5.4"
+model = "gpt-5.5/"
 model_reasoning_effort = "high"
 
 # Approval policy: require approval for all actions
