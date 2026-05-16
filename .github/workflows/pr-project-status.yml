@@ -1,42 +1,198 @@
-# =============================================================================
-# PR Project Status Workflow (Caller)
-# =============================================================================
-# Calls the reusable workflow from TE-ToshiakiTanaka2/tarnished to automatically
-# update linked Issue status in GitHub Projects when PR is opened.
-#
-# Prerequisites:
-#   1. Create a GitHub Personal Access Token (classic) with these scopes:
-#      - repo (Full control of private repositories)
-#      - project (Full control of projects)
-#   2. Add the token as a repository secret named PROJECT_TOKEN:
-#      Settings > Secrets and variables > Actions > New repository secret
-#   3. Create .github/project.yml with your project configuration:
-#      ```yaml
-#      default_project:
-#        owner: "your-username-or-org"
-#        number: 1  # Your project number
-#      pr_status:
-#        on_open: "In review"  # Status when PR is opened/reopened
-#      ```
-#
-# For more information about erd: https://github.com/TE-ToshiakiTanaka2/tarnished
-# =============================================================================
-
 name: PR Project Status
 
 on:
   pull_request:
     types: [opened, reopened]
+  workflow_call:
+    inputs:
+      pr-number:
+        description: "Pull request number"
+        required: true
+        type: string
+      config-path:
+        description: "Path to project.yml config file"
+        required: false
+        default: ".github/project.yml"
+        type: string
+      erd-version:
+        description: "Version of erd to download (e.g., v1.0.0, latest)"
+        required: false
+        default: "latest"
+        type: string
+    secrets:
+      PROJECT_TOKEN:
+        required: true
 
 permissions:
   contents: read
   pull-requests: write
 
+env:
+  CARGO_TERM_COLOR: always
+  ERD_REPO: TE-ToshiakiTanaka2/tarnished
+
 jobs:
-  call-pr-project-status:
-    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/pr-project-status.yml@develop
-    with:
-      pr-number: ${{ github.event.pull_request.number }}
-      config-path: ".github/project.yml"
-    secrets:
-      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+  update-status:
+    name: Update Project Status
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # === Local invocation: Build erd from source ===
+      # Use repository check instead of event_name because workflow_call
+      # preserves the caller's event context (e.g., pull_request)
+      - name: Setup Rust (local)
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry (local)
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-
+
+      - name: Build erd (local)
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        run: cargo build --release
+
+      # === External invocation: Download erd from Releases ===
+      # Use repository check instead of event_name because workflow_call
+      # preserves the caller's event context (e.g., pull_request)
+      - name: Download erd (external)
+        if: github.repository != 'TE-ToshiakiTanaka2/tarnished'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          VERSION="${{ inputs.erd-version }}"
+
+          if [ "$VERSION" = "latest" ]; then
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/latest/download/erd-linux-x86_64"
+          else
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/download/${VERSION}/erd-linux-x86_64"
+          fi
+
+          echo "Downloading erd from: $DOWNLOAD_URL"
+          mkdir -p target/release
+          curl -fsSL -o target/release/erd "$DOWNLOAD_URL"
+          chmod +x target/release/erd
+
+          echo "erd version:"
+          ./target/release/erd --version || echo "Version check failed (binary may not support --version)"
+
+      # === Common steps ===
+      - name: Determine PR number
+        id: pr
+        run: |
+          if [ "${{ github.repository }}" != "TE-ToshiakiTanaka2/tarnished" ]; then
+            echo "number=${{ inputs.pr-number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine config path
+        id: config
+        run: |
+          if [ "${{ github.repository }}" != "TE-ToshiakiTanaka2/tarnished" ]; then
+            echo "path=${{ inputs.config-path }}" >> $GITHUB_OUTPUT
+          else
+            echo "path=.github/project.yml" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Extract target status from config
+        id: status-info
+        run: |
+          CONFIG_PATH="${{ steps.config.outputs.path }}"
+          if [ -f "$CONFIG_PATH" ]; then
+            # Extract pr_status.on_open from project.yml
+            STATUS=$(grep -A1 'pr_status:' "$CONFIG_PATH" | grep 'on_open:' | sed 's/.*on_open:\s*["'\'']\?\([^"'\''#]*\)["'\'']\?.*/\1/' | tr -d ' ')
+            if [ -z "$STATUS" ]; then
+              STATUS="In Review"
+            fi
+            echo "target=$STATUS" >> $GITHUB_OUTPUT
+          else
+            echo "target=In Review" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Extract linked issues from PR
+        id: linked-issues
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
+          # Get PR body and extract issue references
+          PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body' 2>/dev/null || echo "")
+          # Extract issue numbers from Fixes #N, Closes #N, Resolves #N patterns
+          ISSUES=$(echo "$PR_BODY" | grep -oE '(Fixes|Closes|Resolves|Fix|Close|Resolve)\s*#[0-9]+' | grep -oE '#[0-9]+' | tr '\n' ', ' | sed 's/, $//')
+          if [ -z "$ISSUES" ]; then
+            ISSUES="none"
+          fi
+          echo "list=$ISSUES" >> $GITHUB_OUTPUT
+
+      - name: Update linked issues status
+        id: update-status
+        run: |
+          ./target/release/erd pr status ${{ steps.pr.outputs.number }} \
+            --config "${{ steps.config.outputs.path }}" \
+            --verbose
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ERD_REPO: ${{ github.repository }}
+        continue-on-error: true
+
+      - name: Comment on PR (success)
+        if: steps.update-status.outcome == 'success' && github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const linkedIssues = '${{ steps.linked-issues.outputs.list }}' || 'none';
+            const targetStatus = '${{ steps.status-info.outputs.target }}';
+            const lines = [
+              '## 📋 Project Status Updated',
+              '',
+              '| Item | Value |',
+              '|------|-------|',
+              `| **PR** | #${prNumber} |`,
+              `| **Linked Issues** | ${linkedIssues} |`,
+              `| **New Status** | ${targetStatus} |`,
+              '',
+              'Linked issues have been updated.',
+              '',
+              `[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+            ];
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: lines.join('\n')
+            });
+
+      - name: Comment on PR (failure)
+        if: steps.update-status.outcome == 'failure' && github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `⚠️ **Project Status Update Failed**\n\nFailed to update linked issues status. This may be due to:\n- Missing \`PROJECT_TOKEN\` secret\n- No linked issues found (use "Fixes #N" or "Closes #N" in PR description)\n- Invalid project configuration\n\n[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`
+            });
+
+      - name: Log failure (external)
+        if: steps.update-status.outcome == 'failure' && github.repository != 'TE-ToshiakiTanaka2/tarnished'
+        run: |
+          echo "::warning::Failed to update project status for linked issues. This may be due to missing PROJECT_TOKEN secret or no linked issues."
+
+      - name: Fail job if update failed
+        if: steps.update-status.outcome == 'failure'
+        run: exit 1

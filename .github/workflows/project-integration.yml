@@ -1,51 +1,180 @@
-# =============================================================================
-# Project Integration Workflow (Caller)
-# =============================================================================
-# Calls the reusable workflow from TE-ToshiakiTanaka2/tarnished to automatically
-# link new Issues to GitHub Projects using erd CLI.
-#
-# Prerequisites:
-#   1. Create a GitHub Personal Access Token (classic) with these scopes:
-#      - repo (Full control of private repositories)
-#      - project (Full control of projects)
-#   2. Add the token as a repository secret named PROJECT_TOKEN:
-#      Settings > Secrets and variables > Actions > New repository secret
-#   3. Create .github/project.yml with your project configuration:
-#      ```yaml
-#      default_project:
-#        owner: "your-username-or-org"
-#        number: 1  # Your project number
-#      field_defaults:
-#        Status: "Backlog"
-#        Size: "M"
-#        Priority: "P1"
-#      # Optional: route labeled issues to additional projects
-#      # label_projects:
-#      #   bugfix:
-#      #     owner: "your-username-or-org"
-#      #     number: 2
-#      #     field_defaults:
-#      #       Status: "Todo"
-#      ```
-#
-# For more information about erd: https://github.com/TE-ToshiakiTanaka2/tarnished
-# =============================================================================
-
 name: Project Integration
 
 on:
   issues:
     types: [opened, reopened]
+  workflow_call:
+    inputs:
+      issue-number:
+        description: "Issue number"
+        required: true
+        type: string
+      config-path:
+        description: "Path to project.yml config file"
+        required: false
+        default: ".github/project.yml"
+        type: string
+      erd-version:
+        description: "Version of erd to download (e.g., v1.0.0, latest)"
+        required: false
+        default: "latest"
+        type: string
+    secrets:
+      PROJECT_TOKEN:
+        required: true
 
 permissions:
   contents: read
   issues: write
 
+env:
+  CARGO_TERM_COLOR: always
+  ERD_REPO: TE-ToshiakiTanaka2/tarnished
+
 jobs:
-  call-project-integration:
-    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/project-integration.yml@develop
-    with:
-      issue-number: ${{ github.event.issue.number }}
-      config-path: ".github/project.yml"
-    secrets:
-      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+  add-to-project:
+    name: Add Issue to Project
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # === Local invocation: Build erd from source ===
+      # Use repository check instead of event_name because workflow_call
+      # preserves the caller's event context (e.g., issues)
+      - name: Setup Rust (local)
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry (local)
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-
+
+      - name: Build erd (local)
+        if: github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        run: cargo build --release
+
+      # === External invocation: Download erd from Releases ===
+      # Use repository check instead of event_name because workflow_call
+      # preserves the caller's event context (e.g., issues)
+      - name: Download erd (external)
+        if: github.repository != 'TE-ToshiakiTanaka2/tarnished'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          VERSION="${{ inputs.erd-version }}"
+
+          if [ "$VERSION" = "latest" ]; then
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/latest/download/erd-linux-x86_64"
+          else
+            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/download/${VERSION}/erd-linux-x86_64"
+          fi
+
+          echo "Downloading erd from: $DOWNLOAD_URL"
+          mkdir -p target/release
+          curl -fsSL -o target/release/erd "$DOWNLOAD_URL"
+          chmod +x target/release/erd
+
+          echo "erd version:"
+          ./target/release/erd --version || echo "Version check failed (binary may not support --version)"
+
+      # === Common steps ===
+      - name: Determine issue number
+        id: issue
+        run: |
+          if [ "${{ github.repository }}" != "TE-ToshiakiTanaka2/tarnished" ]; then
+            echo "number=${{ inputs.issue-number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine config path
+        id: config
+        run: |
+          if [ "${{ github.repository }}" != "TE-ToshiakiTanaka2/tarnished" ]; then
+            echo "path=${{ inputs.config-path }}" >> $GITHUB_OUTPUT
+          else
+            echo "path=.github/project.yml" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Extract project name from config
+        id: project-info
+        run: |
+          CONFIG_PATH="${{ steps.config.outputs.path }}"
+          if [ -f "$CONFIG_PATH" ]; then
+            # Extract owner and number from project.yml
+            OWNER=$(grep -E '^\s*owner:' "$CONFIG_PATH" | head -1 | sed 's/.*owner:\s*["'\'']\?\([^"'\'']*\)["'\'']\?.*/\1/' | tr -d ' ')
+            NUMBER=$(grep -E '^\s*number:' "$CONFIG_PATH" | head -1 | sed 's/.*number:\s*\([0-9]*\).*/\1/' | tr -d ' ')
+            echo "owner=$OWNER" >> $GITHUB_OUTPUT
+            echo "number=$NUMBER" >> $GITHUB_OUTPUT
+            echo "name=${OWNER}/Project #${NUMBER}" >> $GITHUB_OUTPUT
+          else
+            echo "name=Unknown" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Link issue to project
+        id: link
+        run: |
+          ./target/release/erd --verbose issue link ${{ steps.issue.outputs.number }} \
+            --config "${{ steps.config.outputs.path }}"
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ERD_REPO: ${{ github.repository }}
+        continue-on-error: true
+
+      - name: Comment on success
+        if: steps.link.outcome == 'success' && github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const issueNumber = context.issue.number;
+            const projectName = '${{ steps.project-info.outputs.name }}';
+            const lines = [
+              '## ✅ Project Integration Complete',
+              '',
+              '| Item | Value |',
+              '|------|-------|',
+              `| **Issue** | #${issueNumber} |`,
+              `| **Project** | \`${projectName}\` |`,
+              '| **Status** | Linked |',
+              '',
+              'Issue has been added to the project.',
+              '',
+              `[View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+            ];
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: lines.join('\n')
+            });
+
+      - name: Comment on failure
+        if: steps.link.outcome == 'failure' && github.repository == 'TE-ToshiakiTanaka2/tarnished'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `⚠️ **Project Integration Failed**\n\nFailed to automatically link this issue to the project. This may be due to:\n- Missing \`PROJECT_TOKEN\` secret\n- Invalid project configuration in \`.github/project.yml\`\n- GitHub API errors\n\nPlease link the issue to the project manually or check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`
+            });
+
+      - name: Log failure (external)
+        if: steps.link.outcome == 'failure' && github.repository != 'TE-ToshiakiTanaka2/tarnished'
+        run: |
+          echo "::error::Failed to link issue to project. Check PROJECT_TOKEN secret and project.yml configuration."
+
+      - name: Fail job if link failed
+        if: steps.link.outcome == 'failure'
+        run: exit 1
