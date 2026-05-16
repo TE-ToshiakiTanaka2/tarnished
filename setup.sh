@@ -1951,10 +1951,17 @@ apply_decisions_for_scope() {
         return 1
     fi
 
-    # Snapshot old hashes into a local map.
+    # Snapshot old hashes into a local map. Skip paths that are now in
+    # MANIFEST_EXCLUDE_GLOBS so pre-#286 manifests still listing those paths
+    # (e.g. .github/*) cannot enter the lifecycle loop — otherwise
+    # `--upgrade --prune` would delete user-owned files via the
+    # LEAVE_REMOVED/PRUNE branch during the one-shot migration upgrade.
     declare -A OLD_HASHES=()
     while IFS=$'\t' read -r path hash; do
         [[ -z "$path" ]] && continue
+        if _manifest_path_excluded "$path"; then
+            continue
+        fi
         OLD_HASHES["$path"]="$hash"
     done < <(echo "$old_json" | jq -r '.files | to_entries[] | "\(.key)\t\(.value)"')
 

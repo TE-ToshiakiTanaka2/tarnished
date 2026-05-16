@@ -248,3 +248,82 @@ bootstrap_and_commit() {
     [[ "$output" == *"Removed (would prune):"* ]]
     [[ "$output" == *"Skipped (deleted by user):"* ]]
 }
+
+# -----------------------------------------------------------------------------
+# #286: .github/ is user-owned — --upgrade never tracks it
+# -----------------------------------------------------------------------------
+
+@test "#286: --create-manifest does not record .github/* paths" {
+    seed_scaffold
+    bash "$SETUP_SH" --create-manifest --from-version v0.0.74 -y >/dev/null 2>&1
+
+    # Manifest must contain core tracked files but not .github/*.
+    run jq -r '.files | keys[]' .tarnished-manifest.json
+    [[ "$status" -eq 0 ]]
+    echo "$output" | grep -q "^docker/Dockerfile.dev$"
+    ! echo "$output" | grep -q "^\.github/"
+}
+
+@test "#286: user edits to .github/workflows/*.yml survive --upgrade" {
+    seed_scaffold
+    bootstrap_and_commit
+
+    # Edit the workflow file after the manifest is written.
+    echo "# user customization" >> .github/workflows/auto-tag.yml
+    git add -A; git commit -q -m "user edit .github/"
+    local before
+    before=$(sha256sum .github/workflows/auto-tag.yml | cut -d' ' -f1)
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+    # Summary must not mention the workflow file in ANY category.
+    [[ "$output" != *".github/workflows/auto-tag.yml"* ]]
+
+    # File content is byte-identical to the pre-upgrade copy.
+    local after
+    after=$(sha256sum .github/workflows/auto-tag.yml | cut -d' ' -f1)
+    [[ "$before" == "$after" ]]
+}
+
+@test "#286: --upgrade --prune ignores pre-#286 .github/* manifest entries" {
+    seed_scaffold
+    bootstrap_and_commit
+
+    # Simulate a pre-#286 manifest: inject a .github/workflows entry into
+    # the existing manifest.files map. We use the real current-file hash so
+    # that (current == old) and (has_new == false), which is the exact
+    # combination that triggers PRUNE under --prune; without the FR-2
+    # OLD_HASHES filter, this entry would be deleted.
+    local real_hash
+    real_hash=$(sha256sum .github/workflows/auto-tag.yml | awk '{print "sha256:"$1}')
+    jq --arg h "$real_hash" \
+        '.files[".github/workflows/auto-tag.yml"] = $h' \
+        .tarnished-manifest.json > .tarnished-manifest.json.tmp
+    mv .tarnished-manifest.json.tmp .tarnished-manifest.json
+    git add -A; git commit -q -m "inject pre-#286 .github entry"
+
+    run bash "$SETUP_SH" --upgrade --prune -y
+    [[ "$status" -eq 0 ]]
+    # The injected path must NOT be reported as pruned.
+    [[ "$output" != *".github/workflows/auto-tag.yml"* ]]
+    # File must still be on disk.
+    [[ -f .github/workflows/auto-tag.yml ]]
+    # New manifest must no longer list it.
+    run jq -r '.files | keys[]' .tarnished-manifest.json
+    ! echo "$output" | grep -q "^\.github/"
+}
+
+@test "#286: --upgrade does not resurrect a deleted .github/versioning.yml" {
+    seed_scaffold
+    bootstrap_and_commit
+
+    # Pre-condition: versioning.yml is not part of the seed, so .github/
+    # contains only the workflows/ directory. Without the github-actions
+    # plugins' UPGRADE_MODE guard, rerun_post_copy_on_target would create
+    # versioning.yml during --upgrade — violating the user-owned contract.
+    [[ ! -f .github/versioning.yml ]]
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+    [[ ! -f .github/versioning.yml ]]
+}

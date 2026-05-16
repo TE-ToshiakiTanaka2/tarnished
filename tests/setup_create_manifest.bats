@@ -147,7 +147,6 @@ EOF
     # Tracked verbatim files.
     [[ "$(jq -r '.files["docker/Dockerfile.dev"] // empty' "$m")" == sha256:* ]]
     [[ "$(jq -r '.files["Cargo.toml"] // empty' "$m")" == sha256:* ]]
-    [[ "$(jq -r '.files[".github/workflows/rust-quality-check.yml"] // empty' "$m")" == sha256:* ]]
 
     # Excluded by MANIFEST_EXCLUDE_GLOBS.
     [[ -z "$(jq -r '.files[".gitignore"] // empty' "$m")" ]]
@@ -156,6 +155,8 @@ EOF
     [[ -z "$(jq -r '.files["CLAUDE.md"] // empty' "$m")" ]]
     [[ -z "$(jq -r '.files["README.md"] // empty' "$m")" ]]
     [[ -z "$(jq -r '.files[".claude/settings.json"] // empty' "$m")" ]]
+    # .github/ tree is excluded as user-owned (#286).
+    [[ -z "$(jq -r '.files[".github/workflows/rust-quality-check.yml"] // empty' "$m")" ]]
 
     # The manifest file itself is never tracked.
     [[ -z "$(jq -r '.files[".tarnished-manifest.json"] // empty' "$m")" ]]
