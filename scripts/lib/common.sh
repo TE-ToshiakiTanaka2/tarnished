@@ -139,16 +139,16 @@ if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
         # are mirrored on every container start from upstream tarnished;
         # they MUST NOT participate in manifest-driven --upgrade tracking
         # (the runtime whitelist lives in <project>/.tarnished/refresh.json).
-        # Both the directory entry and the dir/* form are listed because
-        # _manifest_path_excluded uses bash glob match.
+        # Directory-managed paths list both the directory entry and the
+        # dir/* form because _manifest_path_excluded uses bash glob match.
+        # File-managed paths are listed exactly.
         ".claude/commands"
         ".claude/commands/*"
         ".claude/skills"
         ".claude/skills/*"
         ".claude/scripts"
         ".claude/scripts/*"
-        ".claude/rules"
-        ".claude/rules/*"
+        ".claude/rules/shell.md"
         # User-owned overlay sidecars (#279 FR-4). Files in these
         # directories survive every refresh and MUST never be tracked
         # by the manifest either.
@@ -158,6 +158,7 @@ if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
         ".claude/skills.local/*"
         ".claude/scripts.local"
         ".claude/scripts.local/*"
+        ".claude/rules.local/shell.md"
         ".claude/rules.local"
         ".claude/rules.local/*"
     )

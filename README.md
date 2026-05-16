@@ -159,12 +159,12 @@ How it works:
 
 Operational assets that are intended to be **identical across every
 project** — `.claude/commands/`, `.claude/skills/`, `.claude/scripts/`,
-and language-agnostic `.claude/rules/` — are kept always-latest by
-`refresh-assets.sh` rather than by the manifest-driven `--upgrade`
-flow above. The script runs from your devcontainer's `postStartCommand`
+and language-agnostic rules such as `.claude/rules/shell.md` — are kept
+always-latest by `refresh-assets.sh` rather than by the manifest-driven
+`--upgrade` flow above. The script runs from your devcontainer's `postStartCommand`
 on every container start (and from `post.sh` on the very first boot)
 so a project scaffolded a month ago still picks up the latest
-skill/command revisions automatically.
+skill/command/script/shared-rule revisions automatically.
 
 ```text
 DevContainer onCreate           DevContainer onStart (every container start)
@@ -183,9 +183,9 @@ DevContainer onCreate           DevContainer onStart (every container start)
 How it works:
 
 - `<project>/.tarnished/refresh.json` declares the always-latest path
-  whitelist (`schema_version: 1`). The defaults track upstream `develop`
-  for the four `.claude/*` directories above; override `upstream.repo_url`
-  / `upstream.branch` / `clone_dir` to redirect to a fork or a pinned ref.
+  whitelist (`schema_version: 1`). The defaults track the Claude template
+  assets in upstream `develop`; override `upstream.repo_url` /
+  `upstream.branch` / `clone_dir` to redirect to a fork or a pinned ref.
 - The upstream clone lives at `/opt/tarnished` (or `~/.cache/tarnished`
   if `/opt` is not writable). `git ls-remote` checks the upstream HEAD
   on every invocation; only `git fetch` + `git reset --hard origin/<branch>`

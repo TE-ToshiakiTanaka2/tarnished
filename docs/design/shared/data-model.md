@@ -240,7 +240,7 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `templates/agent-workflows/.tarnished/refresh.json` (downstream + workspace) | New file introduced for always-latest asset sync; `schema_version: 1`. Distributed verbatim with the rest of `.tarnished/` by `templates/agent-workflows/plugin.sh`. Forward-compatible via unknown-key tolerance and a `schema_version` escape hatch. | #279 |
 | `templates/claude/.claude/rules/shell.md` | New file in the Claude template — moved from `/workspace/.claude/rules/shell.md` so the language-agnostic shell rules are distributed to every Claude-enabled scaffold (and refreshed always-latest by `refresh-assets.sh`). The workspace copy is kept in sync as dogfooding (#261-style). | #279 |
 | `templates/core/.devcontainer/scripts/refresh-assets.sh` (downstream + workspace) | New script that performs the always-latest sync. Wired into `post.sh` by `templates/core/plugin.sh::plugin_post_copy` (marker-guarded block `# Tarnished Asset Refresh`) and into `templates/core/.devcontainer/devcontainer.json` as `postStartCommand`. Always returns `0` (FR-5). | #279 |
-| `MANIFEST_EXCLUDE_GLOBS` (`scripts/lib/common.sh:126-138`) | Extended with `.claude/{commands,skills,scripts,rules}` and their `*.local/` overlay sidecars (16 new patterns, both directory and `dir/*` forms). Excludes always-latest paths from manifest tracking — keeps `--create-manifest` from hashing them and keeps `--upgrade` from applying lifecycle decisions to them. Pre-#279 manifests that already contain hashes for these paths become inert; the next `--create-manifest` produces a clean manifest. | #279 |
+| `MANIFEST_EXCLUDE_GLOBS` (`scripts/lib/common.sh:126-138`) | Extended with always-latest `.claude/{commands,skills,scripts}` directories, file-managed `.claude/rules/shell.md`, and their `.local` overlay sidecars. Excludes always-latest paths from manifest tracking — keeps `--create-manifest` from hashing them and keeps `--upgrade` from applying lifecycle decisions to them. Pre-#279 manifests that already contain hashes for these paths become inert; the next `--create-manifest` produces a clean manifest. | #279, #281 |
 
 No SQL, no database migrations — config files, the JSON modules registry, and the seeded `.gitignore` are the only schemas.
 
@@ -261,10 +261,10 @@ with the rest of the `.tarnished/` directory.
   },
   "clone_dir": "/opt/tarnished",
   "managed_paths": [
-    { "src": ".claude/commands",   "dst": ".claude/commands",   "overlay": ".claude/commands.local" },
-    { "src": ".claude/skills",     "dst": ".claude/skills",     "overlay": ".claude/skills.local" },
-    { "src": ".claude/scripts",    "dst": ".claude/scripts",    "overlay": ".claude/scripts.local" },
-    { "src": ".claude/rules",      "dst": ".claude/rules",      "overlay": ".claude/rules.local" }
+    { "src": "templates/claude/.claude/commands",       "dst": ".claude/commands",       "overlay": ".claude/commands.local" },
+    { "src": "templates/claude/.claude/skills",         "dst": ".claude/skills",         "overlay": ".claude/skills.local" },
+    { "src": "templates/claude/.claude/scripts",        "dst": ".claude/scripts",        "overlay": ".claude/scripts.local" },
+    { "src": "templates/claude/.claude/rules/shell.md", "dst": ".claude/rules/shell.md", "overlay": ".claude/rules.local/shell.md" }
   ]
 }
 ```
@@ -280,7 +280,7 @@ with the rest of the `.tarnished/` directory.
 | `managed_paths[].dst` | string | yes | Path within the project, relative to project root. |
 | `managed_paths[].overlay` | string \| null | yes | Path within the project for the user-owned sidecar. `null` (or omitted) disables overlay for that path. |
 
-**Override semantics**: Pass 1 of refresh runs `rsync --delete <clone_dir>/<src>/ <project>/<dst>/` (so the project mirror exactly tracks upstream). Pass 2 runs `rsync <project>/<overlay>/ <project>/<dst>/` (no `--delete`), so files in `<overlay>/` win. To override `commands/erd/brainstorm.md`, write `.claude/commands.local/erd/brainstorm.md`; everything else in `commands/` keeps tracking upstream.
+**Override semantics**: Directory-managed paths run `rsync --delete <clone_dir>/<src>/ <project>/<dst>/` so the project mirror exactly tracks upstream. File-managed paths replace only that file, preserving siblings such as language-specific `.claude/rules/*.md` files. Pass 2 overlays `<project>/<overlay>` on top (without `--delete` for directories), so files in `<overlay>/` win. To override `commands/erd/brainstorm.md`, write `.claude/commands.local/erd/brainstorm.md`; to override `rules/shell.md`, write `.claude/rules.local/shell.md`.
 
 **Mutual exclusivity with `.tarnished-manifest.json` tracking**: Every `managed_paths[].dst` (and every `managed_paths[].overlay`) MUST also be listed in `MANIFEST_EXCLUDE_GLOBS` (in `scripts/lib/common.sh`). This is enforced by code review and a unit test (`tests/refresh_assets.bats :: "refresh.json defaults subset of MANIFEST_EXCLUDE_GLOBS"`). Always-latest tracking and manifest-tracked upgrades are disjoint per path.
 
