@@ -397,7 +397,12 @@ sequenceDiagram
         Manifest->>ManFile: atomic write
     end
 
-    Setup-->>User: completion: "Manifest created"
+    Note over Setup,Manifest: manifest_write streams the files map to jq via stdin,<br/>not --argjson, so large targets cannot hit ARG_MAX (#289)
+    alt all manifest_write calls returned 0
+        Setup-->>User: completion: "Manifest created"
+    else any manifest_write returned non-zero
+        Setup-->>User: error 1 — surfaced, no false "wrote ..." line (#289)
+    end
 ```
 
 ## `setup.sh --upgrade` — refresh tracked files of an existing project (#265)
@@ -465,7 +470,11 @@ sequenceDiagram
                 alt --dry-run
                     Note over Manifest,ManFile: skip write
                 else live run
-                    Manifest->>ManFile: update manifest with new version + hashes
+                    alt manifest_write returned 0
+                        Manifest->>ManFile: update manifest with new version + hashes (files map via stdin, #289)
+                    else manifest_write returned non-zero
+                        Setup-->>User: abort scope, error 1 — no "Manifest updated" (#289)
+                    end
                 end
             end
 

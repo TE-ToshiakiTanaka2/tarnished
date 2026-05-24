@@ -303,3 +303,35 @@ EOF
     first=$(jq -r '.files | keys[0]' "$SCRATCH/.tarnished-manifest.json")
     [[ "$first" == "alpha.txt" ]]
 }
+
+@test "manifest_write handles a files map larger than ARG_MAX (#289 regression)" {
+    manifest_recording_start "$SCRATCH"
+
+    # Before #289, manifest_write passed the serialized files map to jq as a
+    # single --argjson command-line argument. Once that argument exceeds the
+    # kernel arg limits (Linux MAX_ARG_STRLEN ~128 KiB per single arg, ARG_MAX
+    # total), execve rejects jq with E2BIG ("Argument list too long") and no
+    # manifest is written. Feeding the map via stdin removes that ceiling.
+    #
+    # Build a map whose JSON comfortably exceeds getconf ARG_MAX using a handful
+    # of large values, so the per-file jq escaping stays cheap (few processes).
+    local arg_max
+    arg_max=$(getconf ARG_MAX 2>/dev/null || echo 2097152)
+    local big_val
+    big_val="sha256:$(head -c 131072 /dev/zero | tr '\0' 'a')"   # ~128 KiB value
+    local n=$(( arg_max / 131072 + 3 ))
+    local i
+    for ((i = 0; i < n; i++)); do
+        MANIFEST_TRACKED["deep/path/to/file_${i}.bin"]="$big_val"
+    done
+
+    run manifest_write "$SCRATCH" "v1.2.3" "cafef00d" '{"monorepo":false}'
+    [[ "$status" -eq 0 ]]
+    [[ -f "$SCRATCH/.tarnished-manifest.json" ]]
+
+    # Result is valid JSON containing every entry, with values intact.
+    run jq -e '.files | length' "$SCRATCH/.tarnished-manifest.json"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" -eq "$n" ]]
+    [[ "$(jq -r '.files["deep/path/to/file_0.bin"]' "$SCRATCH/.tarnished-manifest.json")" == "$big_val" ]]
+}

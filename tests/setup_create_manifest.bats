@@ -211,6 +211,24 @@ EOF
     [[ ! -f "$SCRATCH/.tarnished-manifest.json" ]]
 }
 
+@test "single-mode: a failed manifest_write aborts with non-zero exit, no false success (#289)" {
+    make_single_mode_target
+    cd "$SCRATCH"
+
+    # Force manifest_write's atomic temp write to fail by occupying its tmp
+    # path with a directory, so the `> "$file.tmp"` redirect errors. Before
+    # #289 the caller printed "[OK] wrote ..." and the run exited 0 regardless
+    # of manifest_write's return code; now the failure must surface and the
+    # command must exit non-zero, leaving no manifest behind.
+    mkdir -p "$SCRATCH/.tarnished-manifest.json.tmp"
+
+    run bash "$SETUP_SH" --create-manifest -y
+    [[ "$status" -ne 0 ]]
+    [[ "$output" == *"failed to write manifest"* ]]
+    [[ "$output" != *"wrote $SCRATCH/.tarnished-manifest.json"* ]]
+    [[ ! -f "$SCRATCH/.tarnished-manifest.json" ]]
+}
+
 # -----------------------------------------------------------------------------
 # Monorepo target
 # -----------------------------------------------------------------------------
