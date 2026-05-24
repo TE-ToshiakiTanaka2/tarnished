@@ -206,3 +206,47 @@ JSONC
     assert_failure
     [[ ! -e "$output_file" ]]
 }
+
+# A second merge of the same overlay (e.g. `setup.sh --upgrade`'s FR-5 re-run)
+# must not duplicate hooks.PreToolUse entries. Regression guard for the
+# deny-check Bash hook being appended twice.
+@test "merge_claude_settings dedups hooks on repeated merge" {
+    local base_file="$SCRATCH/settings.json"
+    local overlay_file="$SCRATCH/plugin.json"
+    local first_output="$SCRATCH/first.json"
+    local second_output="$SCRATCH/second.json"
+
+    cat > "$base_file" <<'JSON'
+{ "permissions": { "allow": [], "deny": [] }, "hooks": { "PreToolUse": [], "PostToolUse": [] } }
+JSON
+
+    cat > "$overlay_file" <<'JSON'
+{
+  "permissions": { "allow": [], "deny": ["Bash(rm -rf /*)"] },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "deny-check.sh" }] }
+    ]
+  }
+}
+JSON
+
+    run merge_claude_settings "$base_file" "$overlay_file" "$first_output"
+    assert_success
+
+    run jq '.hooks.PreToolUse | length' "$first_output"
+    assert_success
+    assert_output "1"
+
+    # Re-merge the overlay onto the already-merged result.
+    run merge_claude_settings "$first_output" "$overlay_file" "$second_output"
+    assert_success
+
+    run jq '.hooks.PreToolUse | length' "$second_output"
+    assert_success
+    assert_output "1"
+
+    run jq '.permissions.deny | length' "$second_output"
+    assert_success
+    assert_output "1"
+}

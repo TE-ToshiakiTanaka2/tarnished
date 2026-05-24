@@ -302,3 +302,24 @@ if [[ -f "${SCRIPT_DIR}/setup_codex.sh" ]]; then
     source "${SCRIPT_DIR}/setup_codex.sh"
     setup_codex
 fi
+
+# -----------------------------------------------------------------------------
+# Rust Development Tools Setup
+# -----------------------------------------------------------------------------
+if command -v cargo &> /dev/null; then
+    echo "Installing Rust development tools..."
+
+    # Install cargo-watch for auto-rebuild on file changes
+    if ! command -v cargo-watch &> /dev/null; then
+        echo "  - Installing cargo-watch..."
+        cargo install --locked cargo-watch
+    fi
+
+    # Install cargo-edit for easy dependency management (cargo add/rm)
+    if ! cargo add --version &> /dev/null 2>&1; then
+        echo "  - Installing cargo-edit..."
+        cargo install --locked cargo-edit
+    fi
+
+    echo "Rust development tools installed."
+fi

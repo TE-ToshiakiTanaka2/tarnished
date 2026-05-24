@@ -9,6 +9,8 @@ disable-model-invocation: true
 
 Code review skill that delegates review of the current branch's implementation to OpenAI Codex CLI for an independent second opinion. Review scope scales with development size.
 
+This skill is the Claude Code projection of `.tarnished/workflows/review.md` for the Claude-main + Codex-review handoff. Keep the shared workflow source and this tool-specific entrypoint aligned.
+
 ## Prerequisites Check
 
 !`command -v codex >/dev/null 2>&1 && echo "CODEX_AVAILABLE=true" || echo "CODEX_AVAILABLE=false"`

@@ -117,12 +117,17 @@ assert_plugin_post_copy_idempotent() {
 # (e.g. duplicated docker-compose merge entries, duplicated post.sh
 # blocks, repeated gitignore lines).
 #
-# TODO(#265-followup): Fix idempotency in claude / postgres / mysql /
-# redis plugins (each non-idempotent operation should be guarded by a
-# marker check, an existence check, or a deduplicating jq merge).
+# TODO(#265-followup): Fix idempotency in postgres / mysql / redis plugins
+# (each non-idempotent operation should be guarded by a marker check, an
+# existence check, or a deduplicating jq merge).
 
-@test "post_copy idempotent: claude (skipped — known pre-existing bug)" {
-    skip "tracked as #265 follow-up: claude plugin's post.sh integration is non-idempotent"
+# The claude plugin's settings.json merge concatenated hooks.PreToolUse /
+# hooks.PostToolUse without dedup, so a second plugin_post_copy run (e.g.
+# `setup.sh --upgrade`'s FR-5 re-run, or refresh on a dogfooding tree)
+# duplicated the deny-check Bash hook. merge_claude_settings now applies
+# `unique` to the hook arrays, matching the permissions handling, so the
+# re-run is idempotent.
+@test "post_copy idempotent: claude" {
     assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/claude/plugin.sh"
 }
 

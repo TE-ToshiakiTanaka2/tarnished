@@ -9,6 +9,8 @@ disable-model-invocation: true
 
 Implementation skill for projects. Handles codebase understanding, feature implementation, build verification, testing, code analysis, and quality improvement.
 
+This skill is the Claude Code projection of `.tarnished/workflows/implement.md`. Keep the shared workflow source and this tool-specific entrypoint aligned.
+
 ## Usage
 
 ```

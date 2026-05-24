@@ -9,6 +9,8 @@ disable-model-invocation: true
 
 Design skill for projects. Handles issue review, branch creation, architecture design, workflow planning, and UML diagram generation.
 
+This skill is the Claude Code projection of `.tarnished/workflows/design.md`. Keep the shared workflow source and this tool-specific entrypoint aligned.
+
 Design artifacts are split across two layers:
 
 - **`docs/design/shared/`** — Cumulative project-wide truth, regenerated as a snapshot on every `/design` invocation. Read by both `/design` and `/implement` to ground new work in the current state.

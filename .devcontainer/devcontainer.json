@@ -1,10 +1,17 @@
 {
   "name": "Tarnished",
-  "dockerComposeFile": ["../docker-compose.yml"],
+  "dockerComposeFile": [
+    "../docker-compose.yml"
+  ],
   "service": "tarnished",
-  "runServices": ["tarnished"],
+  "runServices": [
+    "tarnished"
+  ],
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",
+  "remoteUser": "vscode",
+  "postCreateCommand": "bash .devcontainer/scripts/post.sh",
+  "postStartCommand": "bash .devcontainer/scripts/refresh-assets.sh || true",
   "features": {
     "ghcr.io/devcontainers/features/git:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {
@@ -25,19 +32,21 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "tamasfe.even-better-toml", // TOML file support
-        "rust-lang.rust-analyzer", // Rust language support
         "anthropic.claude-code",
-        "mhutchie.git-graph",
         "eamodio.gitlens",
-        "ms-azuretools.vscode-docker" // Docker container management
+        "mhutchie.git-graph",
+        "ms-azuretools.vscode-docker",
+        "rust-lang.rust-analyzer",
+        "serayuzgur.crates",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb"
       ],
       "settings": {
-        "terminal.integrated.defaultProfile.linux": "bash"
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.exclude": {
+          "**/target": true
+        }
       }
     }
-  },
-  "remoteUser": "vscode",
-  "postCreateCommand": "bash .devcontainer/scripts/post.sh",
-  "postStartCommand": "bash .devcontainer/scripts/refresh-assets.sh || true"
+  }
 }
