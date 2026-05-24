@@ -1686,7 +1686,10 @@ run_create_manifest() {
         opts="$(infer_scaffold_options "$target_dir" true)"
         load_manifest_from_walk "$target_dir" "${modules[@]}"
         if [[ "$DRY_RUN" != true ]]; then
-            manifest_write "$target_dir" "$from_version" "$commit" "$opts"
+            if ! manifest_write "$target_dir" "$from_version" "$commit" "$opts"; then
+                print_error "failed to write manifest: $(manifest_path "$target_dir")"
+                return 1
+            fi
             print_success "wrote $(manifest_path "$target_dir")"
         else
             print_info "would write root manifest with ${#MANIFEST_TRACKED[@]} file entries"
@@ -1706,7 +1709,10 @@ run_create_manifest() {
             module_opts="$(infer_scaffold_options "$module_dir" false "$lang")"
             load_manifest_from_walk "$module_dir"
             if [[ "$DRY_RUN" != true ]]; then
-                manifest_write "$module_dir" "$from_version" "$commit" "$module_opts"
+                if ! manifest_write "$module_dir" "$from_version" "$commit" "$module_opts"; then
+                    print_error "failed to write manifest: $(manifest_path "$module_dir")"
+                    return 1
+                fi
                 print_success "wrote $(manifest_path "$module_dir")"
             else
                 print_info "would write $module manifest with ${#MANIFEST_TRACKED[@]} file entries"
@@ -1718,7 +1724,10 @@ run_create_manifest() {
         opts="$(infer_scaffold_options "$target_dir" false)"
         load_manifest_from_walk "$target_dir"
         if [[ "$DRY_RUN" != true ]]; then
-            manifest_write "$target_dir" "$from_version" "$commit" "$opts"
+            if ! manifest_write "$target_dir" "$from_version" "$commit" "$opts"; then
+                print_error "failed to write manifest: $(manifest_path "$target_dir")"
+                return 1
+            fi
             print_success "wrote $(manifest_path "$target_dir")"
         else
             print_info "would write manifest with ${#MANIFEST_TRACKED[@]} file entries"
@@ -2048,7 +2057,10 @@ apply_decisions_for_scope() {
         # users delete language marker files.
         local opts
         opts="$(echo "$old_json" | jq -c '.scaffold_options')"
-        manifest_write "$scope_root" "$UPSTREAM_VERSION" "$UPSTREAM_COMMIT" "$opts"
+        if ! manifest_write "$scope_root" "$UPSTREAM_VERSION" "$UPSTREAM_COMMIT" "$opts"; then
+            print_error "failed to write manifest: $(manifest_path "$scope_root")"
+            return 1
+        fi
     fi
 
     manifest_summary_print "$(echo "$old_json" | jq -r .tarnished_version)" "$UPSTREAM_VERSION" "$scope_label"
@@ -2217,7 +2229,9 @@ run_upgrade() {
         mkdir -p "$stage_dir"
         stage_plugin_run "$UPSTREAM_DIR" "$stage_dir"
         apply_decisions_for_scope "$target_dir" "$stage_dir" ""
+        local rc=$?
         rm -rf "$(dirname "$stage_dir")" 2>/dev/null || true
+        [[ $rc -eq 0 ]] || return 1
     fi
 
     {

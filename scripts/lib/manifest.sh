@@ -127,20 +127,26 @@ manifest_write() {
         return 1
     fi
 
-    if ! jq -n \
+    # Feed the (unbounded) files map to jq via stdin rather than passing it as
+    # an --argjson command-line argument. On large targets the serialized map
+    # exceeds the kernel ARG_MAX limit, so execve rejects the jq invocation with
+    # E2BIG ("Argument list too long") and no manifest is written. stdin is not
+    # subject to ARG_MAX. The bounded scalars / scaffold_options object stay as
+    # --arg/--argjson — they cannot overflow. The files map becomes jq's input
+    # (`.`); sorted-key order from _manifest_files_to_json is preserved. (#289)
+    if ! printf '%s' "$files_json" | jq \
         --argjson manifest_version "$MANIFEST_SUPPORTED_VERSION" \
         --arg tarnished_version "$tarnished_version" \
         --arg tarnished_commit "$tarnished_commit" \
         --arg created_at "$created_at" \
         --argjson scaffold_options "$scaffold_options_json" \
-        --argjson files "$files_json" \
         '{
             manifest_version: $manifest_version,
             tarnished_version: $tarnished_version,
             tarnished_commit: $tarnished_commit,
             created_at: $created_at,
             scaffold_options: $scaffold_options,
-            files: $files
+            files: .
         }' > "$tmp"; then
         rm -f "$tmp"
         print_error "manifest_write: jq build failed"
