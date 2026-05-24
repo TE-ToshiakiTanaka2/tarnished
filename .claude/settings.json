@@ -60,12 +60,25 @@
             "command": "deno fmt $CLAUDE_FILE_PATH"
           }
         ]
+      },
+      {
+        "matcher": "Write(*.rs)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo fmt -- $CLAUDE_FILE_PATH && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit(*.rs)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo fmt -- $CLAUDE_FILE_PATH && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
+          }
+        ]
       }
     ]
-  },
-  "enabledPlugins": {
-    "context7@claude-plugins-official": true,
-    "serena@claude-plugins-official": true,
-    "playwright@claude-plugins-official": true
   }
 }

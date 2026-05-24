@@ -9,28 +9,20 @@ disable-model-invocation: true
 
 GitHub Issue creation skill for projects. Handles requirement discovery through brainstorming, expert review, estimation, and Issue creation.
 
+This skill is the Claude Code projection of `.tarnished/workflows/issue.md`. Keep the shared workflow source and this tool-specific entrypoint aligned.
+
 ## Usage
 
 ```
 /issue
 ```
 
-## erd Command Invocation
-
-All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
-
-```
-Read(".claude/commands/erd/<command>.md") → follow instructions inline
-```
-
-Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
-
 ## What This Skill Does
 
 ### Phase 1: Requirement Understanding and Discovery
 
 1. **Confirm user request** - Understand what the user wants to accomplish
-2. **Load `/erd:brainstorm` and follow inline** - `Read(".claude/commands/erd/brainstorm.md")`:
+2. **Execute `/erd:brainstorm`** - Use brainstorm command to dig deeper into requirements:
    - Discover hidden requirements through Socratic dialogue
    - Identify edge cases and boundary conditions
    - Confirm technical constraints
@@ -39,7 +31,7 @@ Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the ent
 
 ### Phase 2: Estimation
 
-4. **Load `/erd:estimate` and follow inline** - `Read(".claude/commands/erd/estimate.md")`:
+4. **Execute `/erd:estimate`** - Development estimation with intelligent analysis:
    - Determine Size (XS/S/M/L/XL) based on scope and complexity
    - Determine Priority (High/Medium/Low) based on impact and urgency
    - Identify risks and dependencies

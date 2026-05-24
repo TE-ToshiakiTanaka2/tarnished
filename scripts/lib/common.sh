@@ -549,8 +549,8 @@ merge_claude_settings() {
                 deny: (($base.permissions.deny // []) + ($overlay.permissions.deny // []) | unique)
             },
             hooks: {
-                PreToolUse: (($base.hooks.PreToolUse // []) + ($overlay.hooks.PreToolUse // [])),
-                PostToolUse: (($base.hooks.PostToolUse // []) + ($overlay.hooks.PostToolUse // []))
+                PreToolUse: (($base.hooks.PreToolUse // []) + ($overlay.hooks.PreToolUse // []) | unique),
+                PostToolUse: (($base.hooks.PostToolUse // []) + ($overlay.hooks.PostToolUse // []) | unique)
             }
         }
     ' "$base_file" "$overlay_file" > "$output_file"; then
@@ -580,8 +580,8 @@ merge_claude_settings_hooks() {
         .[0] as $base | .[1] as $lang |
         $base * {
             hooks: {
-                PreToolUse: (($base.hooks.PreToolUse // []) + ($lang.hooks.PreToolUse // [])),
-                PostToolUse: (($base.hooks.PostToolUse // []) + ($lang.hooks.PostToolUse // []))
+                PreToolUse: (($base.hooks.PreToolUse // []) + ($lang.hooks.PreToolUse // []) | unique),
+                PostToolUse: (($base.hooks.PostToolUse // []) + ($lang.hooks.PostToolUse // []) | unique)
             }
         }
     ' "$base_file" "$overlay_file" > "$output_file"; then

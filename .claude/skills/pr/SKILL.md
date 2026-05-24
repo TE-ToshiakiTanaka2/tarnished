@@ -9,6 +9,8 @@ disable-model-invocation: true
 
 Pull Request creation skill for projects. Handles code analysis, improvements, cleanup, PR creation, CI monitoring, and validation.
 
+This skill is the Claude Code projection of `.tarnished/workflows/pr.md`. Keep the shared workflow source and this tool-specific entrypoint aligned.
+
 ## Usage
 
 ```
@@ -36,31 +38,21 @@ Use the following MCP tools for code analysis:
 
 - **serena**: `find_symbol`, `get_symbols_overview` — for understanding code structure during analysis and improvement phases
 
-## erd Command Invocation
-
-All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
-
-```
-Read(".claude/commands/erd/<command>.md") → follow instructions inline
-```
-
-Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
-
 ## What This Skill Does
 
 ### Phase 1: Code Analysis and Improvement
 
-1. **Load `/erd:analyze` and follow inline** - `Read(".claude/commands/erd/analyze.md")`:
+1. **Execute `/erd:analyze`** - Comprehensive code analysis:
    - Code quality: readability, maintainability, DRY
    - Security: input validation, injection risks, auth checks
    - Performance: inefficient patterns, unnecessary allocations
    - Architecture: module design, layer separation
-2. **Load `/erd:improve` and follow inline** - `Read(".claude/commands/erd/improve.md")`:
+2. **Execute `/erd:improve`** - Fix discovered issues:
    - Code quality improvements
    - Pattern standardization
    - Type safety enhancements
    - Error handling improvements
-3. **Load `/erd:cleanup` and follow inline** - `Read(".claude/commands/erd/cleanup.md")`:
+3. **Execute `/erd:cleanup`** - Final code cleanup:
    - Remove dead code and unused imports
    - Optimize import ordering
    - Clean up commented-out code
