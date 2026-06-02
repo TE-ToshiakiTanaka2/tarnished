@@ -95,16 +95,19 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
         run: |
           VERSION="${{ inputs.erd-version }}"
-
-          if [ "$VERSION" = "latest" ]; then
-            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/latest/download/erd-linux-x86_64"
-          else
-            DOWNLOAD_URL="https://github.com/${{ env.ERD_REPO }}/releases/download/${VERSION}/erd-linux-x86_64"
-          fi
-
-          echo "Downloading erd from: $DOWNLOAD_URL"
           mkdir -p target/release
-          curl -fsSL -o target/release/erd "$DOWNLOAD_URL"
+
+          # Authenticated download via `gh` (uses GH_TOKEN). A plain `curl` of the
+          # release URL 404s when ERD_REPO is PRIVATE because curl does not send the
+          # token; `gh release download` does, so private release assets resolve.
+          echo "Downloading erd (asset erd-linux-x86_64) from ${{ env.ERD_REPO }} (version: $VERSION)"
+          if [ "$VERSION" = "latest" ]; then
+            gh release download --repo "${{ env.ERD_REPO }}" \
+              --pattern erd-linux-x86_64 --output target/release/erd --clobber
+          else
+            gh release download "$VERSION" --repo "${{ env.ERD_REPO }}" \
+              --pattern erd-linux-x86_64 --output target/release/erd --clobber
+          fi
           chmod +x target/release/erd
 
           echo "erd version:"
