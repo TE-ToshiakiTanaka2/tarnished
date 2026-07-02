@@ -44,9 +44,9 @@ paths:
 
 ## Dependencies
 
-- Keep dependencies minimal -- audit with `cargo deny`
+- Keep dependencies minimal -- optionally audit with `cargo deny` (not preinstalled; `cargo install cargo-deny`)
 - Pin major versions in `Cargo.toml`
-- Use `bacon` for file watching during development; `cargo add`/`cargo rm` are built-in
+- For file watching during development, `bacon` is a good option (not preinstalled; `cargo install bacon`); `cargo add`/`cargo rm` are built-in
 - Run `cargo clippy` and `cargo fmt` before every commit
 - Enable `overflow-checks = true` in `[profile.release]`
 
