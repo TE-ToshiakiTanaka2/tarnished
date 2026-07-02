@@ -207,6 +207,16 @@ plugin_post_copy_shared() {
         print_success "LaTeX Claude settings merged"
     fi
 
+    # Copy Claude rules files
+    local plugin_rules_dir="${PLUGIN_DIR}/.claude/rules"
+    local target_rules_dir="${target_dir}/.claude/rules"
+
+    if [[ -d "$plugin_rules_dir" ]]; then
+        print_info "Copying LaTeX Claude rules..."
+        copy_dir_with_confirm "$plugin_rules_dir" "$target_rules_dir"
+        print_success "LaTeX Claude rules copied"
+    fi
+
     # Add .latexmkrc volume mount to docker-compose.yml (already idempotent
     # via grep on '\.latexmkrc').
     local target_compose="${target_dir}/docker-compose.yml"

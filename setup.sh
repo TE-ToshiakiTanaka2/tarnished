@@ -525,6 +525,12 @@ load_selected_plugins() {
     fi
 
     # 2. Selected language plugins
+    # node and deno both register PostToolUse format hooks for *.ts/*.tsx
+    # (biome vs deno fmt) in the shared .claude/settings.json, so selecting
+    # both leaves two competing formatters running on every TypeScript file.
+    if [[ " ${SELECTED_LANGUAGES[*]} " == *" node "* ]] && [[ " ${SELECTED_LANGUAGES[*]} " == *" deno "* ]]; then
+        print_warning "Both 'node' and 'deno' are selected: their Claude format hooks overlap on *.ts/*.tsx (biome and deno fmt will both run). Consider keeping only one, or remove one hook set from .claude/settings.json afterwards."
+    fi
     for lang in "${SELECTED_LANGUAGES[@]}"; do
         local plugin_path="${TEMPLATES_DIR}/languages/${lang}/plugin.sh"
         if [[ -f "$plugin_path" ]]; then

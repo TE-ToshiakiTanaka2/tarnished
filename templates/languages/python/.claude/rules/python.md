@@ -56,7 +56,7 @@ paths:
 
 - Use `uv` for dependency management and virtual environments
 - Define dependencies in `pyproject.toml` (PEP 621)
-- Use version ranges in `pyproject.toml`; commit `uv.lock` for reproducible builds
+- Use version ranges in `pyproject.toml` (the scaffold installs with `uv pip install -e ".[dev]"`, which produces no lockfile; if you migrate to `uv sync`, commit the resulting `uv.lock`)
 - Separate dev dependencies under `[project.optional-dependencies] dev`
 
 ## Import Order
