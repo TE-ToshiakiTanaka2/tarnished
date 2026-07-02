@@ -415,7 +415,7 @@ Project-level Codex CLI configuration written verbatim into downstream projects 
 
 | Key | Default value |
 | --- | --- |
-| `model` | `"gpt-5.4"` (bumped from `"gpt-5.3-codex"` in #261) |
+| `model` | `"gpt-5.5"` (bumped from `"gpt-5.3-codex"` in #261, from `"gpt-5.4"` in #292) |
 | `model_reasoning_effort` | `"high"` (added in #261) |
 | `approval_policy` | `"on-request"` |
 | `sandbox_mode` | `"workspace-write"` |
