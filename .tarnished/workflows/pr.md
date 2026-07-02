@@ -16,6 +16,7 @@ Prepare and create a pull request after implementation and independent review.
 4. Monitor CI and inspect failed logs before retrying.
 5. Fix failures in follow-up commits and re-run validation.
 6. Merge only when requested and when CI plus review validation pass.
+7. After a successful merge, switch to the target branch and update it with `git pull --ff-only origin <target_branch>`.
 
 ## Output
 

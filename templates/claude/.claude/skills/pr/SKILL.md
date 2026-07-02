@@ -92,7 +92,8 @@ Use the following MCP tools for code analysis:
     - Uses squash merge to keep history clean
     - Deletes the source branch after merge
     - If merge fails (e.g., merge conflict, branch protection), report the error to user
-16. **Report merge result** - Present merge status and final commit
+16. **Update local target branch** - After a successful merge, switch to the target branch and update it with `git pull --ff-only origin <target_branch>`
+17. **Report merge result** - Present merge status and final commit
 
 ## erd Skills Used
 
@@ -101,6 +102,7 @@ Use the following MCP tools for code analysis:
 | `/erd:analyze` | Comprehensive code analysis (quality, security, performance, architecture) | Phase 1 |
 | `/erd:improve` | Systematic code quality improvements | Phase 1 |
 | `/erd:cleanup` | Dead code removal, import optimization, final cleanup | Phase 1 |
+| `/erd:reflect` | CI result validation (coverage adequacy, requirement matching, risk identification) | Phase 4 |
 
 ## Leveraging erd:analyze
 

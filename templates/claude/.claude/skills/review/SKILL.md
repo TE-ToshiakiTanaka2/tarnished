@@ -58,7 +58,7 @@ Use Codex built-in review:
    MERGE_BASE=$(git merge-base develop HEAD)
    ```
 2. **Determine issue number** - Extract from branch name (e.g., `feature/user/#123/desc` → `123`)
-3. **Load design artifacts** - Read `docs/issues/<issue_number>/design.md` if available:
+3. **Load design artifacts** - Read `docs/design/#<issue_number>/design.md` if available:
    - Architecture decisions and constraints
    - API specifications
    - Expected behavior
@@ -153,7 +153,7 @@ You are a senior code reviewer. Review the implementation on this feature branch
 - Base: develop (merge base: {merge base SHA short})
 
 ## Design Reference
-{Contents of docs/issues/<issue_number>/design.md, if available.
+{Contents of docs/design/#<issue_number>/design.md, if available.
 Otherwise: "No design document available."}
 
 ## Review Criteria
