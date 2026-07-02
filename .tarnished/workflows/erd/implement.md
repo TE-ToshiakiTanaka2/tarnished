@@ -11,7 +11,7 @@ Implement features and code changes following design artifacts and codebase conv
 ## MCP Tools
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol` -- for codebase navigation, understanding existing patterns, and semantic code editing
-- **context7**: `resolve-library-id`, `query-docs` -- for looking up library documentation and framework-specific patterns during implementation
+- **context7**: `resolve-library-id`, `get-library-docs` -- for looking up library documentation and framework-specific patterns during implementation
 
 ## Behavioral Flow
 

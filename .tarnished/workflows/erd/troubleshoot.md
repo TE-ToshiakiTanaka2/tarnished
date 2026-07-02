@@ -10,7 +10,7 @@ Diagnose and resolve issues in code, builds, deployments, and system behavior.
 
 ## MCP Tools
 
-- **context7**: `resolve-library-id`, `query-docs` -- for looking up library-specific error patterns and known issues when troubleshooting dependency-related problems
+- **context7**: `resolve-library-id`, `get-library-docs` -- for looking up library-specific error patterns and known issues when troubleshooting dependency-related problems
 
 ## Behavioral Flow
 

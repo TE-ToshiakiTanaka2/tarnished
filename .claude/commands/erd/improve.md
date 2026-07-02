@@ -11,7 +11,7 @@ Apply systematic improvements to code quality, performance, and maintainability.
 ## MCP Tools
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `replace_symbol_body`, `find_referencing_symbols` -- for understanding code structure and safely applying changes
-- **context7**: `resolve-library-id`, `query-docs` -- for framework-specific best practices
+- **context7**: `resolve-library-id`, `get-library-docs` -- for framework-specific best practices
 
 ## Behavioral Flow
 

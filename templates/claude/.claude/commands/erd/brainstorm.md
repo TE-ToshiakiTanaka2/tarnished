@@ -10,7 +10,7 @@ Discover and refine requirements through Socratic dialogue and structured explor
 
 ## MCP Tools
 
-- **context7**: `resolve-library-id`, `query-docs` -- for verifying technical feasibility and checking library capabilities during requirements exploration
+- **context7**: `resolve-library-id`, `get-library-docs` -- for verifying technical feasibility and checking library capabilities during requirements exploration
 
 ## Behavioral Flow
 

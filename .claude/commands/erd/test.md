@@ -11,7 +11,7 @@ Execute tests with coverage analysis and quality reporting.
 ## MCP Tools
 
 - **playwright**: for e2e browser testing when the project includes UI components
-- **context7**: `resolve-library-id`, `query-docs` -- for looking up test framework documentation and assertion patterns
+- **context7**: `resolve-library-id`, `get-library-docs` -- for looking up test framework documentation and assertion patterns
 
 ## Behavioral Flow
 
