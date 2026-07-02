@@ -227,6 +227,7 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `.gitignore` (downstream-project seed) | Per-file blacklist (`.claude/settings.local.json`, `.codex/config.local.toml`) replaced with marker-guarded whitelist blocks for `.claude/*` and `.codex/*`; always-ignore added for `.serena/` and `screenshots/` | #259 |
 | `.agents/skills/*` (Codex projects) | Repo-local Codex skills for `issue`, `design`, `implement`, `review`, and `pr`; copied by `templates/codex/plugin.sh` and allow-listed by the Codex skills gitignore block | Codex workflow parity |
 | `.codex/config.toml` (workspace + template) | Workspace gains the file (new); template bumps `model` from `gpt-5.3-codex` → `gpt-5.4` and adds `model_reasoning_effort = "high"`. Workspace and template kept in sync. | #261 |
+| `.codex/config.toml` (workspace + template) | `model` bumped `gpt-5.4` → `gpt-5.5`. Repairs the invalid `"gpt-5.5/"` value accidentally committed to the workspace copy in #288 and restores workspace/template parity. | #292 |
 | `.gitignore` (workspace) | Codex whitelist block (`# Codex CLI (track shared config only)` + `.codex/*` + `!.codex/config.toml`) and Codex agent skills block (`.agents/*` + `!.agents/skills/` + `!.agents/skills/**`) appended to the workspace's own `.gitignore` so local agent/auth files are never committed | #261 / Codex workflow parity |
 | `.claude/settings.json` (workspace) | `permissions.allow` gains `Bash(codex:*)` so `/review` can invoke the Codex CLI without per-call approval | #261 |
 | `modules.json` (downstream monorepo target) | New schema introduced for monorepo support; `version: 1` with a `modules: []` array. Forward-compatible via unknown-key tolerance and a `version` escape hatch. | #263 |
@@ -296,7 +297,7 @@ Flat top-level TOML. All keys optional from Codex's perspective; tarnished sets 
 
 | Key | Type | Value (workspace + template) | Purpose |
 | --- | --- | --- | --- |
-| `model` | string | `"gpt-5.4"` | Always-latest reasoning model |
+| `model` | string | `"gpt-5.5"` | Always-latest reasoning model |
 | `model_reasoning_effort` | string | `"high"` | Higher cost, deeper review (paid only when `/review` runs) |
 | `approval_policy` | string | `"on-request"` | Codex prompts before destructive actions |
 | `sandbox_mode` | string | `"workspace-write"` | File writes restricted to workspace |
