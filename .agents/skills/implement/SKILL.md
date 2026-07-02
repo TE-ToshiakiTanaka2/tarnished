@@ -13,7 +13,7 @@ Implement an issue in focused commits, then verify with build, lint, and tests. 
 
 1. Require an issue number. If none is provided, infer it from the branch or ask for it.
 2. Read `.tarnished/workflows/implement.md`.
-3. If present, read `.claude/skills/implement/SKILL.md` and `_shared/branch/SKILL.md` for compatibility details.
+3. If present, read `.claude/skills/implement/SKILL.md` and `.claude/skills/_shared/branch/SKILL.md` for compatibility details.
 4. Reuse the design branch when it exists; otherwise create the issue branch using the project convention.
 5. Load both design layers:
    - `docs/design/shared/*`

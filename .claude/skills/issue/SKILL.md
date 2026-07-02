@@ -44,7 +44,7 @@ This skill is the Claude Code projection of `.tarnished/workflows/issue.md`. Kee
    - `body`: Issue body formatted per the Issue Description Format below
    - `labels`: Determined from issue type (feature, bugfix, refactor, etc.)
    - `size`: From `/erd:estimate` results (XS/S/M/L/XL)
-   - `priority`: From `/erd:estimate` results (P0/P1/P2)
+   - `priority`: Mapped from `/erd:estimate` Priority — High → `P0`, Medium → `P1`, Low → `P2` (the project field accepts only P-values)
    - See `_shared/issue/SKILL.md` for full procedure (Issue creation, milestone, project fields)
 6. **Return Issue number**
 
