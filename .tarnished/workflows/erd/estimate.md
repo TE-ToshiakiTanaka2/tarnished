@@ -10,7 +10,7 @@ Provide structured development estimates for tasks, features, or projects.
 
 ## MCP Tools
 
-- **context7**: `resolve-library-id`, `query-docs` -- for assessing complexity of external library integrations during estimation
+- **context7**: `resolve-library-id`, `get-library-docs` -- for assessing complexity of external library integrations during estimation
 
 ## Behavioral Flow
 

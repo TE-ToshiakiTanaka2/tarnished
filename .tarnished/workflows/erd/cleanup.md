@@ -10,8 +10,8 @@ Systematically clean up code, remove dead code, and optimize project structure.
 
 ## MCP Tools
 
-- **serena**: `find_symbol`, `find_referencing_symbols`, `safe_delete_symbol` -- for safely identifying and removing unused code with reference checking
-- **context7**: `resolve-library-id`, `query-docs` -- for checking whether seemingly unused imports are required by framework conventions
+- **serena**: `find_symbol`, `find_referencing_symbols` -- for safely identifying unused code; confirm zero references with `find_referencing_symbols` before removing code via the standard edit tools
+- **context7**: `resolve-library-id`, `get-library-docs` -- for checking whether seemingly unused imports are required by framework conventions
 
 ## Behavioral Flow
 

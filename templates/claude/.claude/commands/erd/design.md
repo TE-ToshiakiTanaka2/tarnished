@@ -11,7 +11,7 @@ Design system architecture, APIs, and component interfaces with comprehensive sp
 ## MCP Tools
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `list_dir` -- for understanding existing architecture, finding related symbols, and analyzing current codebase structure
-- **context7**: `resolve-library-id`, `query-docs` -- for researching library APIs and patterns when design involves external dependencies
+- **context7**: `resolve-library-id`, `get-library-docs` -- for researching library APIs and patterns when design involves external dependencies
 
 ## Behavioral Flow
 

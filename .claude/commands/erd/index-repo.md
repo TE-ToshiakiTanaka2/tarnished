@@ -8,6 +8,14 @@ Generate a compact project index for efficient codebase understanding with signi
 /erd:index-repo [mode: create|update|quick]
 ```
 
+## Modes
+
+| Mode | Behavior |
+| --- | --- |
+| `create` (default) | Full generation — run all phases (1–4) and write a fresh `PROJECT_INDEX.md`, overwriting any existing one. |
+| `update` | Incremental refresh — requires an existing `PROJECT_INDEX.md`. Diff the current tree against the index (e.g. `git diff --stat` since the `Generated:` timestamp), re-analyze only the affected categories, and rewrite just those sections. Fall back to `create` if no index exists. |
+| `quick` | Structure-only pass — run Phase 1 plus entry-point detection only; emit Project Structure and Entry Points sections and skip module/dependency/test extraction. Suited for a fast first orientation. |
+
 ## Purpose
 
 - **Before**: Reading all files costs tens of thousands of tokens every session

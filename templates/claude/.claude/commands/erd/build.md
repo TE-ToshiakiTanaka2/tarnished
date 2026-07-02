@@ -10,7 +10,7 @@ Build, compile, and verify projects with intelligent error handling.
 
 ## MCP Tools
 
-- **context7**: `resolve-library-id`, `query-docs` -- for looking up build tool documentation when resolving configuration issues
+- **context7**: `resolve-library-id`, `get-library-docs` -- for looking up build tool documentation when resolving configuration issues
 
 ## Behavioral Flow
 

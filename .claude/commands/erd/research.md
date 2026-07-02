@@ -10,7 +10,7 @@ Research external libraries, APIs, patterns, and technologies with evidence-base
 
 ## MCP Tools
 
-- **context7**: `resolve-library-id`, `query-docs` -- for looking up library documentation, API references, and framework-specific patterns
+- **context7**: `resolve-library-id`, `get-library-docs` -- for looking up library documentation, API references, and framework-specific patterns
 - **playwright**: for extracting content from JavaScript-heavy documentation sites when WebSearch or context7 cannot retrieve sufficient information
 
 ## Behavioral Flow
@@ -25,7 +25,7 @@ Research external libraries, APIs, patterns, and technologies with evidence-base
 
 ### For library/framework research:
 1. Use **context7** `resolve-library-id` to find the library
-2. Use **context7** `query-docs` to retrieve relevant documentation
+2. Use **context7** `get-library-docs` to retrieve relevant documentation
 3. Supplement with **WebSearch** for community best practices and known issues
 
 ### For API/integration research:

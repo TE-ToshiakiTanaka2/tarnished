@@ -173,7 +173,7 @@ Examples:
 Use the following MCP tools for efficient codebase analysis and library research:
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `list_dir` — for understanding existing architecture, finding related symbols, and navigating the codebase
-- **context7**: `resolve-library-id`, `query-docs` — for researching external libraries and frameworks referenced in the issue, and for design involving external dependencies
+- **context7**: `resolve-library-id`, `get-library-docs` — for researching external libraries and frameworks referenced in the issue, and for design involving external dependencies
 
 ## erd Skills Used
 
