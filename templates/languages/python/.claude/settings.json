@@ -2,20 +2,17 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Write(*.py)",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "uv run ruff format $CLAUDE_FILE_PATH && uv run ruff check --fix $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit(*.py)",
-        "hooks": [
+            "if": "Write(*.py)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && uv run ruff format \"$f\" && uv run ruff check --fix \"$f\""
+          },
           {
             "type": "command",
-            "command": "uv run ruff format $CLAUDE_FILE_PATH && uv run ruff check --fix $CLAUDE_FILE_PATH"
+            "if": "Edit(*.py)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && uv run ruff format \"$f\" && uv run ruff check --fix \"$f\""
           }
         ]
       }

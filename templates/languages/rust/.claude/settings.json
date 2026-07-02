@@ -2,20 +2,17 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Write(*.rs)",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "cargo fmt -- $CLAUDE_FILE_PATH && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit(*.rs)",
-        "hooks": [
+            "if": "Write(*.rs)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && cargo fmt -- \"$f\" && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
+          },
           {
             "type": "command",
-            "command": "cargo fmt -- $CLAUDE_FILE_PATH && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
+            "if": "Edit(*.rs)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && cargo fmt -- \"$f\" && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
           }
         ]
       }
