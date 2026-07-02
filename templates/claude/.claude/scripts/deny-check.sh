@@ -4,9 +4,14 @@
 # =============================================================================
 # This script is called as a PreToolUse hook for Bash commands.
 # It checks if the command matches any denied patterns.
+#
+# Claude Code delivers hook input as JSON on stdin; the Bash command string
+# is at .tool_input.command (there is no CLAUDE_BASH_COMMAND environment
+# variable). Exit 2 blocks the tool call and feeds stderr back to Claude;
+# missing/unparsable input fails open (exit 0) by contract.
 
-# Get the command from environment variable
-COMMAND="${CLAUDE_BASH_COMMAND:-}"
+# Get the command from the hook's stdin JSON
+COMMAND="$(jq -r '.tool_input.command // empty' 2>/dev/null)"
 
 # List of denied command patterns (regex)
 DENIED_PATTERNS=(

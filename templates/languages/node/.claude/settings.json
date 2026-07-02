@@ -2,38 +2,27 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Write(*.ts)",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "pnpm biome check --write $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit(*.ts)",
-        "hooks": [
+            "if": "Write(*.ts)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && pnpm exec biome check --write \"$f\""
+          },
           {
             "type": "command",
-            "command": "pnpm biome check --write $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Write(*.tsx)",
-        "hooks": [
+            "if": "Edit(*.ts)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && pnpm exec biome check --write \"$f\""
+          },
           {
             "type": "command",
-            "command": "pnpm biome check --write $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit(*.tsx)",
-        "hooks": [
+            "if": "Write(*.tsx)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && pnpm exec biome check --write \"$f\""
+          },
           {
             "type": "command",
-            "command": "pnpm biome check --write $CLAUDE_FILE_PATH"
+            "if": "Edit(*.tsx)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && pnpm exec biome check --write \"$f\""
           }
         ]
       }

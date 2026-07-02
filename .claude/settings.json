@@ -4,12 +4,14 @@
       "Bash(codex:*)"
     ],
     "deny": [
-      "Bash(apt :*)",
-      "Bash(brew install :*)",
-      "Bash(chmod 777 :*)",
+      "Bash(apt:*)",
+      "Bash(apt-get:*)",
+      "Bash(brew install:*)",
+      "Bash(chmod 777:*)",
       "Bash(gh repo delete:*)",
-      "Bash(git config :*)",
-      "Bash(rm -rf /*)"
+      "Bash(git config --global:*)",
+      "Bash(rm -rf /*)",
+      "Bash(sudo rm -rf:*)"
     ]
   },
   "hooks": {
@@ -19,63 +21,24 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/workspace/.claude/scripts/deny-check.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/scripts/deny-check.sh"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Write(*.ts)",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "deno fmt $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Write(*.tsx)",
-        "hooks": [
+            "if": "Write(*.rs)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && cargo fmt -- \"$f\" && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
+          },
           {
             "type": "command",
-            "command": "deno fmt $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit(*.ts)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "deno fmt $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit(*.tsx)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "deno fmt $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Write(*.rs)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cargo fmt -- $CLAUDE_FILE_PATH && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit(*.rs)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cargo fmt -- $CLAUDE_FILE_PATH && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
+            "if": "Edit(*.rs)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && cargo fmt -- \"$f\" && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
           }
         ]
       }

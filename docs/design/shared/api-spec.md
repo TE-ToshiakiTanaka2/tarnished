@@ -442,9 +442,11 @@ Contract: under `set -e` (in `post.sh`), this function MUST return `0` even when
 
 The function is sourced into `.devcontainer/scripts/post.sh` after `setup_plugins`, using the same `${SCRIPT_DIR}/setup_codex.sh` source pattern. The Node.js LTS devcontainer feature (`ghcr.io/devcontainers/features/node:1`) is the prerequisite for `npm` being present.
 
-### `/workspace/.claude/settings.json` (workspace, #261)
+### `/workspace/.claude/settings.json` (workspace, #261, #299)
 
-`permissions.allow` includes `"Bash(codex:*)"` so the `/review` skill can invoke `codex exec` and `codex review` without per-call approval. The pre-existing `permissions.deny` list and `hooks` block are unchanged. Other downstream projects opt in via `templates/codex/.claude/settings.json`.
+`permissions.allow` includes `"Bash(codex:*)"` so the `/review` skill can invoke `codex exec` and `codex review` without per-call approval (#261). Other downstream projects opt in via `templates/codex/.claude/settings.json`.
+
+Since #299 the `permissions.deny` list uses canonical `Bash(prefix:*)` rules aligned with `deny-check.sh`'s regex list, the PreToolUse deny-check hook is addressed via `"$CLAUDE_PROJECT_DIR"/.claude/scripts/deny-check.sh`, and PostToolUse format hooks use `matcher: "Write|Edit"` with per-handler `if: "Write(*.ext)"` rules, reading the file path from the hook's stdin JSON (`.tool_input.file_path`). The workspace carries only the Rust hooks (dogfooding); language templates ship the same shape per language.
 
 ### `templates/github-actions/project-integration/plugin.sh` — gh helper contract (#276)
 

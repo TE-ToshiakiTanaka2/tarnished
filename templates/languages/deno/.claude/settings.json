@@ -2,38 +2,27 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Write(*.ts)",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "deno fmt $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit(*.ts)",
-        "hooks": [
+            "if": "Write(*.ts)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && deno fmt \"$f\""
+          },
           {
             "type": "command",
-            "command": "deno fmt $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Write(*.tsx)",
-        "hooks": [
+            "if": "Edit(*.ts)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && deno fmt \"$f\""
+          },
           {
             "type": "command",
-            "command": "deno fmt $CLAUDE_FILE_PATH"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit(*.tsx)",
-        "hooks": [
+            "if": "Write(*.tsx)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && deno fmt \"$f\""
+          },
           {
             "type": "command",
-            "command": "deno fmt $CLAUDE_FILE_PATH"
+            "if": "Edit(*.tsx)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && deno fmt \"$f\""
           }
         ]
       }
