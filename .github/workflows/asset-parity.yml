@@ -17,6 +17,7 @@ on:
       - ".devcontainer/scripts/**"
       - "templates/**"
       - "scripts/verify-mirrors.sh"
+      - ".github/workflows/asset-parity.yml"
   push:
     branches: [develop]
 

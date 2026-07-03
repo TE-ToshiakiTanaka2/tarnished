@@ -74,6 +74,7 @@ Resolve in priority order (stop at the first match):
 ### Phase 3C: Review via Claude subagent (fallback or `--claude`)
 
 5. **Launch the `code-reviewer` subagent** (defined in `.claude/agents/code-reviewer.md`) with the Review Prompt Template below as its task. The subagent runs read-only in a fresh context — do not paste your own analysis of the changes into the prompt; let it judge the diff independently.
+   - If `.claude/agents/code-reviewer.md` does not exist (e.g. a project scaffolded before it shipped), launch a general-purpose subagent instead with the Review Prompt Template as its task, instructing it to work read-only. The review still runs in a fresh context.
 6. **Capture its final message** as the review output.
 
 ### Phase 4: Save & Apply Fixes
@@ -139,6 +140,10 @@ Please review for:
 6. **Error Handling** — Unhandled exceptions, missing edge cases
 7. **Test Coverage** — Are new features/changes adequately tested?
 8. **Design Adherence** — Does the implementation match the design document?
+
+Report gaps and defects, not stylistic nitpicks — code-quality findings must
+materially affect maintainability or violate a documented project rule
+(.claude/rules/*). Verify claims by reading the code before asserting them.
 
 ## Implementation Commits
 {git log --oneline output}

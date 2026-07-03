@@ -27,7 +27,11 @@ permissions:
 
 # Serialize tag computation per ref (#303). Without this, rapid back-to-back
 # merges race: every run computes the same next version and all but one fail.
-# cancel-in-progress stays false so each merge still gets its own tag, in order.
+# Note GitHub keeps at most ONE pending run per group even with
+# cancel-in-progress: false — under 3+ rapid merges, intermediate runs are
+# superseded and the newest run tags the combined range (one version bump
+# may cover several merges). That is intentional: no run ever fails from
+# the race, and the final tag always reflects HEAD.
 concurrency:
   group: auto-tag-${{ github.ref }}
   cancel-in-progress: false
@@ -170,6 +174,8 @@ jobs:
           echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # continue-on-error lets the PR-comment steps below report the failure;
+        # the final "Fail job if tag creation failed" step still fails the run.
         continue-on-error: true
 
       - name: Get previous tag

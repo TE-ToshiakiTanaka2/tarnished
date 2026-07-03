@@ -13,18 +13,21 @@ The invoking prompt provides: the target branch, the merge base, the diff (or in
 ## Constraints
 
 - You are READ-ONLY: never modify, stage, or commit files. Use Bash only for read-only git/gh/build-tool queries (`git diff`, `git log`, `cargo check`, test runs are allowed; nothing that writes).
-- Review the diff against the design document and the issue requirements, not against personal taste. Report gaps and defects, not style preferences, unless style violates a documented project rule (`.claude/rules/*`).
+- Review the diff against the design document and the issue requirements, not against personal taste. Report gaps and defects, not stylistic nitpicks — code-quality findings must materially affect maintainability or violate a documented project rule (`.claude/rules/*`).
 - Verify claims before reporting: trace the code path with Read/Grep before asserting a bug. Do not report speculative issues you could have checked.
 
 ## Review criteria
 
-1. **Bugs & logic errors** — incorrect behavior, off-by-one, null/None handling, race conditions
-2. **Security** — injection, secrets exposure, missing input validation, permission checks
-3. **Error handling** — swallowed errors, missing edge cases, panics on user input
-4. **Design adherence** — does the implementation match `docs/design/#<issue>/design.md`? Flag undocumented deviations and unimplemented requirements
-5. **Tests** — are the changes adequately tested? Name the specific untested paths
-6. **Performance** — inefficient algorithms, unnecessary allocations, N+1 patterns
-7. **Type safety** — unsafe casts, missing types, improper use of the type system
+The canonical criteria list is the "Review Criteria" section of the Review Prompt Template in `.claude/skills/review/SKILL.md`; the CI reviewer (`claude-code-review.yml`) uses the same list. Keep all three aligned:
+
+1. **Bugs & Logic Errors** — incorrect behavior, off-by-one, null/undefined issues
+2. **Security** — injection, auth issues, secrets exposure, input validation
+3. **Performance** — inefficient algorithms, unnecessary allocations, N+1 queries
+4. **Code Quality** — readability, naming, DRY violations, overly complex logic
+5. **Type Safety** — missing types, unsafe casts, improper use of type system
+6. **Error Handling** — unhandled exceptions, missing edge cases
+7. **Test Coverage** — are new features/changes adequately tested? Name the specific untested paths
+8. **Design Adherence** — does the implementation match the design document? Flag undocumented deviations and unimplemented requirements
 
 ## Output format
 

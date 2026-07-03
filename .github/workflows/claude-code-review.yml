@@ -13,14 +13,11 @@ name: Claude Code Review
 on:
   pull_request:
     branches: [develop]
+    # opened + ready_for_review only (no synchronize) is a deliberate cost
+    # bound: one first-pass review per PR, not one per push. Re-request by
+    # closing/reopening the PR if a fresh pass is needed.
     types: [opened, ready_for_review]
   workflow_call:
-    inputs:
-      base-branch:
-        description: "Base branch the PR targets"
-        required: false
-        default: "develop"
-        type: string
     secrets:
       ANTHROPIC_API_KEY:
         description: "Anthropic API key; when absent the review is skipped"
@@ -57,7 +54,11 @@ jobs:
     name: First-Pass Review
     runs-on: ubuntu-latest
     needs: check-secret
-    if: needs.check-secret.outputs.has_key == 'true' && github.event.pull_request.draft == false
+    # The explicit `github.event.pull_request &&` guard matters: GitHub
+    # expressions coerce null == false to true, so without it a caller
+    # invoking this reusable workflow from a non-PR event (push, schedule)
+    # would pass the draft check and fail at the action instead of skipping.
+    if: needs.check-secret.outputs.has_key == 'true' && github.event.pull_request && github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,16 +75,20 @@ jobs:
             If the PR body links an issue (Closes #N) and docs/design/#N/design.md
             exists, read it first and review the diff against that design.
 
-            Review criteria (same as the repository's /review skill):
-            1. Bugs & logic errors — incorrect behavior, off-by-one, null handling
-            2. Security — injection, secrets exposure, missing input validation
-            3. Error handling — swallowed errors, missing edge cases
-            4. Design adherence — undocumented deviations from the design doc
-            5. Tests — untested changed paths (name them specifically)
-            6. Performance — inefficient algorithms, unnecessary allocations
-            7. Type safety — unsafe casts, improper type-system use
+            Review criteria (canonical list: "Review Criteria" in
+            .claude/skills/review/SKILL.md's Review Prompt Template):
+            1. Bugs & Logic Errors — incorrect behavior, off-by-one, null/undefined issues
+            2. Security — injection, auth issues, secrets exposure, input validation
+            3. Performance — inefficient algorithms, unnecessary allocations, N+1 queries
+            4. Code Quality — readability, naming, DRY violations, overly complex logic
+            5. Type Safety — missing types, unsafe casts, improper use of type system
+            6. Error Handling — unhandled exceptions, missing edge cases
+            7. Test Coverage — are new features/changes adequately tested?
+            8. Design Adherence — does the implementation match the design document?
 
-            Report gaps and defects, not style preferences. Verify claims by
+            Report gaps and defects, not stylistic nitpicks — code-quality
+            findings must materially affect maintainability or violate a
+            documented project rule (.claude/rules/*). Verify claims by
             reading the code before asserting them. Organize findings as
             Critical / Warnings / Suggestions with file:line references, omit
             empty categories, and end with a verdict: APPROVE, REQUEST_CHANGES,

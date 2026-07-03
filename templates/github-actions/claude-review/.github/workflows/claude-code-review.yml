@@ -30,6 +30,12 @@ permissions:
   pull-requests: write
   issues: read
 
+# Concurrency declared inside the reusable workflow does not apply to
+# caller runs; cancel superseded reviews of the same PR here.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   call-claude-review:
     uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/claude-code-review.yml@__ERD_REF__

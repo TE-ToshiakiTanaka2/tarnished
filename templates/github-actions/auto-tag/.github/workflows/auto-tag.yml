@@ -31,6 +31,14 @@ permissions:
   contents: write
   pull-requests: write
 
+# Serialize tag computation per ref so rapid back-to-back merges queue
+# instead of racing to compute the same version. Concurrency declared
+# inside the reusable workflow does not apply to caller runs, so this
+# block must live here in the caller.
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   call-auto-tag:
     uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/auto-tag.yml@__ERD_REF__

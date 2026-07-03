@@ -12,7 +12,7 @@ The lifecycle is expressed at three altitude levels. Each level has a distinct j
 | **Operational spec** | `.claude/skills/*/SKILL.md` | The detailed, executable procedure (phases, branch/commit/PR contracts, artifact destinations, output templates). This is where behavior is authored. |
 | **Codex projection** | `.agents/skills/*/SKILL.md` | Thin pointers that read the contract and the operational spec, translating Claude-specific tool references for Codex. |
 
-Detailed sub-step behavior lives in the erd command docs. `.claude/commands/erd/*` is the authored copy; `.tarnished/workflows/erd/*` is a byte-identical projection for Codex-facing instructions (generated at scaffold time and kept current by `refresh-assets.sh`).
+Detailed sub-step behavior lives in the erd command docs. `.claude/commands/erd/*` is the authored copy; `.tarnished/workflows/erd/*` is a byte-identical projection for Codex-facing instructions (generated at scaffold time and kept current by `refresh-assets.sh` for projects whose `.tarnished/refresh.json` includes the `.tarnished/workflows/erd` and `.claude/agents` managed paths — projects scaffolded earlier must adopt those entries once from `templates/agent-workflows/.tarnished/refresh.json`).
 
 When editing any level, keep the others aligned in the same commit. Byte-identity of all mirrored trees is enforced by `scripts/verify-mirrors.sh` (CI: `asset-parity.yml`).
 

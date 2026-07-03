@@ -61,7 +61,8 @@ The merge base derives from an explicit `[target_branch]` argument (default `dev
 
 - `refresh.json` (workspace + agent-workflows template) gains: `.tarnished/workflows/erd` (src `templates/claude/.claude/commands/erd` — same source scaffold generation uses) and `.claude/agents` (src `templates/claude/.claude/agents`).
 - `.agents/skills` (Codex) is deliberately NOT refresh-managed: `refresh-assets.sh` creates missing dst dirs, which would inject Codex assets into Claude-only projects. Documented as scaffold-frozen.
-- `scripts/lib/common.sh::MANIFEST_EXCLUDE_GLOBS` and `tests/refresh_assets.bats` extended to match.
+- `scripts/lib/common.sh::MANIFEST_EXCLUDE_GLOBS` extended to match (both `dir` and `dir/*` forms plus `.local` overlays); the existing `refresh_assets.bats` cross-check invariant covers the new entries without test changes.
+- Delivery caveat: `refresh.json` is not itself refresh-managed, so projects scaffolded before this change must adopt the new managed-path entries once (documented in AGENTS.md section 6); until then their `.tarnished/workflows/erd` stays scaffold-frozen and `/review` uses its general-purpose-subagent fallback in place of the not-yet-delivered `code-reviewer` agent.
 - `templates/claude/plugin.sh` copies the new `.claude/agents/` directory.
 
 ## Considered and rejected
