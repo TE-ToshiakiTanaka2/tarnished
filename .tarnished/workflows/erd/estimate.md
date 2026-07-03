@@ -1,3 +1,8 @@
+---
+description: Estimate the size, priority, and risk of a task or feature and produce a structured estimation report with a per-component breakdown. Use before committing to work, or when asked how big, how complex, or how risky a change is.
+argument-hint: "[target task or feature description]"
+---
+
 # /erd:estimate - Development Estimation
 
 Provide structured development estimates for tasks, features, or projects.
@@ -11,6 +16,8 @@ Provide structured development estimates for tasks, features, or projects.
 ## MCP Tools
 
 - **context7**: `resolve-library-id`, `get-library-docs` -- for assessing complexity of external library integrations during estimation
+
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
 
 ## Behavioral Flow
 

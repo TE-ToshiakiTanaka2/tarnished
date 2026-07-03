@@ -1,3 +1,8 @@
+---
+description: Design system architecture, APIs, and component interfaces, producing a design document with module structure, interface specifications, and data flow. Use after requirements are settled and before planning implementation, or when asked to design or architect a system or component.
+argument-hint: "[target system or component]"
+---
+
 # /erd:design - Architecture and Component Design
 
 Design system architecture, APIs, and component interfaces with comprehensive specifications.
@@ -12,6 +17,8 @@ Design system architecture, APIs, and component interfaces with comprehensive sp
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_file`, `search_for_pattern`, `list_dir` -- for understanding existing architecture, finding related symbols, and analyzing current codebase structure
 - **context7**: `resolve-library-id`, `get-library-docs` -- for researching library APIs and patterns when design involves external dependencies
+
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
 
 ## Behavioral Flow
 
@@ -82,7 +89,7 @@ How data moves through the system.
 This command produces a DESIGN DOCUMENT ONLY.
 
 **Will NOT**:
-- Generate actual implementation code (use implementation phase)
+- Generate actual implementation code (use `/erd:implement`)
 - Modify existing system architecture without explicit approval
 - Create designs that violate established architectural constraints
 

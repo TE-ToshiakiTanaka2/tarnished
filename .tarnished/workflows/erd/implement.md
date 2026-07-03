@@ -1,3 +1,8 @@
+---
+description: Implement a feature or code change following design artifacts and existing codebase conventions, with progressive commits per logical unit. Use when requirements and design are settled and it is time to write code, or when asked to implement, add, or build a feature.
+argument-hint: "[feature description or issue reference]"
+---
+
 # /erd:implement - Feature Implementation
 
 Implement features and code changes following design artifacts and codebase conventions.
@@ -12,6 +17,8 @@ Implement features and code changes following design artifacts and codebase conv
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol` -- for codebase navigation, understanding existing patterns, and semantic code editing
 - **context7**: `resolve-library-id`, `get-library-docs` -- for looking up library documentation and framework-specific patterns during implementation
+
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
 
 ## Behavioral Flow
 

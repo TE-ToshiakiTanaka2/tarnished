@@ -1,3 +1,8 @@
+---
+description: Apply behavior-preserving quality enhancements -- error handling, type-safety additions, pattern consistency, and deduplication -- to existing code. Use after analysis identifies issues, or when asked to improve, refactor, or harden code without changing features.
+argument-hint: "[target path or component]"
+---
+
 # /erd:improve - Code Improvement
 
 Apply systematic improvements to code quality, performance, and maintainability.
@@ -13,6 +18,8 @@ Apply systematic improvements to code quality, performance, and maintainability.
 - **serena**: `find_symbol`, `get_symbols_overview`, `replace_symbol_body`, `find_referencing_symbols` -- for understanding code structure and safely applying changes
 - **context7**: `resolve-library-id`, `get-library-docs` -- for framework-specific best practices
 
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
+
 ## Behavioral Flow
 
 1. **Analyze**: Examine code for improvement opportunities
@@ -23,9 +30,9 @@ Apply systematic improvements to code quality, performance, and maintainability.
 
 ## Improvement Categories
 
+**Scope boundary**: improve is behavior-preserving enhancement only (error handling, type-safety additions, pattern consistency, deduplication by extraction); removal of dead code, unused imports/variables, and redundant annotations belongs to `/erd:cleanup`.
+
 ### Auto-fix (applies without confirmation)
-- Unused import removal
-- Dead variable cleanup
 - Style/formatting fixes
 - Simple type annotation additions
 - Import organization

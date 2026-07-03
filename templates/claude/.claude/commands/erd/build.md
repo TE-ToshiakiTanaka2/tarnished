@@ -1,3 +1,8 @@
+---
+description: Build and compile the project, then iteratively fix code-level build, lint, and type errors until the build passes. Use after implementing changes or when asked to build, compile, or verify that the project builds cleanly.
+argument-hint: "[target path or component]"
+---
+
 # /erd:build - Build Verification
 
 Build, compile, and verify projects with intelligent error handling.
@@ -12,13 +17,15 @@ Build, compile, and verify projects with intelligent error handling.
 
 - **context7**: `resolve-library-id`, `get-library-docs` -- for looking up build tool documentation when resolving configuration issues
 
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
+
 ## Behavioral Flow
 
 1. **Detect**: Identify project type and build system (Cargo, npm, pip, make, etc.)
 2. **Validate**: Check dependencies and configuration
 3. **Execute**: Run build with real-time error monitoring
 4. **Analyze**: Parse errors and provide actionable fixes
-5. **Fix**: Apply fixes iteratively until build passes
+5. **Fix**: Apply fixes iteratively until build passes. When failures stem from build system configuration or missing dependencies rather than code, stop and escalate to `/erd:troubleshoot` for diagnosis instead of retrying.
 
 ## Build System Detection
 
@@ -70,4 +77,4 @@ This command runs build tools and fixes build errors.
 - Install missing build dependencies
 - Change project structure
 
-**Next Step**: After build passes, use `/erd:test` to run tests.
+**Next Step**: After build passes, use `/erd:test` to run tests. If failures trace to build configuration or missing dependencies, use `/erd:troubleshoot` to diagnose.

@@ -1,3 +1,8 @@
+---
+description: Discover and refine requirements for a topic or idea through Socratic dialogue, producing a structured requirements specification. Use at the start of a new feature when scope is vague, or when asked to brainstorm, explore an idea, or clarify requirements.
+argument-hint: "[topic or idea]"
+---
+
 # /erd:brainstorm - Interactive Requirements Discovery
 
 Discover and refine requirements through Socratic dialogue and structured exploration.
@@ -11,6 +16,8 @@ Discover and refine requirements through Socratic dialogue and structured explor
 ## MCP Tools
 
 - **context7**: `resolve-library-id`, `get-library-docs` -- for verifying technical feasibility and checking library capabilities during requirements exploration
+
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
 
 ## Behavioral Flow
 
