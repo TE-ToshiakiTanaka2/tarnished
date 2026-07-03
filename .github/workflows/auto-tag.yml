@@ -25,6 +25,13 @@ permissions:
   contents: write
   pull-requests: write
 
+# Serialize tag computation per ref (#303). Without this, rapid back-to-back
+# merges race: every run computes the same next version and all but one fail.
+# cancel-in-progress stays false so each merge still gets its own tag, in order.
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   ERD_REPO: TE-ToshiakiTanaka2/tarnished
@@ -146,8 +153,18 @@ jobs:
         if: steps.branch.outputs.name != ''
         run: |
           CONFIG_PATH="${{ inputs.config-path || '.github/versioning.yml' }}"
+          # Capture output without letting `bash -e` abort inside the command
+          # substitution — otherwise erd's error output is swallowed and the
+          # step fails with no diagnostics (#303).
+          set +e
           OUTPUT=$(./target/release/erd tag auto --branch "${{ steps.branch.outputs.name }}" --config "$CONFIG_PATH" 2>&1)
+          ERD_EXIT=$?
+          set -e
           echo "$OUTPUT"
+          if [ "$ERD_EXIT" -ne 0 ]; then
+            echo "::error::erd tag auto failed with exit code $ERD_EXIT (output above)"
+            exit "$ERD_EXIT"
+          fi
           # Extract tag name from output (assumes erd outputs "Created tag: vX.Y.Z" or similar)
           TAG_NAME=$(echo "$OUTPUT" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' | tail -1 || echo "")
           echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
