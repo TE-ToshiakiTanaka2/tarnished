@@ -148,7 +148,15 @@ if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
         ".claude/skills/*"
         ".claude/scripts"
         ".claude/scripts/*"
+        ".claude/agents"
+        ".claude/agents/*"
         ".claude/rules/shell.md"
+        # The Codex-readable erd projection is refresh-managed from the same
+        # source the scaffold generates it from (templates/claude/.claude/
+        # commands/erd), closing the drift between .claude/commands/erd and
+        # .tarnished/workflows/erd in downstream projects (#304).
+        ".tarnished/workflows/erd"
+        ".tarnished/workflows/erd/*"
         # User-owned overlay sidecars (#279 FR-4). Files in these
         # directories survive every refresh and MUST never be tracked
         # by the manifest either.
@@ -158,9 +166,13 @@ if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
         ".claude/skills.local/*"
         ".claude/scripts.local"
         ".claude/scripts.local/*"
+        ".claude/agents.local"
+        ".claude/agents.local/*"
         ".claude/rules.local/shell.md"
         ".claude/rules.local"
         ".claude/rules.local/*"
+        ".tarnished/workflows/erd.local"
+        ".tarnished/workflows/erd.local/*"
         # CI workflow / GitHub-side configuration is routinely customized per
         # project (project numbers, owners, runner labels, additional jobs).
         # Treat .github/ as user-owned: scaffold still emits the templates

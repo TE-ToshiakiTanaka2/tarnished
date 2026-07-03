@@ -25,6 +25,16 @@
       "src": "templates/claude/.claude/rules/shell.md",
       "dst": ".claude/rules/shell.md",
       "overlay": ".claude/rules.local/shell.md"
+    },
+    {
+      "src": "templates/claude/.claude/agents",
+      "dst": ".claude/agents",
+      "overlay": ".claude/agents.local"
+    },
+    {
+      "src": "templates/claude/.claude/commands/erd",
+      "dst": ".tarnished/workflows/erd",
+      "overlay": ".tarnished/workflows/erd.local"
     }
   ]
 }

@@ -52,6 +52,11 @@ plugin_copy() {
         copy_dir_with_confirm "${PLUGIN_DIR}/.claude/skills" "${target_dir}/.claude/skills"
     fi
 
+    # Copy agents directory (project subagents, e.g. code-reviewer used by /review)
+    if [[ -d "${PLUGIN_DIR}/.claude/agents" ]]; then
+        copy_dir_with_confirm "${PLUGIN_DIR}/.claude/agents" "${target_dir}/.claude/agents"
+    fi
+
     # Copy scripts directory
     if [[ -d "${PLUGIN_DIR}/.claude/scripts" ]]; then
         copy_dir_with_confirm "${PLUGIN_DIR}/.claude/scripts" "${target_dir}/.claude/scripts"
