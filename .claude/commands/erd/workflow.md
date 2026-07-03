@@ -1,3 +1,8 @@
+---
+description: Generate a structured, dependency-ordered implementation plan from requirements and design specifications, with testable completion criteria per step. Use after design approval and before starting implementation, or when asked to plan, break down, or sequence work.
+argument-hint: "[requirement description or design reference]"
+---
+
 # /erd:workflow - Implementation Workflow Planning
 
 Generate structured implementation workflows from requirements and design specifications.
@@ -78,4 +83,4 @@ This command produces an IMPLEMENTATION PLAN ONLY.
 - Make architectural changes
 - Run builds or tests
 
-**Next Step**: After workflow completes, proceed to implementation phase.
+**Next Step**: After workflow completes, proceed to `/erd:implement`.

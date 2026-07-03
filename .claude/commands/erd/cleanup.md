@@ -1,3 +1,8 @@
+---
+description: Remove dead code, unused imports and variables, commented-out code, and redundant annotations from a target path without changing behavior. Use when asked to clean up, declutter, or remove dead or unused code, typically after analysis flags removable code.
+argument-hint: "[target path or component]"
+---
+
 # /erd:cleanup - Code and Project Cleanup
 
 Systematically clean up code, remove dead code, and optimize project structure.
@@ -13,6 +18,8 @@ Systematically clean up code, remove dead code, and optimize project structure.
 - **serena**: `find_symbol`, `find_referencing_symbols` -- for safely identifying unused code; confirm zero references with `find_referencing_symbols` before removing code via the standard edit tools
 - **context7**: `resolve-library-id`, `get-library-docs` -- for checking whether seemingly unused imports are required by framework conventions
 
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
+
 ## Behavioral Flow
 
 1. **Analyze**: Scan for cleanup opportunities (dead code, unused imports, empty blocks)
@@ -22,6 +29,8 @@ Systematically clean up code, remove dead code, and optimize project structure.
 5. **Report**: Summarize what was cleaned up
 
 ## Cleanup Categories
+
+**Scope boundary**: cleanup is removal only (dead code, unused imports/variables, commented-out code, redundant annotations); behavior-preserving enhancements such as error handling or type-safety additions belong to `/erd:improve`.
 
 ### Auto-fix (applies automatically)
 - Unused imports removal

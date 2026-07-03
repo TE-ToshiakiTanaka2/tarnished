@@ -17,25 +17,29 @@ This skill is the Claude Code projection of `.tarnished/workflows/issue.md`. Kee
 /issue
 ```
 
+## erd Command Invocation
+
+All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
+
+```
+Read(".claude/commands/erd/<command>.md") → follow instructions inline
+```
+
+Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
+
 ## What This Skill Does
 
 ### Phase 1: Requirement Understanding and Discovery
 
 1. **Confirm user request** - Understand what the user wants to accomplish
-2. **Execute `/erd:brainstorm`** - Use brainstorm command to dig deeper into requirements:
-   - Discover hidden requirements through Socratic dialogue
-   - Identify edge cases and boundary conditions
-   - Confirm technical constraints
-   - Explore non-functional requirements (performance, security, maintainability)
-3. **Organize requirements** - Structure and summarize discovered requirements
+2. **Load `/erd:brainstorm` and follow inline** - `Read(".claude/commands/erd/brainstorm.md")`:
+   - Discover hidden requirements, edge cases, technical constraints, and non-functional requirements through Socratic dialogue
+3. **Organize requirements** - Structure and summarize discovered requirements; iterate with the user until approved
 
 ### Phase 2: Estimation
 
-4. **Execute `/erd:estimate`** - Development estimation with intelligent analysis:
-   - Determine Size (XS/S/M/L/XL) based on scope and complexity
-   - Determine Priority (High/Medium/Low) based on impact and urgency
-   - Identify risks and dependencies
-   - Estimate affected layers
+4. **Load `/erd:estimate` and follow inline** - `Read(".claude/commands/erd/estimate.md")`:
+   - Determine Size and Priority using the criteria tables below, identify risks, dependencies, and affected layers
 
 ### Phase 3: Issue Creation and Configuration
 
@@ -48,31 +52,12 @@ This skill is the Claude Code projection of `.tarnished/workflows/issue.md`. Kee
    - See `_shared/issue/SKILL.md` for full procedure (Issue creation, milestone, project fields)
 6. **Return Issue number**
 
-## erd Skills Used
+## erd Commands Used
 
-| Skill | Purpose | Phase |
+| Command | Purpose | Phase |
 | --- | --- | --- |
 | `/erd:brainstorm` | Interactive requirements discovery through Socratic dialogue | Phase 1 |
 | `/erd:estimate` | Development estimates with intelligent analysis | Phase 2 |
-
-## Leveraging erd:brainstorm
-
-Use `/erd:brainstorm` to explore requirements from these perspectives:
-
-- **Functional requirements**: What to achieve, acceptance criteria
-- **Non-functional requirements**: Performance, security, maintainability
-- **Architecture**: Which layer(s) are affected
-- **User experience**: UI/UX considerations, accessibility
-- **Data model**: New or modified entities, relationships, migrations
-
-## Leveraging erd:estimate
-
-Use `/erd:estimate` to produce a structured estimation:
-
-- **Size**: Based on file count, module span, and complexity
-- **Priority**: Based on impact, urgency, and dependencies
-- **Risk factors**: Technical unknowns, external dependencies
-- **Breakdown**: Per-layer effort distribution
 
 ## Issue Description Format
 
@@ -139,20 +124,6 @@ Context and purpose
 | **High**   | Bug fix, security-related, blocker       |
 | **Medium** | Normal feature addition, improvement     |
 | **Low**    | Documentation, refactoring, nice-to-have |
-
-## Workflow
-
-```mermaid
-graph TD
-    A[Confirm user request] --> B[Execute erd:brainstorm]
-    B --> C[Organize requirements]
-    C --> D{User feedback}
-    D -->|Adjustments needed| B
-    D -->|Approved| E[Execute erd:estimate]
-    E --> F[Create GitHub Issue]
-    F --> G[Configure settings]
-    G --> H[Return Issue number]
-```
 
 ## Completion Output
 

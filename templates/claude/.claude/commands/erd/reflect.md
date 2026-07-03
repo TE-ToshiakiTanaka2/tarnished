@@ -1,3 +1,8 @@
+---
+description: Validate task completion by checking CI results, test coverage, requirement matching, and risk before finalizing work. Use after implementation and tests are done, before merging a PR, or when asked to verify, validate, or reflect on completed work.
+argument-hint: "[target: PR number, task description, or CI run]"
+---
+
 # /erd:reflect - Task Reflection and Validation
 
 Validate task completion, CI results, and overall quality before finalizing work.
@@ -11,6 +16,9 @@ Validate task completion, CI results, and overall quality before finalizing work
 ## Behavioral Flow
 
 1. **Gather**: Collect CI results, test output, coverage data, and change diff
+   - Check status: `gh pr checks <pr_number>`
+   - Failing logs: `gh run view <run_id> --log-failed`
+   - Change diff: `git diff <base>...HEAD`
 2. **Validate**: Assess whether the implementation meets requirements
 3. **Evaluate**: Check quality gates and identify remaining concerns
 4. **Report**: Present validation summary with clear pass/fail and action items

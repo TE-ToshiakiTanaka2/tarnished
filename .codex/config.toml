@@ -12,3 +12,11 @@ approval_policy = "on-request"
 # Sandbox mode: restrict file writes to workspace only
 # Options: "workspace-write", "danger-full-access"
 sandbox_mode = "workspace-write"
+
+# MCP servers available to Codex. The erd command docs projected into
+# .tarnished/workflows/erd/ reference context7 for library documentation;
+# this block makes that reference real on the Codex side. When the server
+# is unavailable, agents fall back to built-in search/read tools.
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]

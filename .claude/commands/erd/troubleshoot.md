@@ -1,3 +1,8 @@
+---
+description: Diagnose issues in code, builds, tests, or performance, identify the root cause with evidence, and propose ranked solutions without applying fixes by default. Use when something is broken, failing, or behaving unexpectedly and the root cause is unknown.
+argument-hint: "[issue description]"
+---
+
 # /erd:troubleshoot - Issue Diagnosis and Resolution
 
 Diagnose and resolve issues in code, builds, deployments, and system behavior.
@@ -11,6 +16,8 @@ Diagnose and resolve issues in code, builds, deployments, and system behavior.
 ## MCP Tools
 
 - **context7**: `resolve-library-id`, `get-library-docs` -- for looking up library-specific error patterns and known issues when troubleshooting dependency-related problems
+
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
 
 ## Behavioral Flow
 

@@ -1,0 +1,42 @@
+# =============================================================================
+# Claude Code Review Workflow (Caller)
+# =============================================================================
+# Calls the reusable workflow from TE-ToshiakiTanaka2/tarnished to post an
+# automated first-pass review on pull requests using Claude. The review uses
+# the same criteria as the local /review skill and is design-doc aware
+# (reads docs/design/#N/design.md when the PR body links an issue).
+#
+# Adoption (manual opt-in — not wired into setup.sh):
+#   1. Copy this file to .github/workflows/claude-code-review.yml
+#   2. Replace __ERD_REF__ with the tarnished ref to pin (e.g. develop)
+#   3. Add the ANTHROPIC_API_KEY secret to the repository
+#      (Settings > Secrets and variables > Actions)
+#
+# Without the secret the workflow skips cleanly, so it is safe to commit
+# before the key is configured.
+#
+# For more information: https://github.com/TE-ToshiakiTanaka2/tarnished
+# =============================================================================
+
+name: Claude Code Review
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+# Concurrency declared inside the reusable workflow does not apply to
+# caller runs; cancel superseded reviews of the same PR here.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  call-claude-review:
+    uses: TE-ToshiakiTanaka2/tarnished/.github/workflows/claude-code-review.yml@__ERD_REF__
+    secrets: inherit

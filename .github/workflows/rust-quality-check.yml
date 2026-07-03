@@ -98,7 +98,8 @@ jobs:
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    # Runs on PRs as well as pushes: the /pr lifecycle stage treats this
+    # workflow as its CI gate, so the PR gate must match the push gate.
     needs: [check, clippy, fmt, unit-test]
     steps:
       - uses: actions/checkout@v4

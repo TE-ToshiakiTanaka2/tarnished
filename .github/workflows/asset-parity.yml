@@ -1,0 +1,32 @@
+name: Asset Parity
+
+# Verifies that the mirrored AI workflow asset trees (live workspace trees,
+# templates/, and the .tarnished projections) remain byte-identical.
+# The invariants live in scripts/verify-mirrors.sh (see AGENTS.md section 6).
+# Historically this parity was maintained by hand and drifted repeatedly;
+# this check makes the invariant enforceable on every PR.
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - ".claude/**"
+      - ".agents/**"
+      - ".codex/**"
+      - ".tarnished/**"
+      - ".devcontainer/scripts/**"
+      - "templates/**"
+      - "scripts/verify-mirrors.sh"
+      - ".github/workflows/asset-parity.yml"
+  push:
+    branches: [develop]
+
+jobs:
+  verify-mirrors:
+    name: Verify Mirror Invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run mirror verification
+        run: bash scripts/verify-mirrors.sh

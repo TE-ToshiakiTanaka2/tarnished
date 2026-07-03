@@ -1,3 +1,8 @@
+---
+description: Analyze code quality, security, performance, and architecture for a target path and produce a prioritized findings report with severity ratings. Use before improving code or creating a PR, or when asked to assess code health.
+argument-hint: "[target path or component]"
+---
+
 # /erd:analyze - Code Analysis and Quality Assessment
 
 Comprehensive code analysis across quality, security, performance, and architecture domains.
@@ -11,6 +16,8 @@ Comprehensive code analysis across quality, security, performance, and architect
 ## MCP Tools
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `find_referencing_symbols` -- for understanding code structure, symbol relationships, and usage patterns
+
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
 
 ## Behavioral Flow
 

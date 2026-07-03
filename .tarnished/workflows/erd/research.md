@@ -1,3 +1,8 @@
+---
+description: Research external libraries, APIs, patterns, and technologies using web search and documentation lookups, producing an evidence-based report with sources. Use before designing around an unfamiliar dependency, or when asked to research, compare, or investigate a technology.
+argument-hint: "[topic or query]"
+---
+
 # /erd:research - External Research
 
 Research external libraries, APIs, patterns, and technologies with evidence-based analysis.
@@ -11,7 +16,9 @@ Research external libraries, APIs, patterns, and technologies with evidence-base
 ## MCP Tools
 
 - **context7**: `resolve-library-id`, `get-library-docs` -- for looking up library documentation, API references, and framework-specific patterns
-- **playwright**: for extracting content from JavaScript-heavy documentation sites when WebSearch or context7 cannot retrieve sufficient information
+- **playwright** (optional; often unavailable -- prefer WebSearch/WebFetch): for extracting content from JavaScript-heavy documentation sites when WebSearch or context7 cannot retrieve sufficient information
+
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
 
 ## Behavioral Flow
 

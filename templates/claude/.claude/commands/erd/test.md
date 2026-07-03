@@ -1,3 +1,8 @@
+---
+description: Run the project's test suite with coverage analysis, fix clear failures, and author missing tests for changed or uncovered code paths. Use after a build passes or when asked to run tests, check coverage, or add missing tests.
+argument-hint: "[target path or component]"
+---
+
 # /erd:test - Test Execution and Coverage
 
 Execute tests with coverage analysis and quality reporting.
@@ -13,13 +18,16 @@ Execute tests with coverage analysis and quality reporting.
 - **playwright**: for e2e browser testing when the project includes UI components
 - **context7**: `resolve-library-id`, `get-library-docs` -- for looking up test framework documentation and assertion patterns
 
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search, file reading, and web search tools -- do not stop or ask for installation.
+
 ## Behavioral Flow
 
 1. **Discover**: Detect test framework and categorize available tests
 2. **Execute**: Run test suite with coverage collection
 3. **Analyze**: Parse results, identify failures, assess coverage
-4. **Fix**: Fix failing tests if the cause is clear (implementation bug or test bug)
-5. **Report**: Present results with actionable recommendations
+4. **Author**: Write missing tests for changed or uncovered code paths identified during coverage analysis
+5. **Fix**: Fix failing tests if the cause is clear (implementation bug or test bug)
+6. **Report**: Present results with actionable recommendations
 
 ## Test Framework Detection
 
@@ -70,13 +78,13 @@ When tests fail:
 
 ## CRITICAL BOUNDARIES
 
-**TEST EXECUTION ONLY**
+**TEST EXECUTION AND COVERAGE ONLY**
 
-This command runs tests and reports results.
+This command runs tests, authors missing tests for uncovered changes, and reports results.
 
 **Will NOT**:
-- Generate new test cases (unless fixing a broken test)
+- Rewrite existing passing tests without cause
 - Modify test framework configuration
 - Skip tests to make the suite pass
 
-**Next Step**: After tests pass, use `/erd:analyze` for code quality or proceed to `/pr`.
+**Next Step**: After tests pass, use `/erd:analyze` for code quality or proceed to the PR stage of the lifecycle workflow.

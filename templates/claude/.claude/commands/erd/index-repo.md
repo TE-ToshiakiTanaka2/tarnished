@@ -1,3 +1,8 @@
+---
+description: Generate a compact PROJECT_INDEX.md summarizing repository structure, entry points, core modules, and dependencies for fast codebase orientation. Use at the start of work in an unfamiliar repository, or when asked to index, map, or summarize the codebase.
+argument-hint: "[mode: create|update|quick]"
+---
+
 # /erd:index-repo - Repository Indexing
 
 Generate a compact project index for efficient codebase understanding with significant token reduction.
@@ -19,7 +24,7 @@ Generate a compact project index for efficient codebase understanding with signi
 ## Purpose
 
 - **Before**: Reading all files costs tens of thousands of tokens every session
-- **After**: Reading PROJECT_INDEX.md costs ~3K tokens (90%+ reduction)
+- **After**: Reading PROJECT_INDEX.md costs ~3KB (roughly 1K tokens) (90%+ reduction)
 
 ## Behavioral Flow
 
@@ -78,7 +83,7 @@ Generated: {timestamp}
 
 - All entry points identified
 - Core modules documented
-- Index size < 5KB
+- Index size under 5KB (~3KB typical)
 - Human-readable format
 
 ## Output

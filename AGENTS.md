@@ -86,13 +86,19 @@ The `plugin_post_copy` step must append a guarded block to `${target_dir}/.devco
 
 ### 6. Always-latest asset sync (`templates/core/.devcontainer/scripts/refresh-assets.sh`, `<project>/.tarnished/refresh.json`, #279)
 
-`.claude/{commands,skills,scripts,rules}/` are mirrored from upstream tarnished by `refresh-assets.sh` on every container start (`postStartCommand`) and on first boot (via `post.sh`). When reviewing changes that touch this surface, verify:
+`.claude/{commands,skills,scripts,agents,rules}/` and the Codex-readable erd projection `.tarnished/workflows/erd/` are mirrored from upstream tarnished by `refresh-assets.sh` on every container start (`postStartCommand`) and on first boot (via `post.sh`). When reviewing changes that touch this surface, verify:
 
 - Any new path added to `templates/agent-workflows/.tarnished/refresh.json :: managed_paths[]` is also listed in `scripts/lib/common.sh::MANIFEST_EXCLUDE_GLOBS` (both the directory entry and the `dir/*` glob form). The two lists are kept in sync by `tests/refresh_assets.bats :: "refresh.json default managed_paths are excluded from manifest tracking"`.
 - New defaults in `refresh.json` MUST also appear in `/workspace/.tarnished/refresh.json` (workspace dogfooding mirror).
 - Edits to `templates/core/.devcontainer/scripts/refresh-assets.sh` MUST be applied to `/workspace/.devcontainer/scripts/refresh-assets.sh` in the same commit. The two are byte-identical (modulo absolute paths) by convention.
 - The script's FR-5 invariant is preserved: every failure path emits `print_warning` and exits 0 (the only `exit 1` is for an unknown CLI flag). `set -e` is deliberately omitted in favor of explicit per-call error handling so container start (`postStartCommand`) is never blocked.
-- User-customizable assets MUST be overridden via `.claude/<dir>.local/` sidecars, not by editing the synced base file (the next refresh would overwrite it).
+- User-customizable assets MUST be overridden via `.claude/<dir>.local/` sidecars, not by editing the synced base file (the next refresh would overwrite it). This applies to `.claude/agents/` too: refresh mirrors it with `rsync --delete`, so hand-authored project agents MUST live in `.claude/agents.local/` or they are deleted on the next container start.
+- `refresh.json` itself is NOT refresh-managed: projects scaffolded before a new managed path was added keep their old whitelist until they adopt the new entries manually (one-time copy from `templates/agent-workflows/.tarnished/refresh.json`). Reviewers adding managed paths should flag this migration in the PR description.
+- Overlay customization of `.claude/commands/erd/*` (via `.claude/commands.local/erd/`) diverges the two erd trees downstream unless the same override is duplicated into `.tarnished/workflows/erd.local/` — the projection syncs from the upstream source, not from the post-overlay live tree.
+
+### 7. Mirror byte-identity invariants (`scripts/verify-mirrors.sh`, `.github/workflows/asset-parity.yml`, #304)
+
+The workspace trees dogfood the templates. Every mirrored pair MUST stay byte-identical in the same commit: `.claude/commands/erd` ≡ `.tarnished/workflows/erd` ≡ `templates/claude/.claude/commands/erd`; `.claude/{skills,commands,agents,scripts}` ≡ `templates/claude/.claude/...`; `.agents` ≡ `templates/codex/.agents`; `.codex/config.toml` ≡ template copy; `.tarnished/workflows/*.md` + `refresh.json` + `agent-profile.json` ≡ `templates/agent-workflows/.tarnished/...` (except generated `erd/`); `.claude/rules/rust.md` ≡ rust language template copy. The authoritative list lives in `scripts/verify-mirrors.sh` — run it before approving any change that touches these trees; CI enforces it via `asset-parity.yml`. When adding a new mirrored asset, extend `verify-mirrors.sh` in the same PR.
 
 ## Output Format
 
