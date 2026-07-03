@@ -1,32 +1,25 @@
 ---
 name: review
-description: Code review via Codex CLI. Delegates review of the current branch to OpenAI Codex for an independent second opinion, then applies fixes. Requires codex CLI to be installed.
-argument-hint: "[--builtin]"
+description: Independent code review of the current branch before PR creation. Resolves a reviewer in priority order — configured review agent, Codex CLI, Claude-native fresh-context subagent — then saves the review artifact and applies fixes.
+argument-hint: "[target_branch] [--codex|--claude|--builtin]"
 disable-model-invocation: true
 ---
 
-# Code Review Skill (via Codex)
+# Skill: Review
 
-Code review skill that delegates review of the current branch's implementation to OpenAI Codex CLI for an independent second opinion. Review scope scales with development size.
+Independent review of the current branch's implementation before PR creation. Review scope scales with development size. The reviewer is resolved through a fallback ladder, so the skill works with or without an external review agent installed.
 
-This skill is the Claude Code projection of `.tarnished/workflows/review.md` for the Claude-main + Codex-review handoff. Keep the shared workflow source and this tool-specific entrypoint aligned.
+This skill is the Claude Code projection of `.tarnished/workflows/review.md`. Keep the shared workflow source and this tool-specific entrypoint aligned.
 
-## Prerequisites Check
-
-!`command -v codex >/dev/null 2>&1 && echo "CODEX_AVAILABLE=true" || echo "CODEX_AVAILABLE=false"`
-
-**IMPORTANT**: If `CODEX_AVAILABLE=false` above, you MUST stop immediately and show this message:
+## Usage
 
 ```
-Codex CLI is required for /review but was not found.
-
-Install with:
-  npm install -g @openai/codex
-
-After installation, run /review again.
+/review                    # auto-resolve reviewer, diff against develop
+/review main               # diff against main instead
+/review --codex            # force Codex CLI reviewer
+/review --claude           # force Claude-native subagent reviewer
+/review --builtin          # force Codex built-in `codex review`
 ```
-
-Do NOT proceed with any review steps if Codex CLI is not available.
 
 ## MCP Tools
 
@@ -34,96 +27,78 @@ Use the following MCP tools for code understanding during review:
 
 - **serena**: `find_symbol`, `get_symbols_overview`, `search_for_pattern` — for tracing code paths and understanding symbol relationships in the reviewed changes
 
-## Usage
-
-Review the current feature branch's implementation (default):
-
-```
-/review
-```
-
-Use Codex built-in review:
-
-```
-/review --builtin
-```
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search and file reading tools — do not stop or ask for installation.
 
 ## What This Skill Does
 
 ### Phase 1: Collect Context
 
-1. **Identify branches** - Detect current branch and merge base with `develop`:
+1. **Identify branches** — Detect current branch and merge base with the target branch (first non-flag argument, default `develop`):
    ```bash
+   TARGET_BRANCH=${1:-develop}
    CURRENT_BRANCH=$(git branch --show-current)
-   MERGE_BASE=$(git merge-base develop HEAD)
+   MERGE_BASE=$(git merge-base "$TARGET_BRANCH" HEAD)
    ```
-2. **Determine issue number** - Extract from branch name (e.g., `feature/user/#123/desc` → `123`)
-3. **Load design artifacts** - Read `docs/design/#<issue_number>/design.md` if available:
-   - Architecture decisions and constraints
-   - API specifications
-   - Expected behavior
-4. **Determine review scope** - Based on change size:
+2. **Determine issue number** — Extract from branch name (e.g., `feature/user/#123/desc` → `123`)
+3. **Load design artifacts** — Read `docs/design/#<issue_number>/design.md` and `api-spec.md` if available: architecture decisions, constraints, expected behavior
+4. **Determine review scope** — Based on change size:
    - **Small** (< 100 lines changed): Quick review — bugs, security, correctness
-   - **Medium** (100-500 lines): Standard review — all criteria
+   - **Medium** (100–500 lines): Standard review — all criteria
    - **Large** (500+ lines): Deep review — all criteria + architecture adherence to design
 
-### Phase 2A: Custom Review via `codex exec` (Default)
+### Phase 2: Resolve the Reviewer
+
+Resolve in priority order (stop at the first match):
+
+1. **Explicit flag** — `--codex` / `--builtin` selects Codex CLI (fail with install instructions if `command -v codex` is empty); `--claude` selects the Claude-native subagent.
+2. **Configured review agent** — Read `.tarnished/agent-profile.json` → `review_agent`. If it names an installed external agent (e.g. `codex`) distinct from the primary agent, use it. Skip if the file is missing, contains unrendered `{{...}}` placeholders, or names an unavailable tool.
+3. **Codex CLI** — If `command -v codex` succeeds, use Codex (Phase 3A).
+4. **Claude-native fallback** — Use the `code-reviewer` subagent (Phase 3C). Mark the artifact `Reviewer: Claude (code-reviewer subagent, fallback)`.
+
+### Phase 3A: Review via `codex exec` (Codex default)
 
 5. **Collect implementation changes**:
    - `git log --oneline ${MERGE_BASE}...HEAD` — commits
    - `git diff ${MERGE_BASE}...HEAD` — full diff
-6. **Construct review prompt** - Build a structured prompt with:
-   - The diff and commit history
-   - Project context from codebase analysis
-   - Design constraints (from design.md if available)
-   - Review criteria scaled to scope (see Review Prompt Template)
-7. **Execute `codex exec`**:
+6. **Construct review prompt** — Use the Review Prompt Template below with diff, commit history, design constraints, and scope-scaled criteria
+7. **Execute**:
    ```bash
    echo "${REVIEW_PROMPT}" | codex exec - --sandbox read-only
    ```
 8. **Capture output**
 
-### Phase 2B: Built-in Review via `codex review` (with `--builtin`)
+### Phase 3B: Review via `codex review` (with `--builtin`)
 
-5. **Run `codex review`** directly:
-   ```bash
-   codex review --base develop
+5. **Run** `codex review --base "$TARGET_BRANCH"` and capture output.
+
+### Phase 3C: Review via Claude subagent (fallback or `--claude`)
+
+5. **Launch the `code-reviewer` subagent** (defined in `.claude/agents/code-reviewer.md`) with the Review Prompt Template below as its task. The subagent runs read-only in a fresh context — do not paste your own analysis of the changes into the prompt; let it judge the diff independently.
+6. **Capture its final message** as the review output.
+
+### Phase 4: Save & Apply Fixes
+
+9. **Save review results** to `docs/review/#{issue_number}/review.md` with metadata header:
+   ```markdown
+   # Code Review: #{issue_number}
+
+   - **Branch**: {current branch name}
+   - **Base**: {target branch} (merge base: {merge base SHA short})
+   - **Review scope**: {Small/Medium/Large} ({N} lines changed)
+   - **Reviewed at**: {ISO 8601 timestamp}
+   - **Reviewer**: {Codex CLI | Claude (code-reviewer subagent, fallback) | configured agent name}
+
+   ---
+
+   {Full review output}
    ```
-6. **Capture output**
+10. **Present review results** to the user
+11. **Implement fixes** — Critical issues: must fix. Warnings: should fix. Suggestions: discuss with user.
+12. **Commit fixes**: `fix: address review feedback for #<issue_number>`
 
-### Phase 3: Save & Apply Fixes
+### Phase 5: Report
 
-9. **Save review results** - Save Codex output to `docs/review/#{issue_number}/`:
-    ```bash
-    mkdir -p docs/review/#{issue_number}
-    ```
-    - Save the raw review output as `docs/review/#{issue_number}/review.md` with metadata header:
-      ```markdown
-      # Code Review: #{issue_number}
-
-      - **Branch**: {current branch name}
-      - **Base**: develop (merge base: {merge base SHA short})
-      - **Review scope**: {Small/Medium/Large} ({N} lines changed)
-      - **Reviewed at**: {ISO 8601 timestamp}
-      - **Reviewer**: Codex CLI
-
-      ---
-
-      {Full Codex review output}
-      ```
-10. **Present review results** - Display Codex output to user
-11. **Implement fixes** - Address issues found:
-    - Critical issues: Must fix
-    - Warnings: Should fix
-    - Suggestions: Discuss with user
-12. **Commit fixes**:
-    ```
-    fix: address review feedback for #<issue_number>
-    ```
-
-### Phase 4: Report
-
-13. **Update review record** - Append fix summary to `docs/review/#{issue_number}/review.md`:
+13. **Update review record** — Append to `docs/review/#{issue_number}/review.md`:
     ```markdown
 
     ---
@@ -133,13 +108,11 @@ Use Codex built-in review:
     - {list of fixes applied}
     - Commit: {fix commit hash}
     ```
-14. **Summarize** - Present final status:
-    - Issues found and resolved
-    - Remaining suggestions (if any)
+14. **Summarize** — Issues found and resolved, remaining suggestions
 
 ## Review Prompt Template
 
-When using `codex exec` (default mode), construct the prompt as follows:
+Used verbatim for both `codex exec` (Phase 3A) and the `code-reviewer` subagent (Phase 3C). The same criteria drive the CI first-pass review (`.github/workflows/claude-code-review.yml`), so local and CI review stay aligned.
 
 ```
 You are a senior code reviewer. Review the implementation on this feature branch.
@@ -150,7 +123,7 @@ You are a senior code reviewer. Review the implementation on this feature branch
 
 ## Branch
 - Current branch: {current branch name}
-- Base: develop (merge base: {merge base SHA short})
+- Base: {target branch} (merge base: {merge base SHA short})
 
 ## Design Reference
 {Contents of docs/design/#<issue_number>/design.md, if available.
@@ -195,14 +168,16 @@ Provide a final verdict: APPROVE, REQUEST_CHANGES, or COMMENT.
 ## Output Format
 
 ```
-Code Review (via Codex)
+Code Review
 
 Branch: feature/alice/#123/add-user-authentication
 Issue: #123
+Target: develop
+Reviewer: Codex CLI (resolved via: codex available)
 Review scope: Medium (247 lines changed)
 
---- Codex Review Output ---
-(Full review output from codex)
+--- Review Output ---
+(Full review output)
 --- End of Review ---
 
 Review saved to: docs/review/#123/review.md
@@ -217,16 +192,17 @@ Review complete. Ready for /pr.
 
 ## Error Handling
 
-- **Codex not installed**: Stop immediately, show install instructions (see Prerequisites Check)
-- **Codex not authenticated**: Prompt user to run `codex login`
-- **No changes on branch**: Inform user that the branch has no implementation changes
+- **`--codex`/`--builtin` given but Codex missing**: Stop and show `npm install -g @openai/codex` install instructions
+- **Codex not authenticated**: Prompt user to run `codex login`, or fall through to the Claude-native reviewer with user consent
+- **No changes on branch**: Inform user that the branch has no implementation changes vs the target branch
 - **Diff too large**: Split review by directory and combine results
-- **Codex execution fails**: Show error output and suggest checking API key / network
+- **External reviewer execution fails**: Show error output, then offer the Claude-native fallback
 
 ## Integration
 
 - **Prerequisite**: Implementation completed with `/implement <issue_number>`
 - **Next step**: Create Pull Request with `/pr`
+- **CI counterpart**: `claude-code-review.yml` posts a first-pass review on PR open using the same criteria (when configured)
 - **Typical workflow**: `/issue` → `/design` → `/implement` → **`/review`** → `/pr`
 
 ARGUMENTS:

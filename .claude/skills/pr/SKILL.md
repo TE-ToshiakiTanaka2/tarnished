@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Create a Pull Request with code analysis, quality checks, CI monitoring, and validation. Uses erd commands (erd:analyze, erd:improve, erd:cleanup). Supports --merge for auto-merge after CI passes.
+description: Create a Pull Request with code analysis, quality checks, CI monitoring, and validation. Uses erd commands (erd:analyze, erd:improve, erd:cleanup, erd:reflect). Supports --merge for auto-merge after CI passes.
 argument-hint: "[target_branch]"
 disable-model-invocation: true
 ---
@@ -32,31 +32,34 @@ Examples:
 /pr --merge
 ```
 
+## erd Command Invocation
+
+All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
+
+```
+Read(".claude/commands/erd/<command>.md") → follow instructions inline
+```
+
+Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
+
 ## MCP Tools
 
 Use the following MCP tools for code analysis:
 
 - **serena**: `find_symbol`, `get_symbols_overview` — for understanding code structure during analysis and improvement phases
 
+If a listed MCP server is unavailable in the current environment, fall back to the agent's built-in code search and file reading tools — do not stop or ask for installation.
+
 ## What This Skill Does
 
 ### Phase 1: Code Analysis and Improvement
 
-1. **Execute `/erd:analyze`** - Comprehensive code analysis:
-   - Code quality: readability, maintainability, DRY
-   - Security: input validation, injection risks, auth checks
-   - Performance: inefficient patterns, unnecessary allocations
-   - Architecture: module design, layer separation
-2. **Execute `/erd:improve`** - Fix discovered issues:
-   - Code quality improvements
-   - Pattern standardization
-   - Type safety enhancements
-   - Error handling improvements
-3. **Execute `/erd:cleanup`** - Final code cleanup:
-   - Remove dead code and unused imports
-   - Optimize import ordering
-   - Clean up commented-out code
-   - Ensure consistent formatting
+1. **Load `/erd:analyze` and follow inline** - `Read(".claude/commands/erd/analyze.md")`:
+   - Quality, security, performance, and architecture findings
+2. **Load `/erd:improve` and follow inline** - `Read(".claude/commands/erd/improve.md")`:
+   - Apply behavior-preserving improvements addressing the findings
+3. **Load `/erd:cleanup` and follow inline** - `Read(".claude/commands/erd/cleanup.md")`:
+   - Remove dead code, unused imports, and commented-out code
 4. **Commit improvements** - Commit all improvement and cleanup changes
 
 ### Phase 2: Quality Checks
@@ -69,112 +72,35 @@ Use the following MCP tools for code analysis:
 
 8. **Collect change history** - Analyze commit history and diff against target branch
 9. **Push to remote** - `git push -u origin <branch>`
-10. **Create PR** - Create PR with `gh pr create` targeting the specified branch
+10. **Create PR** - Create PR with `gh pr create` targeting the specified branch, using the "Pull Request Format" below
 
 ### Phase 4: CI Monitoring and Validation
 
 11. **Monitor GitHub Actions** - Wait for CI completion using `gh run watch <run_id> --exit-status` with `run_in_background: true`. Do NOT use `sleep` to poll — it is blocked by the runtime. After the background task completes, check results with `gh pr checks <pr_number>`.
-12. **Validate CI results** - Analyze CI pass/fail results:
-    - Check test coverage adequacy
-    - Validate that implementation matches issue requirements
-    - Identify any remaining risks or concerns
+12. **Validate CI results** - Load `/erd:reflect` and follow inline - `Read(".claude/commands/erd/reflect.md")`:
+    - Interpret CI pass/fail, assess coverage adequacy, verify the implementation matches the issue requirements, identify remaining risks
 13. **Fix loop on CI failure**:
-    - Analyze error content from CI logs
-    - Implement fix
-    - Commit & push
-    - Re-check CI
+    - Analyze error content from CI logs (`gh run view <run_id> --log-failed`)
+    - Implement fix, commit & push, re-check CI
+    - If a CI first-pass review comment exists (from `claude-code-review.yml`), address Critical findings before merging
 14. **Report completion** - Present PR URL and validation summary
 
 ### Phase 5: Auto-Merge (if `--merge` flag is specified)
 
 15. **Merge PR** - Squash merge via `gh pr merge <pr_number> --squash --delete-branch`:
     - Only proceeds if CI has passed and validation is successful
-    - Uses squash merge to keep history clean
-    - Deletes the source branch after merge
     - If merge fails (e.g., merge conflict, branch protection), report the error to user
 16. **Update local target branch** - After a successful merge, switch to the target branch and update it with `git pull --ff-only origin <target_branch>`
 17. **Report merge result** - Present merge status and final commit
 
-## erd Skills Used
+## erd Commands Used
 
-| Skill | Purpose | Phase |
+| Command | Purpose | Phase |
 | --- | --- | --- |
-| `/erd:analyze` | Comprehensive code analysis (quality, security, performance, architecture) | Phase 1 |
-| `/erd:improve` | Systematic code quality improvements | Phase 1 |
+| `/erd:analyze` | Code analysis (quality, security, performance, architecture) | Phase 1 |
+| `/erd:improve` | Behavior-preserving quality improvements | Phase 1 |
 | `/erd:cleanup` | Dead code removal, import optimization, final cleanup | Phase 1 |
 | `/erd:reflect` | CI result validation (coverage adequacy, requirement matching, risk identification) | Phase 4 |
-
-## Leveraging erd:analyze
-
-Use `/erd:analyze` for analysis from these perspectives:
-
-```
-Analysis Domains:
-- Quality: Code readability, maintainability, DRY principle
-- Security: Input validation, permission checks, injection risks
-- Performance: Inefficient patterns, unnecessary allocations
-- Architecture: Module design, layer separation, API contracts
-```
-
-## Leveraging erd:improve
-
-Use `/erd:improve` to implement these improvements:
-
-```
-Improvements:
-- Dead code removal
-- Code deduplication
-- Pattern consistency
-- Type safety enhancements
-- Error handling improvements
-```
-
-## Leveraging erd:cleanup
-
-Use `/erd:cleanup` for final polish before PR:
-
-```
-Cleanup:
-- Remove unused imports and variables
-- Clean up commented-out code
-- Ensure consistent formatting
-- Optimize file organization
-```
-
-## Leveraging erd:reflect
-
-Use `/erd:reflect` after CI results are available:
-
-```
-Validation:
-- CI result analysis: interpret pass/fail and identify flaky tests
-- Coverage assessment: is test coverage sufficient for the changes?
-- Requirement matching: does the implementation satisfy the issue requirements?
-- Risk identification: any remaining concerns before merge?
-```
-
-## CI Fix Loop
-
-```mermaid
-graph TD
-    A[Create PR] --> B[GitHub Actions runs]
-    B --> C{CI success?}
-    C -->|Yes| D[Validate results]
-    C -->|No| E[Analyze error]
-    E --> F[Implement fix]
-    F --> G[Commit & push]
-    G --> B
-    D --> H{Validation OK?}
-    H -->|Yes| I{--merge flag?}
-    H -->|Concerns found| J[Address concerns]
-    J --> K[Commit & push]
-    K --> B
-    I -->|Yes| L[gh pr merge --squash --delete-branch]
-    I -->|No| M[Report: Ready for review]
-    L --> N{Merge success?}
-    N -->|Yes| O[Report: Merged]
-    N -->|No| P[Report merge error]
-```
 
 ## Pull Request Format
 
@@ -311,31 +237,6 @@ Branch: feature/username/#123/add-config-loader (deleted)
 Related Issue: #123 (closed)
 ```
 
-## PR Workflow
-
-```mermaid
-graph TD
-    A[Execute erd:analyze] --> B[Execute erd:improve]
-    B --> C[Execute erd:cleanup]
-    C --> D[Commit improvements]
-    D --> E[Static analysis]
-    E --> F{Checks pass?}
-    F -->|No| G[Fix and commit]
-    G --> E
-    F -->|Yes| H[Run tests]
-    H --> I{Tests pass?}
-    I -->|No| J[Fix and commit]
-    J --> H
-    I -->|Yes| K[Push to remote]
-    K --> L[Create PR]
-    L --> M[Monitor CI]
-    M --> N{CI success?}
-    N -->|No| O[Fix loop]
-    O --> M
-    N -->|Yes| P[Execute erd:reflect]
-    P --> Q[Report completion]
-```
-
 ## Best Practices
 
 - **Analyze Before PR**: Discover issues early with `/erd:analyze`
@@ -349,7 +250,7 @@ graph TD
 ## Integration
 
 - **Prerequisite**: Implementation completed with `/implement <issue_number>`, optionally reviewed with `/review`
-- **CI Workflow**: Integrates with GitHub Actions workflows
+- **CI Workflow**: Integrates with GitHub Actions workflows; `claude-code-review.yml` (when configured) posts a first-pass review on PR open
 - **Typical workflow**: `/issue` → `/design` → `/implement` → `/review` → **`/pr`**
 
 ARGUMENTS:
