@@ -31,7 +31,7 @@ make_single_mode_target() {
     mkdir -p "$SCRATCH/docker"
     mkdir -p "$SCRATCH/.github/workflows"
 
-    echo "FROM debian:bookworm" > "$SCRATCH/docker/Dockerfile.dev"
+    echo "FROM debian:trixie" > "$SCRATCH/docker/Dockerfile.dev"
     echo '{}' > "$SCRATCH/.devcontainer/devcontainer.json"
     echo "version: '3'" > "$SCRATCH/docker-compose.yml"
     echo '{}' > "$SCRATCH/.claude/settings.json"

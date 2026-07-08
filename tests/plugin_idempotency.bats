@@ -50,7 +50,7 @@ EOF
     : > "$SCRATCH/.devcontainer/scripts/post.sh"
     chmod +x "$SCRATCH/.devcontainer/scripts/post.sh"
     cat > "$SCRATCH/docker/Dockerfile.dev" <<'EOF'
-FROM debian:bookworm
+FROM debian:trixie
 SHELL ["/bin/bash", "-c"]
 EOF
 }
