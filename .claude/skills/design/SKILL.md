@@ -347,9 +347,9 @@ docs: add design documents for #{issue_number}
 Refs #{issue_number}
 ```
 
-- **Subject** MUST be `docs: add design documents for #{issue_number}` so downstream automation (PR linkage, changelog) can recognize it.
-- **Body** MUST contain both the "Per-issue delta" and "Shared snapshot" summary lines so reviewers can audit the snapshot regeneration without diffing every shared file.
-- **Footer** MUST be `Refs #{issue_number}` — NOT `Closes #{issue_number}`. `/design` only writes documentation; the issue is closed when the PR created by `/pr` merges (via `Closes #XXX` in the PR body).
+- **Subject**: `docs: add design documents for #{issue_number}`, which is the form downstream automation (PR linkage, changelog) recognizes.
+- **Body**: include both the "Per-issue delta" and "Shared snapshot" summary lines, so reviewers can audit the snapshot regeneration without diffing every shared file.
+- **Footer**: `Refs #{issue_number}`, never `Closes #{issue_number}`. `/design` only writes documentation, and closing the issue here would close it before any code lands. The issue is closed when the PR created by `/pr` merges.
 
 ## Reporting
 
