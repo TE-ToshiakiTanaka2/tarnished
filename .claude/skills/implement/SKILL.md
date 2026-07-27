@@ -1,7 +1,7 @@
 ---
 name: implement
 description: Implement a GitHub Issue with codebase understanding, build verification, testing, and quality assurance. Uses erd commands (erd:index-repo, erd:implement, erd:build, erd:test, erd:analyze, erd:improve, erd:troubleshoot).
-argument-hint: "[issue_number]"
+argument-hint: "<issue_number> [--base <branch>]"
 disable-model-invocation: true
 ---
 
@@ -14,64 +14,52 @@ This skill is the Claude Code projection of `.tarnished/workflows/implement.md`.
 ## Usage
 
 ```
-/implement <issue_number>
+/implement <issue_number>              # reuse or create a branch based on develop
+/implement <issue_number> --base main  # base on main instead
 ```
+
+`--base` defaults to `develop` and is passed through to `_shared/branch`. When `/design` already created a branch for this issue it is detected and reused, and `--base` only matters if a branch has to be created.
+
+## Roles
+
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and the routing table.
+
+This stage is the one most often mis-delegated. Interpreting the design and matching existing conventions is the highest-judgment work in the lifecycle and stays with the orchestrator. What is genuinely mechanical — the repository survey, the lint/format/type-check fix loop, boilerplate test authoring, and bulk application of an already-decided change — is delegated. Route per unit of work, not per phase.
 
 ## erd Command Invocation
 
-All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
+Invoke each erd command by the first available route:
 
-```
-Read(".claude/commands/erd/<command>.md") → follow instructions inline
-```
+1. `Read(".claude/commands.local/erd/<command>.md")` — the project's overlay, when one exists
+2. `Skill(erd:<command>)` — loads the base instructions into the current turn
+3. `Read(".claude/commands/erd/<command>.md")` — the base copy, when the Skill route is unavailable
 
-Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
+The overlay is checked first because it is the only route guaranteed to honor a project's customization. `commands.local/` is where a project overrides an erd command, and taking the Skill route without looking would silently run the base version instead.
 
-## What This Skill Does
+## Pipeline
 
-### Phase 1: Preparation
+Seven steps. Each carries its own skip condition — a one-file change should not run a full repository survey just because the pipeline lists one.
 
-1. **Review Issue** - Use `gh issue view` to understand Issue content
-2. **Detect or create branch** - Follow `_shared/branch` procedure (Issue mode) with the issue number. Branch naming and existing-branch detection are defined in `_shared/branch/SKILL.md`. If `/design` already created a branch for this issue, it is detected and reused — do not create a duplicate.
-3. **Load design artifacts** - Read both layers of the design corpus:
-   - **Shared layer**: `docs/design/shared/architecture.md`, `data-model.md`, `api-spec.md`, `class.md`, `sequence.md`, and any `shared/research/*.md` (skip files that do not exist — `shared/` may be empty for the very first issue)
-   - **Per-issue layer**: `docs/design/#{issue_number}/design.md`, `api-spec.md`, `workflow.md`, `flowchart.md`, `research.md` (skip files that do not exist)
-   - The shared layer is the cumulative project truth maintained by `/design`. The per-issue layer is the self-contained delta for this issue.
-4. **Load `/erd:index-repo` and follow inline** - `Read(".claude/commands/erd/index-repo.md")`:
-   - Map relevant modules, identify files that need modification, understand existing patterns
+| # | Step | Skip when |
+| --- | --- | --- |
+| 1 | **Prepare** — read the issue with `gh issue view`; detect or create the branch via `_shared/branch` (Issue mode, with `base`); load both design layers | Never. The branch and the design artifacts are the stage's inputs |
+| 2 | **Survey** — `/erd:index-repo` to map relevant modules, locate files to change, and learn existing patterns | The change is confined to files you have already read and whose conventions are established |
+| 3 | **Implement** — `/erd:implement`, following the design artifacts and the codebase's existing conventions; commit per logical unit | Never |
+| 4 | **Build** — `/erd:build`: linters, formatters, type checkers; fix iteratively | Never |
+| 5 | **Test** — `/erd:test`: run the suite, assess coverage, author tests for changed paths | Never |
+| 6 | **Analyze and improve** — `/erd:analyze` for findings, `/erd:improve` to apply behavior-preserving fixes, then re-run build and test | No findings worth acting on, or the change is too small to have introduced any. Say so rather than running the loop for form |
+| 7 | **Troubleshoot** — `/erd:troubleshoot` for root-cause analysis | Build and test pass, or a failure was fixed directly. Reach for this when failures persist after direct fixes, or stem from configuration and dependencies rather than code |
 
-### Phase 2: Implementation
+### Design artifacts to load in step 1
 
-5. **Load `/erd:implement` and follow inline** - `Read(".claude/commands/erd/implement.md")`:
-   - Follow design artifacts from `/design` (if available), language best practices, proper error handling, type safety
-6. **Progressive commits** - Commit per logical unit of work (see "Commit Strategy" below)
+- **Shared layer**: `docs/design/shared/architecture.md`, `data-model.md`, `api-spec.md`, `class.md`, `sequence.md`, and any `shared/research/*.md`. Skip files that do not exist — `shared/` may be empty for the very first issue.
+- **Per-issue layer**: `docs/design/#{issue_number}/design.md`, `api-spec.md`, `workflow.md`, `flowchart.md`, `research.md`. Skip files that do not exist.
 
-### Phase 3: Build and Test
+The shared layer is the cumulative project truth maintained by `/design`; the per-issue layer is the self-contained delta for this issue.
 
-7. **Load `/erd:build` and follow inline** - `Read(".claude/commands/erd/build.md")`:
-   - Run linters, formatters, and type checkers; fix build errors iteratively
-8. **Load `/erd:test` and follow inline** - `Read(".claude/commands/erd/test.md")`:
-   - Run the test suite, analyze coverage, and author missing tests for changed code paths
+### The quality loop
 
-### Phase 4: Quality Assurance
-
-9. **Load `/erd:analyze` and follow inline** - `Read(".claude/commands/erd/analyze.md")`:
-   - Quality, security, performance, and architecture findings
-10. **Load `/erd:improve` and follow inline** - `Read(".claude/commands/erd/improve.md")`:
-    - Apply behavior-preserving improvements addressing the analysis findings
-11. **Re-load `/erd:build`** and **`/erd:test`** and follow inline - Verify improvements don't break anything
-
-The QA feedback cycle is: `erd:analyze findings → erd:improve fixes → erd:build verify → erd:test verify`.
-
-### Phase 5: Error Recovery (if needed)
-
-12. **Load `/erd:troubleshoot` and follow inline** (conditional) - `Read(".claude/commands/erd/troubleshoot.md")`:
-    - When build or test failures persist after direct fixes, or failures stem from configuration/dependencies rather than code
-
-### Phase 6: Final Commit and Report
-
-13. **Final commit** - Commit all remaining changes
-14. **Report results** - Present branch name, quality metrics, and test results using the "Output Format" below
+Steps 4-6 form a cycle: `analyze findings → improve → build → test`. Deciding what counts as a finding and which refactor preserves behavior is judgment; running the tools and fixing what they report is mechanical.
 
 ## MCP Tools
 
@@ -84,19 +72,19 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 
 ## erd Commands Used
 
-| Command | Purpose | Phase |
+| Command | Purpose | Pipeline step |
 | --- | --- | --- |
-| `/erd:index-repo` | Repository indexing for efficient codebase understanding | Phase 1 |
-| `/erd:implement` | Feature implementation following design artifacts | Phase 2 |
-| `/erd:build` | Build verification with iterative error fixing | Phase 3 |
-| `/erd:test` | Test execution, coverage analysis, and authoring missing tests | Phase 3 |
-| `/erd:analyze` | Code analysis (quality, security, performance, architecture) | Phase 4 |
-| `/erd:improve` | Behavior-preserving quality improvements | Phase 4 |
-| `/erd:troubleshoot` | Diagnose persistent build/test failures (conditional) | Phase 5 |
+| `/erd:index-repo` | Repository indexing for efficient codebase understanding | 2 |
+| `/erd:implement` | Feature implementation following design artifacts | 3 |
+| `/erd:build` | Build verification with iterative error fixing | 4 |
+| `/erd:test` | Test execution, coverage analysis, and authoring missing tests | 5 |
+| `/erd:analyze` | Code analysis (quality, security, performance, architecture) | 6 |
+| `/erd:improve` | Behavior-preserving quality improvements | 6 |
+| `/erd:troubleshoot` | Diagnose persistent build/test failures (conditional) | 7 |
 
 ## Commit Strategy
 
-Conventional commit format with progressive commits:
+Conventional commit format with progressive commits — one per logical unit of work, not one per pipeline step:
 
 ```
 feat: add config type definitions
@@ -106,59 +94,35 @@ fix: resolve edge case in config parsing
 refactor: extract validation logic (erd:improve)
 ```
 
+Stage explicit paths. Avoid `git add -A` and `git add .` — they sweep up unrelated untracked content such as editor state and MCP scratch directories.
+
 ## Error Handling
 
-- **Build errors**: Attempt auto-fix with linters/formatters, retry build
-- **Test failures**: Analyze cause, fix implementation, re-run tests
+- **Build errors**: Auto-fix with linters and formatters, retry. This is mechanical; a retry budget applies
+- **Test failures**: Analyze the cause and fix. Deciding that a failing test encodes the wrong expectation is judgment, not a retry
 - **Persistent failures**: Escalate to `/erd:troubleshoot` for root cause analysis
-- **Blockers**: Report to user, request guidance
+- **Blockers**: Report to the user with what you tried, and request guidance
 
-## Output Format
+## Reporting
 
-```
-Implementation Complete
+Report, in whatever shape fits the change:
 
-Branch: feature/username/#123/add-config-loader
-Issue: #123
-
-Codebase Analysis (erd:index-repo):
-  - Indexed N modules, identified M relevant files
-
-Quality Checks (erd:build):
-  - Linting: Passed
-  - Formatting: Passed
-  - Type Check: Passed
-
-Tests (erd:test):
-  - Unit tests: 15/15 passed
-  - Integration tests: 3/3 passed
-
-Code Analysis (erd:analyze):
-  - Quality: No issues
-  - Security: No issues
-  - Performance: No issues
-
-Improvements Applied (erd:improve):
-  - Standardized error handling pattern
-  - Enhanced type safety in 2 modules
-
-Commits:
-- feat: add Config type definitions
-- feat: implement config loader
-- test: add config loader tests
-- refactor: improve error handling (erd:improve)
-
-Ready for /review or /pr
-```
+- Branch and issue number
+- Pipeline steps run, and steps skipped with the reason
+- Build and test results, with the commands actually run
+- Analysis findings and the improvements applied
+- Commits made
+- Remaining risks, and anything left incomplete
+- The next command
 
 ## Best Practices
 
 - **Design First**: Load and follow design artifacts from `/design` if available
-- **Codebase Understanding**: Use `/erd:index-repo` before jumping into implementation
+- **Skip Deliberately**: A skipped step is a decision to report, not a step to hide
 - **Incremental Implementation**: Implement and commit in small logical units
 - **Type Safety**: Maximize use of type systems where available
 - **Test Coverage**: Always add tests for new features
-- **Quality Loop**: analyze → improve → build → test as a feedback cycle
+- **Match the Codebase**: Follow existing conventions over personal preference
 
 ## Integration
 

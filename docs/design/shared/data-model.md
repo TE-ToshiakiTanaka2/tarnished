@@ -225,9 +225,12 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `docs/design/shared/*` | New layer for cumulative project truth | #257 |
 | `.claude/commands/erd/*.md` | Internalized SuperClaude front-half skills as `/erd:*` slash commands | #240 |
 | `.gitignore` (downstream-project seed) | Per-file blacklist (`.claude/settings.local.json`, `.codex/config.local.toml`) replaced with marker-guarded whitelist blocks for `.claude/*` and `.codex/*`; always-ignore added for `.serena/` and `screenshots/` | #259 |
-| `.agents/skills/*` (Codex projects) | Repo-local Codex skills for `issue`, `design`, `implement`, `review`, and `pr`; copied by `templates/codex/plugin.sh` and allow-listed by the Codex skills gitignore block | Codex workflow parity |
+| `.agents/skills/*` (Codex projects) | Repo-local Codex skills for `issue`, `design`, `implement`, `review`, `pr`, and (from #308) `flow`; copied by `templates/codex/plugin.sh` and allow-listed by the Codex skills gitignore block | Codex workflow parity / #308 |
 | `.codex/config.toml` (workspace + template) | Workspace gains the file (new); template bumps `model` from `gpt-5.3-codex` → `gpt-5.4` and adds `model_reasoning_effort = "high"`. Workspace and template kept in sync. | #261 |
 | `.codex/config.toml` (workspace + template) | `model` bumped `gpt-5.4` → `gpt-5.5`. Repairs the invalid `"gpt-5.5/"` value accidentally committed to the workspace copy in #288 and restores workspace/template parity. | #292 |
+| `.codex/config.toml` (workspace + template) | `model` pinned to `gpt-5.6-sol` and `model_reasoning_effort` raised to `ultra`. `/review` now reads both back and records them in the review artifact header, so a config change is attributable rather than silent. | #308 |
+| `.claude/skills/flow/`, `.tarnished/workflows/flow.md`, `.agents/skills/flow/` | New lifecycle orchestration entrypoint across all three altitudes. `workflows/flow.md` is manifest-tracked, not refresh-managed, so projects scaffolded earlier receive the SKILL without the contract — the SKILL tolerates its absence. | #308 |
+| `.claude/skills/_shared/delegation/SKILL.md`, `.claude/agents/advisor.md` | Role vocabulary and work-routing table; read-only advisory subagent. Both refresh-managed, so they arrive downstream on the next container start. | #308 |
 | `.gitignore` (workspace) | Codex whitelist block (`# Codex CLI (track shared config only)` + `.codex/*` + `!.codex/config.toml`) and Codex agent skills block (`.agents/*` + `!.agents/skills/` + `!.agents/skills/**`) appended to the workspace's own `.gitignore` so local agent/auth files are never committed | #261 / Codex workflow parity |
 | `.claude/settings.json` (workspace) | `permissions.allow` gains `Bash(codex:*)` so `/review` can invoke the Codex CLI without per-call approval | #261 |
 | `modules.json` (downstream monorepo target) | New schema introduced for monorepo support; `version: 1` with a `modules: []` array. Forward-compatible via unknown-key tolerance and a `version` escape hatch. | #263 |
@@ -299,10 +302,38 @@ Flat top-level TOML. All keys optional from Codex's perspective; tarnished sets 
 
 | Key | Type | Value (workspace + template) | Purpose |
 | --- | --- | --- | --- |
-| `model` | string | `"gpt-5.5"` | Always-latest reasoning model |
-| `model_reasoning_effort` | string | `"high"` | Higher cost, deeper review (paid only when `/review` runs) |
+| `model` | string | `"gpt-5.6-sol"` | Pinned review model (#308) |
+| `model_reasoning_effort` | string | `"ultra"` | Deepest reasoning tier (paid only when `/review` runs) |
 | `approval_policy` | string | `"on-request"` | Codex prompts before destructive actions |
 | `sandbox_mode` | string | `"workspace-write"` | File writes restricted to workspace |
+
+`model` and `model_reasoning_effort` are read back by `/review` at review time and recorded in the artifact metadata header (#308, task 2-5), so a config change is visible in the artifact instead of silently changing review quality. Unset or unreadable keys are recorded as `default`.
+
+### `.tarnished/agent-profile.json` schema (agent and role binding, #261, extended #308)
+
+Flat JSON object. Written by `templates/agent-workflows/plugin.sh` and rendered by `replace_placeholders`. Not refresh-managed, so a downstream edit survives every container start — the property that lets a project retarget models without forking skill files.
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `ai_profile` | string | Yes | `claude-main` \| `codex-main` \| `dual`. Read back by `setup.sh::detect_scaffold_options`. |
+| `primary_agent` | string | Yes | Human display name, e.g. `"Claude Code"`. Rendered from `{{AI_PRIMARY_AGENT}}`. |
+| `review_agent` | string | Yes | Human display name, e.g. `"Codex CLI"`. Rendered from `{{AI_REVIEW_AGENT}}`. |
+| `workflow_source` | string | Yes | Path to the agent-neutral workflow contracts, `.tarnished/workflows`. |
+| `roles` | object | No | Role→binding map (#308). Absent on projects scaffolded before #308. |
+
+`roles` recognizes four role keys — `orchestrator`, `executor`, `advisor`, `external-reviewer`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `roles.<role>.agent` | string | `"primary"` / `"review"` (indirections to the sibling fields), or a concrete agent identifier |
+| `roles.<role>.model` | string \| null | `null` = use that agent's configured default |
+| `roles.external-reviewer.reasoning_effort` | string \| null | `null` = use the reviewer CLI's configured default |
+
+`roles` values are deliberately **placeholder-free**. `primary_agent` / `review_agent` render to display strings — including `"Claude Code + Codex CLI"` and `"Manual review"` for the `dual` and non-Codex profiles (`setup.sh::derive_agent_names`) — which are not dispatchable identifiers.
+
+**Resolution contract** (identical across every consumer): `roles` absent, or any field still containing an unrendered `{{...}}` token, falls back to binding all roles to the primary agent and `external-reviewer` to `review_agent`. Unknown role keys are ignored rather than treated as errors. Consumers report whether the binding came from the profile or from the fallback.
+
+**Forward compatibility**: unknown top-level keys are ignored, so adding roles or per-role fields is non-breaking.
 
 ## Generated-Artifact Contracts
 

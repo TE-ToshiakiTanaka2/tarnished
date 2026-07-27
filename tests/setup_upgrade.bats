@@ -327,3 +327,148 @@ bootstrap_and_commit() {
     [[ "$status" -eq 0 ]]
     [[ ! -f .github/versioning.yml ]]
 }
+
+# -----------------------------------------------------------------------------
+# #308: --upgrade renders template placeholders in the staging tree
+# -----------------------------------------------------------------------------
+#
+# `.tarnished/agent-profile.json` and `.tarnished/workflows/*.md` are the
+# only files that are BOTH placeholder-bearing AND manifest-tracked (every
+# other placeholder-bearing file sits in MANIFEST_EXCLUDE_GLOBS). Before
+# #308 the staging run never called replace_placeholders, so an UPDATE
+# decision on one of these wrote raw {{...}} tokens over the rendered
+# downstream file.
+
+# Seed a scaffold whose .tarnished/ files are rendered but stale, so the
+# upgrade must take the UPDATE branch on them.
+seed_tarnished_scaffold() {
+    seed_scaffold
+    # devcontainer.json is user-owned and carries the rendered project
+    # name; stage_render_placeholders prefers it over the directory
+    # basename (the scratch dir has a mktemp name).
+    echo '{"name": "my-proj"}' > .devcontainer/devcontainer.json
+    mkdir -p .tarnished/workflows
+    sed -e "s|{{PROJECT_NAME}}|my-proj|g" \
+        -e "s|{{AI_PROFILE}}|claude-main|g" \
+        -e "s|{{AI_PRIMARY_AGENT}}|Claude Code|g" \
+        -e "s|{{AI_REVIEW_AGENT}}|Codex CLI|g" \
+        "${SCRIPT_DIR}/templates/agent-workflows/.tarnished/agent-profile.json" \
+        > .tarnished/agent-profile.json
+    for f in README design implement issue pr review; do
+        sed -e "s|{{PROJECT_NAME}}|my-proj|g" \
+            -e "s|{{AI_PROFILE}}|claude-main|g" \
+            -e "s|{{AI_PRIMARY_AGENT}}|Claude Code|g" \
+            -e "s|{{AI_REVIEW_AGENT}}|Codex CLI|g" \
+            "${SCRIPT_DIR}/templates/agent-workflows/.tarnished/workflows/${f}.md" \
+            > ".tarnished/workflows/${f}.md"
+        # Make the seeded copy differ from the upgraded template so the
+        # lifecycle engine picks UPDATE rather than NOOP.
+        echo "" >> ".tarnished/workflows/${f}.md"
+        echo "<!-- stale marker from an older tarnished -->" >> ".tarnished/workflows/${f}.md"
+    done
+}
+
+@test "#308: --upgrade does not write raw placeholders into .tarnished/" {
+    seed_tarnished_scaffold
+    bootstrap_and_commit
+
+    # Pre-condition: the seeded tree is fully rendered.
+    ! grep -rq '{{' .tarnished/
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+
+    # The stale marker is gone, proving UPDATE actually fired on these
+    # files rather than the assertion below passing via a NOOP.
+    ! grep -q "stale marker" .tarnished/workflows/README.md
+
+    # The whole point: no placeholder token survives the upgrade.
+    run grep -rl '{{' .tarnished/
+    [[ "$status" -ne 0 ]]
+
+    # And the rendered values are the ones derived from the target.
+    grep -q "my-proj" .tarnished/workflows/README.md
+    run jq -r '.ai_profile' .tarnished/agent-profile.json
+    [[ "$output" == "claude-main" ]]
+}
+
+@test "#308: --upgrade manifest records rendered hashes, so a re-run is a NOOP" {
+    seed_tarnished_scaffold
+    bootstrap_and_commit
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+    git add -A; git commit -q -m "post-upgrade"
+
+    local readme_before manifest_before
+    readme_before=$(sha256sum .tarnished/workflows/README.md | cut -d' ' -f1)
+    manifest_before=$(jq -S -r '.files' .tarnished-manifest.json | sha256sum | cut -d' ' -f1)
+
+    # If NEW_HASHES had recorded unrendered staging hashes, the manifest
+    # would disagree with the on-disk rendered file and the second run
+    # would reclassify it — as SKIP_EDITED, or as a repeated UPDATE that
+    # rewrites the same bytes. Assert the file and the tracked hash map are
+    # both byte-for-byte unchanged, which only a true NOOP produces.
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+    # The summary always prints every category label, so assert on counts.
+    [[ "$output" =~ Updated:[[:space:]]+0[[:space:]]file ]]
+    [[ "$output" =~ Skipped[[:space:]]\(edited\):[[:space:]]+0[[:space:]]file ]]
+    [[ "$output" != *".tarnished/workflows/README.md"* ]]
+
+    local readme_after manifest_after
+    readme_after=$(sha256sum .tarnished/workflows/README.md | cut -d' ' -f1)
+    manifest_after=$(jq -S -r '.files' .tarnished-manifest.json | sha256sum | cut -d' ' -f1)
+    [[ "$readme_before" == "$readme_after" ]]
+    [[ "$manifest_before" == "$manifest_after" ]]
+    ! grep -rq '{{' .tarnished/
+}
+
+@test "#308: --upgrade with a service plugin does not stage a deleted overlay" {
+    # Service plugins copy a docker-compose overlay through
+    # copy_with_confirm and then delete it once merged. If the staging
+    # recorder's entry survives into NEW_HASHES, manifest_apply's NEW
+    # branch tries to `cp` a staging path that no longer exists and aborts
+    # the upgrade partway through the apply phase.
+    seed_tarnished_scaffold
+    # Make detect_scaffold_options record postgresql, so --upgrade loads
+    # the service plugin.
+    cat > docker-compose.yml <<'YML'
+services:
+  my-proj-db:
+    image: postgres:16
+YML
+    bootstrap_and_commit
+
+    run jq -r '.scaffold_options.services[]?' .tarnished-manifest.json
+    [[ "$output" == *"postgresql"* ]]
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+    [[ "$output" != *"No such file or directory"* ]]
+    # The overlay is a build artifact of the merge; it must not survive.
+    [[ ! -f docker-compose.postgresql.yml ]]
+    # And it must not be recorded as a tracked file.
+    run jq -r '.files | keys[]' .tarnished-manifest.json
+    ! echo "$output" | grep -q "docker-compose.postgresql.yml"
+}
+
+@test "#308: --upgrade rejects a hostile project name instead of running it through sed" {
+    # devcontainer.json is user-owned, and its "name" is interpolated into
+    # a `sed s|…|…|` program. An unescaped `|` would end the replacement
+    # and let the remainder parse as sed flags/commands — `w FILE` writes
+    # an arbitrary file.
+    seed_tarnished_scaffold
+    echo '{"name": "evil|w '"$SCRATCH"'/PWNED"}' > .devcontainer/devcontainer.json
+    bootstrap_and_commit
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+    # sed's `w` flag writes the rest of the program as the filename, so the
+    # artifact is "PWNED|g" rather than "PWNED" — match the prefix.
+    run bash -c 'ls "${SCRATCH}" | grep -c "^PWNED"'
+    [[ "$output" == "0" ]]
+    # Rejected, so the render falls back to the directory basename.
+    ! grep -rq 'evil|w' .tarnished/
+    ! grep -rq '{{' .tarnished/
+}

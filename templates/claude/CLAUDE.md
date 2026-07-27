@@ -90,14 +90,15 @@ When Claude Code is the primary agent, drive the full lifecycle below. When Clau
 Available skills (slash commands):
 
 - `/issue` - Create a GitHub Issue from requirements (uses erd:brainstorm, erd:estimate)
-- `/design <issue_number>` - Design architecture with UML diagrams (uses erd:research, erd:design, erd:workflow)
-- `/implement <issue_number>` - Implement a GitHub Issue (uses erd:implement, erd:build, erd:test)
+- `/design <issue_number> [--base <branch>]` - Design architecture with UML diagrams (uses erd:research, erd:design, erd:workflow)
+- `/implement <issue_number> [--base <branch>]` - Implement a GitHub Issue (uses erd:implement, erd:build, erd:test)
 - `/review` - Cross-agent code review using the configured review workflow
-- `/pr [--merge]` - Create a Pull Request (uses erd:analyze, erd:improve, erd:cleanup, erd:reflect)
+- `/pr [target_branch] [--merge]` - Create a Pull Request (uses erd:analyze, erd:improve, erd:cleanup, erd:reflect)
+- `/flow [--issue N] [--base <branch>] [--from <stage>] [--merge]` - Run the stages above end to end for one issue, entering at the first incomplete stage
 
 ### Always-latest assets and `.local/` overrides
 
-`.claude/{commands,skills,scripts}/` and shared rules such as
+`.claude/{commands,skills,scripts,agents}/` and shared rules such as
 `.claude/rules/shell.md` are kept always-latest by `refresh-assets.sh`
 (runs on every container start). To customize a command, skill, script,
 or shared rule locally, write to the sidecar `.local/` path instead of
@@ -131,7 +132,7 @@ Available erd commands (callable independently):
 - `/erd:troubleshoot` - Issue diagnosis and root cause analysis
 - `/erd:reflect` - CI result validation and PR quality assessment
 
-**Typical workflow**: `/issue` → `/design` → `/implement` → `/review` → `/pr`
+**Typical workflow**: `/issue` → `/design` → `/implement` → `/review` → `/pr`, or `/flow --issue N` to run them end to end.
 
 ## Important Notes
 

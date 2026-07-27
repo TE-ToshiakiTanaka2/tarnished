@@ -1,9 +1,12 @@
 # Project-level Codex CLI configuration
 # See: https://developers.openai.com/codex/config-advanced/
 
-# Always-latest model with high reasoning effort for review quality
-model = "gpt-5.5"
-model_reasoning_effort = "high"
+# Review model, pinned rather than always-latest: /review records the
+# resolved model and reasoning effort in the review artifact, so the pair
+# below is what reviews are attributed to. Validate any change with
+# `codex exec --strict-config` before committing it.
+model = "gpt-5.6-sol"
+model_reasoning_effort = "ultra"
 
 # Approval policy: require approval for all actions
 # Options: "untrusted", "on-request", "on-failure", "never"

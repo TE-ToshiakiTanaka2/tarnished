@@ -5,6 +5,7 @@ Implement a GitHub Issue using the design artifacts and existing project convent
 ## Inputs
 
 - GitHub Issue number.
+- Base branch, defaulting to `develop`, used when a branch has to be created.
 - Shared and per-issue design artifacts.
 - Current branch or branch derived from the issue.
 

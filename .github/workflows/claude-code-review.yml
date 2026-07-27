@@ -90,8 +90,10 @@ jobs:
             findings must materially affect maintainability or violate a
             documented project rule (.claude/rules/*). Verify claims by
             reading the code before asserting them. Organize findings as
-            Critical / Warnings / Suggestions with file:line references, omit
-            empty categories, and end with a verdict: APPROVE, REQUEST_CHANGES,
-            or COMMENT.
+            Critical / Major / Minor / Suggestions with file:line references,
+            omit empty categories, and end with a verdict: APPROVE,
+            REQUEST_CHANGES, or COMMENT. Critical and Major must be fixed
+            before merge; Minor is fixed when cheap; Suggestions carry no
+            obligation.
           claude_args: |
             --max-turns 25

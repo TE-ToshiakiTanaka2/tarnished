@@ -118,6 +118,9 @@ AI_PROFILE="claude-main"
 AI_PROFILE_SET=false
 AI_PRIMARY_AGENT="Claude Code"
 AI_REVIEW_AGENT="Manual review"
+# Set by run_upgrade; read by stage_render_placeholders. The scaffold-path
+# TARGET_DIR is never assigned in upgrade mode.
+UPGRADE_TARGET_DIR=""
 POSTGRESQL_ENABLED=false
 MYSQL_ENABLED=false
 REDIS_ENABLED=false
@@ -1219,27 +1222,62 @@ validate_language() {
 # AI Profile Functions
 # =============================================================================
 
-configure_ai_profile() {
-    case "$AI_PROFILE" in
-        claude-main)
+# Map an AI profile to the human-facing agent display names, setting
+# AI_PRIMARY_AGENT and AI_REVIEW_AGENT. Extracted from configure_ai_profile
+# so the scaffold path and the --upgrade staging render share exactly one
+# mapping; --upgrade never runs the interactive profile prompt and so has
+# no scaffold-time globals to read.
+#
+# These are display strings, not dispatchable agent identifiers. Consumers
+# that need a machine-readable binding read
+# .tarnished/agent-profile.json :: roles instead.
+#
+# Usage: derive_agent_names <ai_profile> [codex_enabled]
+derive_agent_names() {
+    local ai_profile="$1"
+    local codex_enabled="${2:-false}"
+
+    case "$ai_profile" in
+        codex-main)
+            AI_PRIMARY_AGENT="Codex CLI"
+            AI_REVIEW_AGENT="Claude Code"
+            ;;
+        dual)
+            AI_PRIMARY_AGENT="Claude Code + Codex CLI"
+            AI_REVIEW_AGENT="Cross-agent review"
+            ;;
+        *)
+            # claude-main, and anything unrecognized (validate_args rejects
+            # unknown --ai-profile values, so this is the default path).
             AI_PRIMARY_AGENT="Claude Code"
-            if [[ "$CODEX_ENABLED" == true ]]; then
+            if [[ "$codex_enabled" == true ]]; then
                 AI_REVIEW_AGENT="Codex CLI"
             else
                 AI_REVIEW_AGENT="Manual review"
             fi
             ;;
-        codex-main)
+    esac
+}
+
+configure_ai_profile() {
+    case "$AI_PROFILE" in
+        codex-main | dual)
             CODEX_ENABLED=true
-            AI_PRIMARY_AGENT="Codex CLI"
-            AI_REVIEW_AGENT="Claude Code"
-            ;;
-        dual)
-            CODEX_ENABLED=true
-            AI_PRIMARY_AGENT="Claude Code + Codex CLI"
-            AI_REVIEW_AGENT="Cross-agent review"
             ;;
     esac
+    derive_agent_names "$AI_PROFILE" "$CODEX_ENABLED"
+}
+
+# Side-effect-free variant of derive_agent_names: emits
+# "<primary>\t<review>" on stdout instead of assigning globals, so callers
+# that only need the values cannot disturb the configured profile.
+#
+# Usage: derive_agent_names_pair <ai_profile> [codex_enabled]
+derive_agent_names_pair() {
+    (
+        derive_agent_names "$1" "${2:-false}"
+        printf '%s\t%s' "$AI_PRIMARY_AGENT" "$AI_REVIEW_AGENT"
+    )
 }
 
 prompt_ai_profile_selection() {
@@ -1823,6 +1861,109 @@ cleanup_upstream_dir() {
     fi
 }
 
+# Render template placeholders in an upgrade staging tree.
+#
+# The staged plugin pipeline copies template files verbatim, so staged
+# copies still carry {{PROJECT_NAME}} / {{AI_PROFILE}} / {{AI_PRIMARY_AGENT}}
+# / {{AI_REVIEW_AGENT}} tokens, while the manifest holds hashes of the
+# *rendered* files written at the end of scaffold. Without this pass
+# manifest_decide sees `current == old && new != old` and emits UPDATE,
+# writing raw placeholders back over correctly rendered downstream files.
+#
+# Most placeholder-bearing files escape that because they sit in
+# MANIFEST_EXCLUDE_GLOBS (CLAUDE.md, AGENTS.md, README.md,
+# docker-compose.yml, .devcontainer/devcontainer.json). The exposed set is
+# .tarnished/agent-profile.json and .tarnished/workflows/*.md — the
+# lifecycle contract files — so the regression only fires when one of
+# those changes upstream.
+#
+# The AI profile comes from the manifest: apply_decisions_for_scope loads
+# .scaffold_options.{ai_profile,codex_enabled} and calls
+# configure_ai_profile before staging, and the manifest is the declared
+# source of truth for what was originally selected. Target files are only a
+# compatibility fallback for manifests written before those keys existed —
+# inferring the profile from whether .codex/config.toml happens to exist
+# would silently demote a Codex reviewer to "Manual review" if the user
+# deleted that file.
+#
+# The project name has no manifest field, so it is recovered from the
+# target. Both values are interpolated into a sed program by
+# replace_placeholders, so anything that is not a plain identifier is
+# rejected rather than escaped-and-hoped-for.
+#
+# Usage: stage_render_placeholders <staging_dir> <target_dir>
+stage_render_placeholders() {
+    local staging_dir="$1"
+    local target_dir="$2"
+
+    if [[ -z "$target_dir" ]] || [[ ! -d "$target_dir" ]]; then
+        print_warning "staging render: target directory unavailable, skipping placeholder rendering"
+        return 0
+    fi
+
+    local ai_profile="$AI_PROFILE"
+    local primary_agent="$AI_PRIMARY_AGENT"
+    local review_agent="$AI_REVIEW_AGENT"
+
+    case "$ai_profile" in
+        claude-main | codex-main | dual) ;;
+        *)
+            # Manifest predates the ai_profile key, or carries a value this
+            # version does not know. Fall back to the target's own profile.
+            ai_profile=""
+            local profile_file="${target_dir}/.tarnished/agent-profile.json"
+            if [[ -f "$profile_file" ]]; then
+                ai_profile=$(jq -r '.ai_profile // empty' "$profile_file" 2>/dev/null || echo "")
+            fi
+            case "$ai_profile" in
+                claude-main | codex-main | dual) ;;
+                *) ai_profile="claude-main" ;;
+            esac
+            local codex_enabled=false
+            [[ -f "${target_dir}/.codex/config.toml" ]] && codex_enabled=true
+            local names
+            names="$(derive_agent_names_pair "$ai_profile" "$codex_enabled")"
+            primary_agent="${names%%$'\t'*}"
+            review_agent="${names##*$'\t'}"
+            ;;
+    esac
+
+    # `.devcontainer/devcontainer.json` carries the rendered
+    # {{PROJECT_NAME}} in its "name" field and is user-owned (it is in
+    # MANIFEST_EXCLUDE_GLOBS), so it survives upgrades and is the most
+    # faithful record of the name the project was scaffolded with. Fall
+    # back to the directory basename, which is what the scaffold prompt
+    # itself defaults to.
+    local project_name=""
+    local devcontainer_json="${target_dir}/.devcontainer/devcontainer.json"
+    if [[ -f "$devcontainer_json" ]]; then
+        project_name=$(jq -r '.name // empty' "$devcontainer_json" 2>/dev/null || echo "")
+    fi
+    if ! _is_safe_placeholder_value "$project_name"; then
+        project_name="$(basename "$(cd "$target_dir" && pwd)")"
+    fi
+    if ! _is_safe_placeholder_value "$project_name"; then
+        print_warning "staging render: cannot recover a usable project name; skipping placeholder rendering"
+        return 0
+    fi
+
+    replace_placeholders "$staging_dir" "$project_name" "$ai_profile" \
+        "$primary_agent" "$review_agent"
+}
+
+# A placeholder value is safe when it is a plain identifier: it ends up
+# inside a sed replacement, inside JSON, and inside shell-adjacent files
+# such as docker-compose service names. Anything else (an unrendered
+# {{token}}, a sed metacharacter, a newline, a quote) is rejected.
+#
+# Usage: _is_safe_placeholder_value <value>
+_is_safe_placeholder_value() {
+    local v="$1"
+    [[ -n "$v" ]] || return 1
+    [[ "$v" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || return 1
+    return 0
+}
+
 # Run the loaded plugin pipeline (copies + dockerfile + post-copy) against a
 # scratch staging directory. The recording wrapper in copy_with_confirm
 # populates MANIFEST_TRACKED with each emitted file. When this returns,
@@ -1858,17 +1999,29 @@ stage_plugin_run() {
     TEMPLATES_DIR="$saved_templates"
     manifest_recording_stop
 
-    # Backstop for review.md Critical #1: plugins emit some files via
-    # `sed > target`, `cat > target`, or `touch target` rather than
-    # copy_with_confirm — these bypass the recording wrapper. After the
-    # staged run, walk the staging tree and merge any files we missed
-    # into MANIFEST_TRACKED so NEW_HASHES is the complete set of files
-    # the upgraded templates produce. Honors MANIFEST_EXCLUDE_GLOBS.
+    # Render placeholders before hashing, so NEW_HASHES describes the
+    # files that would actually land in the target.
+    stage_render_placeholders "$staging_dir" "$UPGRADE_TARGET_DIR"
+
+    # Rebuild MANIFEST_TRACKED from the staging tree alone, so NEW_HASHES
+    # describes exactly the files that exist after the full pipeline.
+    #
+    # The walk supersedes the recording wrapper rather than filling gaps in
+    # it, for three reasons: it covers plugins that emit via `sed > target`,
+    # `cat > target`, or `touch target` instead of copy_with_confirm; it
+    # reflects the placeholder render above, which rewrote files the
+    # recorder had already hashed; and it drops recorder entries for files
+    # a later plugin_post_copy deleted. That last case is why the reset
+    # matters — several service plugins copy a docker-compose overlay and
+    # then remove it once merged (see templates/services/*/plugin.sh), and
+    # a surviving recorder entry would put a nonexistent staging path into
+    # NEW_HASHES, where manifest_apply's NEW/UPDATE branch would `cp` it
+    # and abort the upgrade mid-apply.
+    unset MANIFEST_TRACKED
+    declare -gA MANIFEST_TRACKED
     local rel hash
     while IFS=$'\t' read -r rel hash; do
         [[ -z "$rel" ]] && continue
-        # Only fill in entries the recorder didn't already capture.
-        [[ -n "${MANIFEST_TRACKED[$rel]:-}" ]] && continue
         MANIFEST_TRACKED["$rel"]="$hash"
     done < <(manifest_walk_directory "$staging_dir")
 }
@@ -1915,11 +2068,17 @@ stage_plugin_run_for_module() {
     unset_plugin_functions
     manifest_recording_stop
 
-    # Backstop for review.md Critical #1 (sed/cat/touch emissions).
+    # Placeholder values are monorepo-root scoped (PROJECT_NAME is the
+    # monorepo name at scaffold time), so derive them from the upgrade
+    # target root rather than from the module staging directory.
+    stage_render_placeholders "$staging_dir" "$UPGRADE_TARGET_DIR"
+
+    # Authoritative rebuild — see stage_plugin_run for the rationale.
+    unset MANIFEST_TRACKED
+    declare -gA MANIFEST_TRACKED
     local rel hash
     while IFS=$'\t' read -r rel hash; do
         [[ -z "$rel" ]] && continue
-        [[ -n "${MANIFEST_TRACKED[$rel]:-}" ]] && continue
         MANIFEST_TRACKED["$rel"]="$hash"
     done < <(manifest_walk_directory "$staging_dir")
 }
@@ -2085,6 +2244,12 @@ run_upgrade() {
         print_error "upgrade: target directory not found: $target_dir"
         return 1
     fi
+
+    # Published for stage_render_placeholders. The scaffold-path global
+    # TARGET_DIR is never set in upgrade mode, and the staging helpers are
+    # called from several scopes, so the target is carried as a global
+    # rather than threaded through every signature.
+    UPGRADE_TARGET_DIR="$target_dir"
 
     if ! manifest_exists "$target_dir"; then
         print_error "no .tarnished-manifest.json at $target_dir"

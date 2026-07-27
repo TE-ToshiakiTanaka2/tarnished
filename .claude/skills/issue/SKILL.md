@@ -17,40 +17,46 @@ This skill is the Claude Code projection of `.tarnished/workflows/issue.md`. Kee
 /issue
 ```
 
+## Roles
+
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and the routing table. Scoping is judgment and stays with the orchestrator.
+
 ## erd Command Invocation
 
-All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
+Invoke each erd command by the first available route:
 
-```
-Read(".claude/commands/erd/<command>.md") → follow instructions inline
-```
+1. `Read(".claude/commands.local/erd/<command>.md")` — the project's overlay, when one exists
+2. `Skill(erd:<command>)` — loads the base instructions into the current turn
+3. `Read(".claude/commands/erd/<command>.md")` — the base copy, when the Skill route is unavailable
 
-Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
+The overlay is checked first because it is the only route guaranteed to honor a project's customization. `commands.local/` is where a project overrides an erd command, and taking the Skill route without looking would silently run the base version instead.
 
 ## What This Skill Does
 
 ### Phase 1: Requirement Understanding and Discovery
 
 1. **Confirm user request** - Understand what the user wants to accomplish
-2. **Load `/erd:brainstorm` and follow inline** - `Read(".claude/commands/erd/brainstorm.md")`:
+2. **Load `/erd:brainstorm`**:
    - Discover hidden requirements, edge cases, technical constraints, and non-functional requirements through Socratic dialogue
+   - When a question has a small set of concrete answers — which layer to change, which of two approaches, in or out of scope — ask it as a structured choice rather than as free text. Keep open-ended prose for questions that genuinely have no enumerable answer
 3. **Organize requirements** - Structure and summarize discovered requirements; iterate with the user until approved
+4. **Advisor consult** (conditional) - When the scope is still ambiguous after the summary — competing readings of what is in scope, or an unresolved boundary — launch the `advisor` subagent (`.claude/agents/advisor.md`) once to challenge the scope before the issue is written. Skip when the scope is settled, when the advisor definition is absent, or when read-only subagents are unavailable. Unresolved ambiguity is the trigger, not general caution
 
 ### Phase 2: Estimation
 
-4. **Load `/erd:estimate` and follow inline** - `Read(".claude/commands/erd/estimate.md")`:
+5. **Load `/erd:estimate`**:
    - Determine Size and Priority using the criteria tables below, identify risks, dependencies, and affected layers
 
 ### Phase 3: Issue Creation and Configuration
 
-5. **Create GitHub Issue** - Follow `_shared/issue` procedure with the prepared parameters:
+6. **Create GitHub Issue** - Follow `_shared/issue` procedure with the prepared parameters:
    - `title`: English title from brainstorm/estimation results
    - `body`: Issue body formatted per the Issue Description Format below
    - `labels`: Determined from issue type (feature, bugfix, refactor, etc.)
    - `size`: From `/erd:estimate` results (XS/S/M/L/XL)
-   - `priority`: Mapped from `/erd:estimate` Priority — High → `P0`, Medium → `P1`, Low → `P2` (the project field accepts only P-values)
+   - `priority`: `P0` / `P1` / `P2`. `/erd:estimate` reports High/Medium/Low; map it here — High → `P0`, Medium → `P1`, Low → `P2`. This mapping exists only at the erd boundary: everything written into the issue, including the body and the criteria table below, uses P-values
    - See `_shared/issue/SKILL.md` for full procedure (Issue creation, milestone, project fields)
-6. **Return Issue number**
+7. **Return Issue number**
 
 ## erd Commands Used
 
@@ -101,7 +107,7 @@ Context and purpose
 ## Estimation
 
 - **Size**: XS/S/M/L/XL
-- **Priority**: High/Medium/Low
+- **Priority**: P0/P1/P2
 - **Affected Layers**: Brief description
 - **Risk Factors**: Brief description
 - **Estimated Complexity**: Brief reasoning
@@ -119,30 +125,15 @@ Context and purpose
 
 ## Priority Criteria
 
-| Priority   | Criteria                                 |
-| ---------- | ---------------------------------------- |
-| **High**   | Bug fix, security-related, blocker       |
-| **Medium** | Normal feature addition, improvement     |
-| **Low**    | Documentation, refactoring, nice-to-have |
+| Priority | Criteria                                 |
+| -------- | ---------------------------------------- |
+| **P0**   | Bug fix, security-related, blocker       |
+| **P1**   | Normal feature addition, improvement     |
+| **P2**   | Documentation, refactoring, nice-to-have |
 
-## Completion Output
+## Reporting
 
-```
-Issue Created: #XX
-
-Settings:
-- Label: feature
-- Milestone: v1.0
-- Assignee: @username
-
-Estimation (erd:estimate):
-- Size: M (3-5 files, spanning multiple modules)
-- Priority: Medium (normal feature addition)
-- Affected Layers: ...
-- Risk: Low
-
-Ready for /design XX
-```
+Report the issue number and URL, the label, milestone, and assignee actually set, the estimation results (size, priority, affected layers, risk), any metadata operation that failed non-blockingly, whether the advisor was consulted, any question left unresolved, and the next command.
 
 ## Integration
 

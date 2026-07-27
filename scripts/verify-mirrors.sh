@@ -73,7 +73,7 @@ check_pair "codex: config.toml" \
 check_pair "tarnished: workflow summaries" \
     ".tarnished/workflows/README.md" \
     "templates/agent-workflows/.tarnished/workflows/README.md"
-for f in issue design implement review pr; do
+for f in issue design implement review pr flow; do
     check_pair "tarnished: workflows/${f}.md" \
         ".tarnished/workflows/${f}.md" \
         "templates/agent-workflows/.tarnished/workflows/${f}.md"

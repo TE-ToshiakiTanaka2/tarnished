@@ -1,7 +1,7 @@
 ---
 name: pr
 description: Create a Pull Request with code analysis, quality checks, CI monitoring, and validation. Uses erd commands (erd:analyze, erd:improve, erd:cleanup, erd:reflect). Supports --merge for auto-merge after CI passes.
-argument-hint: "[target_branch]"
+argument-hint: "[target_branch] [--merge]"
 disable-model-invocation: true
 ---
 
@@ -32,15 +32,19 @@ Examples:
 /pr --merge
 ```
 
+## Roles
+
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and the routing table. Phase 1 mixes judgment (which findings matter, which refactor preserves behavior) with mechanics (formatters, linters, dead-code removal); route within it per unit of work rather than delegating the phase as a block. CI log collection is mechanical; interpreting a CI failure is judgment.
+
 ## erd Command Invocation
 
-All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
+Invoke each erd command by the first available route:
 
-```
-Read(".claude/commands/erd/<command>.md") → follow instructions inline
-```
+1. `Read(".claude/commands.local/erd/<command>.md")` — the project's overlay, when one exists
+2. `Skill(erd:<command>)` — loads the base instructions into the current turn
+3. `Read(".claude/commands/erd/<command>.md")` — the base copy, when the Skill route is unavailable
 
-Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
+The overlay is checked first because it is the only route guaranteed to honor a project's customization. `commands.local/` is where a project overrides an erd command, and taking the Skill route without looking would silently run the base version instead.
 
 ## MCP Tools
 
@@ -54,11 +58,11 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 
 ### Phase 1: Code Analysis and Improvement
 
-1. **Load `/erd:analyze` and follow inline** - `Read(".claude/commands/erd/analyze.md")`:
+1. **Load `/erd:analyze`**:
    - Quality, security, performance, and architecture findings
-2. **Load `/erd:improve` and follow inline** - `Read(".claude/commands/erd/improve.md")`:
+2. **Load `/erd:improve`**:
    - Apply behavior-preserving improvements addressing the findings
-3. **Load `/erd:cleanup` and follow inline** - `Read(".claude/commands/erd/cleanup.md")`:
+3. **Load `/erd:cleanup`**:
    - Remove dead code, unused imports, and commented-out code
 4. **Commit improvements** - Commit all improvement and cleanup changes
 
@@ -76,18 +80,23 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 
 ### Phase 4: CI Monitoring and Validation
 
-11. **Monitor GitHub Actions** - Wait for CI completion using `gh run watch <run_id> --exit-status` with `run_in_background: true`. Do NOT use `sleep` to poll — it is blocked by the runtime. After the background task completes, check results with `gh pr checks <pr_number>`.
-12. **Validate CI results** - Load `/erd:reflect` and follow inline - `Read(".claude/commands/erd/reflect.md")`:
+11. **Monitor CI** - Wait on the pull request's **aggregate** check state, not on a single workflow run: `gh pr checks <pr_number> --watch --fail-fast` in the background, or the harness's condition-waiting affordance where one is available. Background completion re-invokes the agent, so no manual re-check step is needed. Never `sleep`-poll — the runtime blocks it.
+
+    Watching one `gh run watch <run_id>` is not sufficient. A repository can have several workflows and check suites on the same PR, so a single green run says nothing about the others, and merging on it can merge over a pending or failing check.
+
+    Set an explicit timeout on the wait — 15 minutes unless the project's CI is known to run longer. The timeout is what owns the "CI status unknown" rule below: nothing else in this procedure measures elapsed time, so a rule without a wait deadline has no actor that can execute it.
+12. **Validate CI results** - Load `/erd:reflect`:
     - Interpret CI pass/fail, assess coverage adequacy, verify the implementation matches the issue requirements, identify remaining risks
 13. **Fix loop on CI failure**:
     - Analyze error content from CI logs (`gh run view <run_id> --log-failed`)
     - Implement fix, commit & push, re-check CI
-    - If a CI first-pass review comment exists (from `claude-code-review.yml`), address Critical findings before merging
+    - If the repository has a first-pass CI review workflow configured and it left a review comment, address its Critical and Major findings before merging. This workflow is opt-in and is not installed by scaffolding, so treat its absence as normal
 14. **Report completion** - Present PR URL and validation summary
 
 ### Phase 5: Auto-Merge (if `--merge` flag is specified)
 
 15. **Merge PR** - Squash merge via `gh pr merge <pr_number> --squash --delete-branch`:
+    - Re-read `gh pr checks <pr_number>` immediately before merging and require every check to be green. The watch in Phase 4 can predate a check that started later
     - Only proceeds if CI has passed and validation is successful
     - If merge fails (e.g., merge conflict, branch protection), report the error to user
 16. **Update local target branch** - After a successful merge, switch to the target branch and update it with `git pull --ff-only origin <target_branch>`
@@ -110,7 +119,7 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 {type}: {description}
 ```
 
-**IMPORTANT**: Do NOT include the Issue number `(#XXX)` in the PR title. GitHub's squash merge automatically appends the PR number `(#N)` to the commit message. If the Issue number is also in the title, the commit message becomes `feat: ... (#issue) (#pr)`, which breaks auto-tag workflows.
+Do not include the Issue number `(#XXX)` in the PR title. GitHub's squash merge automatically appends the PR number `(#N)` to the commit message. If the Issue number is also in the title, the commit message becomes `feat: ... (#issue) (#pr)`, which breaks auto-tag workflows.
 
 The Issue number should only appear in the PR body as `Closes #XXX`.
 
@@ -162,80 +171,26 @@ Closes #XXX
 
 ## Error Handling
 
-- **CI timeout**: Show warning if status unknown after 5 minutes
+- **CI timeout**: When the wait deadline passes without a conclusive result, report CI status as unknown and stop. Do not merge on unknown CI
 - **Fix loop limit**: Report to user if still failing after 3 fix attempts
 - **Merge conflict**: Notify user and provide resolution instructions
 - **Merge failure** (with `--merge`): Report the error (e.g., branch protection, required reviews). Do NOT retry merge automatically
 
-## Output Format
+## Reporting
 
-### On Success
+Report, in whatever shape fits the run:
 
-```
-Pull Request Created
+- PR number, title, and URL
+- Source and target branches
+- Analysis findings and the improvements and cleanup applied
+- CI status, and the number of fix iterations if any were needed
+- What each fix iteration changed
+- Validation outcome from `/erd:reflect`: CI, coverage adequacy, requirement coverage, remaining risks
+- Change summary — files changed, lines added and deleted
+- Linked issue, and that it closes on merge
+- Merge result when `--merge` was given: merge method, target branch, and whether the source branch was deleted
 
-PR: #XX - feat: add configuration file support
-URL: https://github.com/owner/repo/pull/XX
-
-Branches:
-- Source: feature/username/#123/add-config-loader
-- Target: develop
-
-Code Analysis (erd:analyze):
-- Quality: No issues
-- Security: No issues
-- Performance: No issues
-
-Improvements Applied (erd:improve):
-- Removed 2 unused imports
-- Standardized error handling pattern
-
-Cleanup Applied (erd:cleanup):
-- Removed 3 commented-out code blocks
-- Optimized import ordering in 4 files
-
-CI Status: All checks passed
-
-Validation (erd:reflect):
-- CI: All green
-- Coverage: Adequate (85% on changed files)
-- Requirements: Fully met per Issue #123
-- Risks: None identified
-
-Related Issue: #123 (will be closed on merge)
-
-Change Summary:
-- 5 files changed
-- 150 lines added
-- 20 lines deleted
-
-Ready for review.
-```
-
-### After CI Fix
-
-```
-Pull Request Updated
-
-CI Fix Applied:
-- Fixed: lint error in src/config.rs
-- Commit: fix: resolve lint error in config module
-
-CI Status: All checks passed (after 1 fix iteration)
-```
-
-### After Auto-Merge (with --merge)
-
-```
-Pull Request Merged
-
-PR: #XX - feat: add configuration file support
-URL: https://github.com/owner/repo/pull/XX
-Merge: Squash merged into develop
-Branch: feature/username/#123/add-config-loader (deleted)
-
-Related Issue: #123 (closed)
-```
+Report only what actually happened. A checklist item that was not run is not a passing checklist item.
 
 ## Best Practices
 
@@ -250,7 +205,7 @@ Related Issue: #123 (closed)
 ## Integration
 
 - **Prerequisite**: Implementation completed with `/implement <issue_number>`, optionally reviewed with `/review`
-- **CI Workflow**: Integrates with GitHub Actions workflows; `claude-code-review.yml` (when configured) posts a first-pass review on PR open
+- **CI Workflow**: Integrates with the repository's GitHub Actions workflows. A first-pass CI review, where a project has configured one, uses the criteria and severity taxonomy in `.claude/skills/review/SKILL.md`
 - **Typical workflow**: `/issue` → `/design` → `/implement` → `/review` → **`/pr`**
 
 ARGUMENTS:
