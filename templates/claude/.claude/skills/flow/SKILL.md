@@ -1,6 +1,6 @@
 ---
 name: flow
-description: Run the issue lifecycle end to end — design, implement, review, pr — for one GitHub Issue, entering at the first incomplete stage. Threads one base branch through every stage and gates on approval before implementation.
+description: Run the issue lifecycle end to end — issue, design, implement, review, pr — for one GitHub Issue, entering at the first incomplete stage. Can start from a raw requirement when no issue exists yet. Threads one base branch through every stage and gates on approval before design and before implementation.
 argument-hint: "[--issue N] [--base <branch>] [--from <stage>] [--merge]"
 disable-model-invocation: true
 ---
@@ -18,7 +18,8 @@ This skill is the Claude Code projection of `.tarnished/workflows/flow.md`. Keep
 /flow --issue 123 --base main         # branch from, review against, and target main
 /flow --issue 123 --from implement    # force entry at implement
 /flow --issue 123 --merge             # forward --merge to /pr
-/flow                                 # infer the issue from the branch, or ask
+/flow --from issue                    # start from a raw requirement — /issue creates the number
+/flow                                 # infer the issue from the branch, else offer both entries
 ```
 
 | Argument | Default | Meaning |
@@ -34,7 +35,23 @@ Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary, the r
 
 ## Stage 1: Resolve inputs
 
-Resolve the issue number from `--issue`, else from the current branch name (`.../#<n>/...`), else ask the user with a structured question rather than free text.
+Resolve the issue number by this precedence, first match wins:
+
+| # | Condition | Result |
+| --- | --- | --- |
+| 1 | `--from issue` given | Skip number resolution entirely — the entry stage is `issue`, and `/issue` creates the number |
+| 2 | `--issue N` given | `N` |
+| 3 | Current branch matches `.../#<n>/...` | `<n>` |
+| 4 | Nothing above resolved | Ask a structured question offering two entries: **name an existing issue**, or **start from a requirement** (the latter sets the entry stage to `issue`) |
+
+Rule 1 comes first by necessity, not convention. A rule that only offers the choice "when no number resolves" would still prompt on `--from issue`, because no number resolves there either — which is the bug this ordering exists to prevent. Consult the flag before asking the question.
+
+Rule 4 asks rather than assuming, because "no number" is ambiguous: it means either genuinely new work or a forgotten `--issue`. Auto-entering `issue` would push the second case into an unwanted requirements brainstorm.
+
+Two combinations are contradictory rather than merely unusual:
+
+- `--from issue` with `--issue N` — the stage creates the number the flag supplies. Report it and ask which was meant, rather than silently preferring one.
+- `--from <stage after issue>` reaching rule 4 — a later stage cannot run against an issue that does not exist yet. Offer only "name an existing issue" in that case; the requirement-first entry would override the `--from` the user just gave.
 
 Resolve `--base`, defaulting to `develop`. Pass the same value to `/design`, `/implement`, `/review`, and `/pr` — a base that holds for the PR target but not for branch creation is the bug this argument exists to prevent.
 
@@ -42,10 +59,13 @@ Resolve `--base`, defaulting to `develop`. Pass the same value to `/design`, `/i
 
 Derive the entry point from repository evidence rather than a state file. Evidence is authoritative, survives a failed run, and needs no cleanup.
 
-First **resolve the issue branch itself** and evaluate every subsequent question against that ref — not against `HEAD`. `/flow --issue N` is frequently run from `develop` or from another issue's branch, and reading `HEAD` there reports another issue's progress as this one's. Fetch the branch when it exists only on the remote, and check it out before running any stage.
+**When Stage 1 resolved the entry stage to `issue`, skip the rest of this stage** and go straight to Stage 3. There is no branch, no commit, and no artifact to read yet — `/design` creates the branch once `/issue` returns a number. Absence of evidence is accurate here rather than inconclusive: nothing has begun, so there is nothing to resume. Still set up the task tracking described at the end of this stage.
+
+Otherwise, first **resolve the issue branch itself** and evaluate every subsequent question against that ref — not against `HEAD`. `/flow --issue N` is frequently run from `develop` or from another issue's branch, and reading `HEAD` there reports another issue's progress as this one's. Fetch the branch when it exists only on the remote, and check it out before running any stage.
 
 | Evidence, evaluated on the issue branch ref | Entry stage |
 | --- | --- |
+| No issue number, requirement-first entry chosen in Stage 1 | `issue` |
 | No branch matching `#<n>/`, local or remote | `design` |
 | Branch exists, no `docs: add design documents for #<n>` commit on it | `design` |
 | Design commit present, no later commit touching anything outside `docs/design/` | `implement` |
@@ -62,7 +82,7 @@ Two evidence rules are deliberately stricter than "the file exists":
 
 Query pull requests across all states (`gh pr list --head <branch> --state all`), not just open ones — the default open-only view reports a merged PR as absent and sends the run back into PR creation.
 
-`--from <stage>` overrides the derivation. When the named stage's prerequisites are absent, report what is missing and stop rather than proceeding on a guess.
+`--from <stage>` overrides the derivation. When the named stage's prerequisites are absent, report what is missing and stop rather than proceeding on a guess. The `issue` stage is the exception: it has **no** prerequisites, because it creates them — never treat a missing issue number as a missing prerequisite for it.
 
 Track the stages as tasks so a long run stays observable, and keep the task state current as each stage completes.
 
@@ -70,7 +90,7 @@ Track the stages as tasks so a long run stays observable, and keep the task stat
 
 Run from the entry stage through `pr`. For each stage, read its skill and follow it.
 
-The `issue` stage is the one exception to "resolve the issue number first": it is what creates the number. When entering at `issue` — `--from issue`, or no issue number and the user asks to start from a requirement — run `/issue` with no arguments, capture the number it returns, and use that for every later stage.
+When the entry stage is `issue`, run `/issue` with no arguments, capture the number it returns, and use that number for every later stage. Stage 1 rules 1 and 4 are the two routes into it.
 
 | Stage | Skill | Arguments passed |
 | --- | --- | --- |
@@ -82,11 +102,27 @@ The `issue` stage is the one exception to "resolve the issue number first": it i
 
 Report each stage's own output as that stage completes, rather than accumulating everything to the end.
 
-## Stage 4: Approval gate before implementation
+## Stage 4: Approval gates
 
-Before `implement`, present the design for approval and do not proceed until the user approves.
+Two gates, with deliberately different resume semantics.
 
-The gate runs on **resumed** runs too, not only on runs that just executed `design`. `/design` commits its artifacts in Phase 8 and only then reaches its sign-off gate, so a design commit proves the artifacts were written, not that anyone approved them — an interrupted run would otherwise resume straight into implementation past a gate that never cleared. On a resumed run, present the already-committed design rather than re-deriving it.
+### Gate A — before `design`, when this run created the issue
+
+When the run entered at `issue`, present the created issue for approval before spending a design cycle on it.
+
+`/issue`'s own approval loop covers the **requirements summary** only. Its estimation, implementation approach, and task breakdown are produced afterwards and never re-presented — and those are what scope every later stage. Without this gate, one run goes from a raw requirement straight into a design cycle that commits artifacts, with nobody having seen the issue as filed.
+
+Present the delta beyond what was already approved inside `/issue`, not the whole issue again, and offer "edit the issue, then proceed" rather than a bare approve/abort. A gate that can only be accepted trains rubber-stamping.
+
+Skip this gate when the run entered at `design` or later. A resumed run arrives via `--issue N`, and re-asking would change behavior for runs that already carry a number. The consequence is accepted: an interrupted requirement-first run, resumed later, proceeds on an issue nobody explicitly approved — by then the issue exists on GitHub and is reviewable out of band.
+
+### Gate B — before `implement`
+
+Present the design for approval and do not proceed until the user approves.
+
+Unlike Gate A, this gate runs on **resumed** runs too. `/design` commits its artifacts in Phase 8 and only then reaches its sign-off gate, so a design commit proves the artifacts were written, not that anyone approved them — an interrupted run would otherwise resume straight into implementation past a gate that never cleared. On a resumed run, present the already-committed design rather than re-deriving it.
+
+The asymmetry between the two is deliberate: Gate B has no way to tell an approved design from an unapproved one, while Gate A's subject is a GitHub issue that remains visible and editable after the run ends.
 
 ## Stage 5: Review triage
 
@@ -104,11 +140,12 @@ Run `/pr` inline. When resuming onto an existing open PR, skip creation and cont
 
 Report, in whatever shape fits the run:
 
-- The entry stage and the evidence that selected it
+- The entry stage, and which Stage 1 rule or which evidence selected it
 - Per-stage outcome, naming stages skipped as already complete
 - Artifacts each stage wrote
 - Review verdict, and how each Critical and Major finding was resolved or deferred
 - PR URL, CI status, and merge result when merging was requested
+- Which approval gates ran, which were skipped, and why
 - Whether the advisor was consulted or skipped, and why
 - Anything left incomplete, and what blocked it
 
@@ -116,7 +153,10 @@ Report, in whatever shape fits the run:
 
 | Condition | Action |
 | --- | --- |
-| Issue number unresolvable | Ask with a structured question; do not guess |
+| Issue number unresolvable | Offer both entries — name an existing issue, or start from a requirement. Never a bare number prompt, and never a guess |
+| `--from issue` given with `--issue N` | Report the contradiction and ask which was meant |
+| `/issue` returns no number (aborted) | Stop. Do not proceed to `design` |
+| Gate A declined | Stop, leaving the created issue in place for editing |
 | `--from <stage>` prerequisites absent | Report the missing prerequisite and stop |
 | A stage cannot complete | Stop at that stage; report which and why. Do not run later stages on a broken prerequisite |
 | Advisor unavailable | Skip the consult and note it. Advice never gates a stage |
