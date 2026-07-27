@@ -19,6 +19,13 @@ Breadth-dominated work: ~24 files across three altitude levels under a byte-iden
 - **Depends on**: Step 1 (complete)
 - **Done when**: every invocation point carries a class; no judgment-dependent trigger remains; the ceiling table sums to 11
 
+### Step 2a: Bind the remaining roles to their models
+
+- **Action**: Write `"model": "claude-opus-5[1m]"` into `.claude/settings.json` and `templates/claude/.claude/settings.json` (FR-20). Create `.claude/agents/executor.md` with `model: claude-sonnet-5` and a system prompt scoped to mechanical work with an objective success condition (FR-21). Remove `model` and `reasoning_effort` from `roles.external-reviewer` in `.tarnished/agent-profile.json` and its template, leaving `{ "agent": "review" }` (FR-22).
+- **Files**: `.claude/settings.json`, `templates/claude/.claude/settings.json`, `.claude/agents/executor.md`, `.tarnished/agent-profile.json`, `templates/agent-workflows/.tarnished/agent-profile.json`
+- **Depends on**: Step 2 (the precedence chain it documents)
+- **Done when**: each of the four roles has exactly one place that names its model, and `verify-mirrors.sh` still passes on the two parity-checked pairs (`agent-profile.json`, `.claude/agents`). `settings.json` is not parity-checked, so its two copies are edited independently and are permitted to diverge later
+
 ### Step 3: Extend the advisor definition
 
 - **Action**: Add per-finding concrete fix proposals to the output contract (FR-1); add the conformance mode — inputs (verbatim source of truth, subject, round), the four verdicts, and the rule that a paraphrased source of truth is itself a reportable finding; add `model: claude-fable-5` frontmatter (FR-9). Leave `tools:` and the READ-ONLY prose constraint untouched.
@@ -42,7 +49,7 @@ Breadth-dominated work: ~24 files across three altitude levels under a byte-iden
 
 ### Step 6: `/review` — parallel advisor review and the second ground truth
 
-- **Action**: Add the advisor diff review running in parallel with the external reviewer plus the arbitration rule and artifact format (FR-6); add the issue's Requirements to the prompt template and the ninth requirement-adherence criterion (FR-18); add the FR-19 precedence sentence.
+- **Action**: Add the advisor diff review running in parallel with the external reviewer plus the arbitration rule and artifact format (FR-6); add the issue's Requirements to the prompt template and the ninth requirement-adherence criterion (FR-18); rewrite Phase 2's model/effort resolution to read `.codex/config.toml` alone, keeping the artifact header record (FR-22); add the FR-19 precedence sentence.
 - **Files**: `.claude/skills/review/SKILL.md`
 - **Depends on**: Steps 2, 3
 - **Done when**: both ground truths are inline in the template and the artifact distinguishes the two reviewers' outputs
@@ -93,6 +100,7 @@ Breadth-dominated work: ~24 files across three altitude levels under a byte-iden
 
 - Steps 2 and 3 are the semantic root; every later step derives from them
 - Step 1 blocks only the FR-9 wording inside Steps 2 and 3
+- Step 2a depends on Step 2 for the precedence chain but is otherwise independent; its FR-22 half must land before Step 6 rewrites `/review` Phase 2
 - Steps 4, 5, 6 are independent of one another and can proceed in parallel once Steps 2-3 land
 - Step 7 depends on Step 5 because `--unattended` is defined by the `/design` side
 - Step 8 is a sweep, so it must follow Steps 5 and 7 rather than run beside them
@@ -106,7 +114,9 @@ The change is documentation-only; there is no compiled surface. Verification is 
 
 | Check | Method |
 | --- | --- |
-| Mirror byte-identity | `scripts/verify-mirrors.sh` exits 0 — the same gate CI runs |
+| Mirror byte-identity | `scripts/verify-mirrors.sh` exits 0 — the same gate CI runs. Note that `.claude/settings.json` is deliberately **outside** this gate |
+| One model source per role | Each of `orchestrator` / `executor` / `advisor` / `external-reviewer` is named in exactly one file; `grep -rn "claude-opus-5\|claude-sonnet-5\|claude-fable-5\|gpt-5" .claude .tarnished .codex templates/` shows no second declaration site |
+| `roles.external-reviewer` schema | `model` and `reasoning_effort` are absent from both `agent-profile.json` copies, and `review/SKILL.md` Phase 2 names one source |
 | No orphaned gate references | `grep -rin "gate" .claude/skills .tarnished/workflows .agents templates/` reviewed by hand; every hit is either intentional or fixed |
 | Every FR is landed | Walk FR-1..FR-19 against the diff; the issue is the checklist |
 | Ceiling arithmetic | Count the invocation points in the rewritten table; it must sum to 11 |

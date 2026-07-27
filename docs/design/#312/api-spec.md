@@ -14,6 +14,38 @@
 | absent (standalone invocation) | Present the design for approval and wait — current behavior, unchanged |
 | present (invoked by `/flow`) | Skip the presentation; the Phase 7.5 conformance record stands in its place; the report states that it did |
 
+## Role → model binding (delta)
+
+| Role | Execution | Channel | Value after this change |
+| --- | --- | --- | --- |
+| `orchestrator` | Inline (the session) | `.claude/settings.json :: model` | `claude-opus-5[1m]` |
+| `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
+| `advisor` | Delegated subagent | `.claude/agents/advisor.md` frontmatter | `claude-fable-5` |
+| `external-reviewer` | Separate vendor CLI | `.codex/config.toml` | reviewer-owned |
+
+Before this change every cell read "inherit the session model", because no level of the chain named a model anywhere.
+
+### `roles` schema change
+
+```diff
+  "roles": {
+    "orchestrator":      { "agent": "primary", "model": null },
+    "executor":          { "agent": "primary", "model": null },
+    "advisor":           { "agent": "primary", "model": null },
+-   "external-reviewer": { "agent": "review",  "model": null, "reasoning_effort": null }
++   "external-reviewer": { "agent": "review" }
+  }
+```
+
+Backward compatible in both directions: absent keys already fall back, and unknown keys are already ignored, so a downstream profile that still carries the two removed keys is not an error — the keys are simply no longer read.
+
+| Property | Constraint |
+| --- | --- |
+| `.tarnished/agent-profile.json` | Parity-checked against its template — the workspace copy cannot carry a per-role model without failing CI. Downstream copies are rendered and manifest-tracked, so precedence 1 works there |
+| `.claude/agents/` | Parity-checked **and** refresh-managed — a frontmatter pin ships to every project on the next container start |
+| `.claude/settings.json` | Neither parity-checked nor manifest-tracked. The two copies may diverge; the template value is a scaffold-time default only |
+| `.codex/config.toml` | Parity-checked. Sole source for the reviewer's model and reasoning effort |
+
 ## Advisor consult contract (delta)
 
 ### Classes

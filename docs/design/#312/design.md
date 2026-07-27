@@ -39,14 +39,19 @@ FR-18 is what makes the trade defensible rather than merely cheaper. Without it,
 ## Module Structure (delta)
 
 ```
-.claude/skills/_shared/delegation/SKILL.md   # consult classes, invocation table, escalation, ceiling, role matrix
-.claude/agents/advisor.md                    # fix proposals; conformance mode; model: fable
+.claude/skills/_shared/delegation/SKILL.md   # consult classes, invocation table, escalation, ceiling, role matrix,
+                                             #   model precedence chain per role
+.claude/agents/advisor.md                    # fix proposals; conformance mode; model: claude-fable-5
+.claude/agents/executor.md                   # NEW — mechanical-work definition; model: claude-sonnet-5
+.claude/settings.json                        # model: claude-opus-5[1m] (the orchestrator's only channel)
+.tarnished/agent-profile.json                # roles.external-reviewer loses model / reasoning_effort
 .claude/skills/issue/SKILL.md                # Phase 1 unconditional challenge; Phase 2 estimation challenge;
                                              #   Phase 3.5 conformance consult on the post-approval delta
 .claude/skills/design/SKILL.md               # unconditional challenge; workflow-plan challenge;
                                              #   Phase 7.5 conformance consult; conformance.md; --unattended
 .claude/skills/review/SKILL.md               # parallel advisor diff review + arbitration; issue Requirements
-                                             #   as second ground truth; requirement-adherence criterion
+                                             #   as second ground truth; requirement-adherence criterion;
+                                             #   Phase 2 resolves model/effort from .codex/config.toml alone
 .claude/skills/flow/SKILL.md                 # gates removed; escalation; two evidence rows; --unattended
 .tarnished/workflows/{README,issue,design,review,flow}.md    # contract projection
 .agents/skills/{issue,design,review,flow}/SKILL.md           # Codex projection
@@ -71,23 +76,48 @@ New artifact: `docs/design/#{issue}/conformance.md`, written by `/design`.
 
 `/design` step 22 presents the design for approval **unless** `--unattended` was passed; with it, the conformance record stands in the gate's place and the report says so.
 
-### Advisor model binding
+### Role model binding
 
-The advisor's independence today is **contextual only**. `advisor.md` carries no `model:` field, Claude Code's subagent frontmatter defaults to `inherit`, `roles.advisor.model` is `null`, and `roles.advisor.agent` is `"primary"` — so nothing in the chain names a model and the advisor runs on exactly the orchestrator's weights. A fresh context that has not seen the reasoning is worth something; identical weights means identical blind spots. That is thin for a second opinion and untenable once the advisor takes over checks a human used to perform.
+Before this issue, **no level of the binding chain named a model for any role**. `roles.<role>.model` is `null` everywhere, no agent definition carries a `model:` field, and Claude Code's subagent frontmatter defaults to `inherit`. Every role therefore ran on the session's model. For the advisor that is the sharpest problem: its independence was contextual only — a fresh context that has not seen the reasoning, but identical weights and therefore identical blind spots. That is thin for a second opinion and untenable once it takes over checks a human used to perform.
 
-Resolution chain, stated normatively in `_shared/delegation/SKILL.md` because today it says only "use that agent's configured default" and never says what the default is:
+Three roles are bound by different mechanisms, because they are dispatched differently. `_shared/delegation/SKILL.md` states this normatively, since today it says only "use that agent's configured default" and never says what the default is.
+
+| Role | Execution | Model channel | Value |
+| --- | --- | --- | --- |
+| `orchestrator` | Inline — it *is* the session | `.claude/settings.json :: model` | `claude-opus-5[1m]` |
+| `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
+| `advisor` | Delegated subagent | `.claude/agents/advisor.md` frontmatter | `claude-fable-5` |
+| `external-reviewer` | Separate vendor CLI | `.codex/config.toml` | owned by the reviewer's own config |
+
+For the two subagent roles the precedence chain is:
 
 | Precedence | Source | Refresh behaviour |
 | --- | --- | --- |
 | 1 | `roles.<role>.model` in `.tarnished/agent-profile.json` | Not refresh-managed — a downstream override survives every container start |
 | 2 | `model:` in the agent definition frontmatter | `.claude/agents/` **is** refresh-managed — the shipped default reaches every project on the next start |
-| 3 | `inherit` — the session model | What applies when neither above names a model; the current state of every role |
+| 3 | `inherit` — the session model | What applies when neither above names a model; the state of every role before this issue |
 
-The shipped default becomes `model: claude-fable-5` in `advisor.md`. Verified against the Claude Code subagent documentation: the frontmatter `model` field accepts `sonnet`, `opus`, `haiku`, `fable`, a full model ID, or `inherit`, and defaults to `inherit`.
+Verified against the Claude Code subagent documentation: frontmatter `model` accepts `sonnet`, `opus`, `haiku`, `fable`, a full model ID, or `inherit`, and defaults to `inherit`.
 
-A pinned ID rather than the `fable` alias, because the alias silently re-points at a new generation. This repository already pins exactly and bumps in a tracked commit — `.codex/config.toml` pins `gpt-5.6-sol`, #292 exists *because* a model value changed invisibly, and `/review` records the resolved model in the review artifact for the same reason. The cost of pinning is that a retired ID breaks every consult until bumped; the mitigation is that the pin lives in exactly one refresh-managed file, and bumping it follows an established path.
+**Pinned IDs rather than aliases**, because an alias silently re-points at a new generation. This repository already pins exactly and bumps in a tracked commit — `.codex/config.toml` pins `gpt-5.6-sol`, #292 exists *because* a model value changed invisibly, and `/review` records the resolved model in the review artifact for the same reason. The cost is that a retired ID breaks its consumer until bumped; the mitigation is that each pin lives in exactly one file with an established bump path.
 
-**Constraint worth writing down**: `scripts/verify-mirrors.sh` enforces byte-identity between `.tarnished/agent-profile.json` and its template, so **this repository cannot use precedence 1** — setting `roles.advisor.model` in the workspace fails the parity gate. The workspace copy also still carries unrendered `{{...}}` placeholders in `ai_profile` / `primary_agent` / `review_agent`, which the resolution contract treats as absent, so tarnished itself always runs the fallback path. Frontmatter is the only channel that works here. Precedence 1 stays available downstream, where the copy is rendered and manifest-tracked rather than parity-checked.
+`claude-opus-5[1m]` carries the 1M-context suffix, documented as valid on both aliases and full model names and a no-op where the model already runs with a 1M window. `claude-sonnet-5` takes no suffix — Sonnet 5 always runs with the 1M window on the Anthropic API and has no 200K variant to select.
+
+**The orchestrator cannot use the chain at all.** It is the session, not a subagent, so nothing dispatches it and no frontmatter applies. `.claude/settings.json :: model` is the only channel, and it is read once at session start. That file is neither parity-checked (`verify-mirrors.sh` covers skills, commands, agents, scripts, and `rules/shell.md`) nor manifest-tracked (`MANIFEST_EXCLUDE_GLOBS` treats it as user-owned), so the workspace copy may diverge from the template freely, and the template value is a scaffold-time default that `--upgrade` never revisits. Both copies carry the pin regardless; a default that only new projects receive is still a default.
+
+**Parity blocks precedence 1 inside this repository.** `verify-mirrors.sh` enforces byte-identity between `.tarnished/agent-profile.json` and its template, so setting `roles.advisor.model` in the workspace fails the gate. The workspace copy also still carries unrendered `{{...}}` placeholders in `ai_profile` / `primary_agent` / `review_agent`, which the resolution contract treats as absent, so tarnished itself always runs the fallback path. Frontmatter is the only channel that works here; precedence 1 stays available downstream, where the copy is rendered and manifest-tracked rather than parity-checked.
+
+### The external reviewer is single-sourced on the reviewer's own config
+
+`/review` Phase 2 currently resolves the reviewer's model and effort by preferring `roles.external-reviewer.model` / `.reasoning_effort` and falling back to `.codex/config.toml`. Two declaration sites for one value can only drift, and the reviewer is the one role executed by a different vendor's tool that already owns a config file. The two keys are removed from `roles.external-reviewer`, leaving `{ "agent": "review" }`, and Phase 2 reads `.codex/config.toml` alone.
+
+The artifact header keeps recording the resolved values — the reason it exists (a config change must be attributable rather than silently changing review quality) is unaffected by where the values came from.
+
+Accepted consequence: a downstream project can no longer run `/review` on a different model from its interactive `codex` sessions. That capability was never exercised, and one source of truth is worth more than an unused override. Note that inside tarnished the duplication was never even reachable — both `agent-profile.json` and `.codex/config.toml` are parity-checked, so neither could be edited to disagree with the other; the drift risk was entirely downstream, which is exactly where the fix lands.
+
+### `executor` gains a definition
+
+The `executor` role has carried a binding entry since #308 but **no agent definition**, unlike `advisor` and `code-reviewer`. There has been nowhere to put its model and nowhere to state what it is for, which is part of why "delegate the mechanical parts" has been easy to state and hard to check. `.claude/agents/executor.md` is added with the `claude-sonnet-5` pin and a system prompt scoped to the delegation table's own definition of mechanical work: an objective success condition, no judgment calls, escalate rather than decide when the task turns out to need one.
 
 ### Consult classes
 

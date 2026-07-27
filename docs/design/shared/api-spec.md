@@ -496,6 +496,8 @@ Project-level Codex CLI configuration written verbatim into downstream projects 
 
 Validated against the installed Codex CLI with `codex exec --strict-config`, which rejects unrecognized keys and values.
 
+Since #312 this file is the **sole** source for the external reviewer's model and reasoning effort. `roles.external-reviewer` no longer carries `model` or `reasoning_effort`; `/review` Phase 2 reads `.codex/config.toml` alone and records the resolved values in the artifact header, which is what keeps a config change attributable. The reviewer is the one role executed by another vendor's CLI that already owns a config file, so a second declaration site could only drift — and inside this repository the duplication was never even reachable, since both files are parity-checked and neither could be edited to disagree. The drift risk was downstream, which is where the removal lands. `roles.external-reviewer.agent` still selects *which* agent reviews.
+
 The workspace's own `/workspace/.codex/config.toml` MUST stay in sync with this template default so a `/review` run inside the tarnished repo behaves identically to a `/review` run inside any newly bootstrapped downstream project.
 
 ### `templates/codex/.devcontainer/scripts/setup_codex.sh` and workspace counterpart (#261)
