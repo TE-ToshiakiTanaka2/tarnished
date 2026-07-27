@@ -71,6 +71,24 @@ New artifact: `docs/design/#{issue}/conformance.md`, written by `/design`.
 
 `/design` step 22 presents the design for approval **unless** `--unattended` was passed; with it, the conformance record stands in the gate's place and the report says so.
 
+### Advisor model binding
+
+The advisor's independence today is **contextual only**. `advisor.md` carries no `model:` field, Claude Code's subagent frontmatter defaults to `inherit`, `roles.advisor.model` is `null`, and `roles.advisor.agent` is `"primary"` — so nothing in the chain names a model and the advisor runs on exactly the orchestrator's weights. A fresh context that has not seen the reasoning is worth something; identical weights means identical blind spots. That is thin for a second opinion and untenable once the advisor takes over checks a human used to perform.
+
+Resolution chain, stated normatively in `_shared/delegation/SKILL.md` because today it says only "use that agent's configured default" and never says what the default is:
+
+| Precedence | Source | Refresh behaviour |
+| --- | --- | --- |
+| 1 | `roles.<role>.model` in `.tarnished/agent-profile.json` | Not refresh-managed — a downstream override survives every container start |
+| 2 | `model:` in the agent definition frontmatter | `.claude/agents/` **is** refresh-managed — the shipped default reaches every project on the next start |
+| 3 | `inherit` — the session model | What applies when neither above names a model; the current state of every role |
+
+The shipped default becomes `model: claude-fable-5` in `advisor.md`. Verified against the Claude Code subagent documentation: the frontmatter `model` field accepts `sonnet`, `opus`, `haiku`, `fable`, a full model ID, or `inherit`, and defaults to `inherit`.
+
+A pinned ID rather than the `fable` alias, because the alias silently re-points at a new generation. This repository already pins exactly and bumps in a tracked commit — `.codex/config.toml` pins `gpt-5.6-sol`, #292 exists *because* a model value changed invisibly, and `/review` records the resolved model in the review artifact for the same reason. The cost of pinning is that a retired ID breaks every consult until bumped; the mitigation is that the pin lives in exactly one refresh-managed file, and bumping it follows an established path.
+
+**Constraint worth writing down**: `scripts/verify-mirrors.sh` enforces byte-identity between `.tarnished/agent-profile.json` and its template, so **this repository cannot use precedence 1** — setting `roles.advisor.model` in the workspace fails the parity gate. The workspace copy also still carries unrendered `{{...}}` placeholders in `ai_profile` / `primary_agent` / `review_agent`, which the resolution contract treats as absent, so tarnished itself always runs the fallback path. Frontmatter is the only channel that works here. Precedence 1 stays available downstream, where the copy is rendered and manifest-tracked rather than parity-checked.
+
 ### Consult classes
 
 | Class | Runs | Asks | Advisor's posture |
@@ -162,6 +180,6 @@ After this change a `/flow` run stops for the user in exactly four places: requi
 - **The `/design` consult belongs between Phase 7 and Phase 8**, not after the commit. After would produce a correction commit on top of a design commit the evidence table has already accepted as complete — the exact ambiguity FR-17 exists to close.
 - **Sweep every gate-bearing location, not only `flow/SKILL.md` Stage 4.** The skill's frontmatter `description` is its discovery text; the Stage 3 stage-order line, the Stage 2 skip paragraph, the Reporting list, and the `Gate A declined` error row all carry gate semantics, as do `.tarnished/workflows/flow.md`'s procedure steps 6-7 and Output list, `.agents/skills/flow/SKILL.md`'s two "confirmations", `design/SKILL.md` step 22, and `docs/design/shared/api-spec.md`'s approval-gates paragraph.
 - **`architecture.md`'s claim that the advisor is "bounded to three mechanically-triggered invocation points" stops being true** and is regenerated in Phase 7.
-- **Verify `model: fable` frontmatter acceptance before relying on it** (FR-9). The Agent tool's `model` enum includes `fable`, but frontmatter is a separate code path; if it rejects the value, `roles.advisor.model` carries the name instead.
-- **Cost is the main non-correctness risk.** The per-run ceiling rises from ≤1 advisor invocation to 11 (7 challenge + 4 conformance), and the advisor is intended to run on a 2x-priced model. NFR-5 requires the derivation to be written down where the invocation points are documented.
+- **The model mechanism is verified, not assumed** (FR-9). Frontmatter `model` accepts a full model ID and defaults to `inherit`; no fallback mechanism is needed.
+- **Cost is the main non-correctness risk.** The per-run ceiling rises from ≤1 advisor invocation to 11 (7 challenge + 4 conformance), and the advisor now runs on a separately-priced model rather than inheriting the session's. NFR-5 requires the derivation to be written down where the invocation points are documented.
 - **The escalation path must be reachable and testable.** A conformance check that can never escalate is indistinguishable from no check at all.

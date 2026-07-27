@@ -327,12 +327,16 @@ Flat JSON object. Written by `templates/agent-workflows/plugin.sh` and rendered 
 | Field | Type | Description |
 | --- | --- | --- |
 | `roles.<role>.agent` | string | `"primary"` / `"review"` (indirections to the sibling fields), or a concrete agent identifier |
-| `roles.<role>.model` | string \| null | `null` = use that agent's configured default |
+| `roles.<role>.model` | string \| null | `null` = fall through to the agent definition's `model:` frontmatter, and failing that to `inherit` (the session model). See the precedence chain below |
 | `roles.external-reviewer.reasoning_effort` | string \| null | `null` = use the reviewer CLI's configured default |
 
 `roles` values are deliberately **placeholder-free**. `primary_agent` / `review_agent` render to display strings — including `"Claude Code + Codex CLI"` and `"Manual review"` for the `dual` and non-Codex profiles (`setup.sh::derive_agent_names`) — which are not dispatchable identifiers.
 
 **Resolution contract** (identical across every consumer): `roles` absent, or any field still containing an unrendered `{{...}}` token, falls back to binding all roles to the primary agent and `external-reviewer` to `review_agent`. Unknown role keys are ignored rather than treated as errors. Consumers report whether the binding came from the profile or from the fallback.
+
+**Model precedence** (#312): a role's model resolves in three levels — `roles.<role>.model` when non-null, then the `model:` field in the agent definition's frontmatter, then `inherit`, meaning the session/primary agent's model. Claude Code's subagent frontmatter accepts `sonnet`, `opus`, `haiku`, `fable`, a full model ID, or `inherit`, and defaults to `inherit` when the field is omitted. Level 1 is not refresh-managed, so a downstream override survives every container start; level 2 lives in refresh-managed `.claude/agents/`, so a shipped default reaches every project on the next start. Before #312 no level named a model for any role, so every role — including `advisor` — ran on the orchestrator's own model, making the "second opinion" independent in context but not in weights. `advisor.md` now pins `model: claude-fable-5`; an exact ID rather than the `fable` alias, matching the `.codex/config.toml` convention of pinning and bumping in a tracked commit.
+
+**Parity constraint on the workspace copy**: `scripts/verify-mirrors.sh` enforces byte-identity between `.tarnished/agent-profile.json` and `templates/agent-workflows/.tarnished/agent-profile.json`, so the tarnished workspace cannot populate `roles.<role>.model` without failing the parity gate — and its copy still carries unrendered `{{...}}` placeholders, which the resolution contract treats as absent, so the workspace always runs the fallback path. Frontmatter is the only model channel available in-repo. Downstream copies are rendered and manifest-tracked rather than parity-checked, so level 1 works there.
 
 **Forward compatibility**: unknown top-level keys are ignored, so adding roles or per-role fields is non-breaking.
 

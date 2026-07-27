@@ -4,23 +4,24 @@ Breadth-dominated work: ~24 files across three altitude levels under a byte-iden
 
 ## Implementation Steps
 
-### Step 1: Verify the `model: fable` frontmatter mechanism
+### Step 1: Verify the frontmatter model mechanism — **done**
 
-- **Action**: Confirm Claude Code's agent-definition frontmatter accepts `model: fable`. The Agent tool's `model` enum includes it, but frontmatter is a separate code path. If rejected, fall back to carrying the name in `.tarnished/agent-profile.json :: roles.advisor.model` and revise FR-9's mechanism before Step 3 writes it.
+- **Action**: Confirm Claude Code's agent-definition frontmatter accepts a pinned model value.
+- **Result**: verified against `code.claude.com/docs/en/sub-agents`. The frontmatter `model` field accepts `sonnet`, `opus`, `haiku`, `fable`, a full model ID (e.g. `claude-opus-5`), or `inherit`, and **defaults to `inherit`** when omitted. FR-9's mechanism stands and no fallback is required. The documented default also confirms the diagnosis: with no `model:` anywhere in the chain, today's advisor runs on the orchestrator's model.
 - **Files**: none (investigation)
 - **Depends on**: nothing
-- **Done when**: the result is recorded and FR-9's mechanism is either confirmed or replaced
+- **Done when**: recorded — complete
 
 ### Step 2: Rewrite the delegation contract
 
-- **Action**: Add the `challenge` / `conformance` class distinction; rewrite the invocation-points table with a class column covering FR-2 through FR-6 and FR-13/FR-14; add the FR-15 escalation rule; add the FR-10 stage/role matrix; correct the Critical/Major trigger to Major-only (FR-11); state the NFR-5 ceiling with its derivation; clarify `model: null` resolution (FR-9).
+- **Action**: Add the `challenge` / `conformance` class distinction; rewrite the invocation-points table with a class column covering FR-2 through FR-6 and FR-13/FR-14; add the FR-15 escalation rule; add the FR-10 stage/role matrix; correct the Critical/Major trigger to Major-only (FR-11); state the NFR-5 ceiling with its derivation; replace "use that agent's configured default" with the three-level model precedence chain, what `inherit` means, and the parity constraint that rules out `roles.*.model` inside this repository (FR-9a).
 - **Files**: `.claude/skills/_shared/delegation/SKILL.md`
-- **Depends on**: Step 1 (for the FR-9 wording only)
+- **Depends on**: Step 1 (complete)
 - **Done when**: every invocation point carries a class; no judgment-dependent trigger remains; the ceiling table sums to 11
 
 ### Step 3: Extend the advisor definition
 
-- **Action**: Add per-finding concrete fix proposals to the output contract (FR-1); add the conformance mode — inputs (verbatim source of truth, subject, round), the four verdicts, and the rule that a paraphrased source of truth is itself a reportable finding; add `model: fable` frontmatter per Step 1's result. Leave `tools:` and the READ-ONLY prose constraint untouched.
+- **Action**: Add per-finding concrete fix proposals to the output contract (FR-1); add the conformance mode — inputs (verbatim source of truth, subject, round), the four verdicts, and the rule that a paraphrased source of truth is itself a reportable finding; add `model: claude-fable-5` frontmatter (FR-9). Leave `tools:` and the READ-ONLY prose constraint untouched.
 - **Files**: `.claude/agents/advisor.md`
 - **Depends on**: Steps 1, 2
 - **Done when**: both modes are specified and the tools list is unchanged
