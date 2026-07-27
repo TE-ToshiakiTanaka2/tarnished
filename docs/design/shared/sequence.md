@@ -152,17 +152,27 @@ sequenceDiagram
     participant Docs as docs/design/
     participant GH as GitHub
 
+    participant Adv as advisor (read-only)
+
     Dev->>Issue: /issue
     Issue->>Issue: erd:brainstorm + erd:estimate
+    Issue->>Dev: requirements summary (iterate until approved)
+    Issue->>Adv: challenge — scope, then estimation (#312, unconditional)
+    Issue->>Adv: conformance — post-approval delta vs verbatim approved summary (#312)
+    Adv-->>Issue: verdict + concrete fix proposals
     Issue->>GH: gh issue create + project field set
     Issue-->>Dev: Issue #N
 
-    Dev->>Design: /design N
+    Dev->>Design: /design N [--unattended]
     Design->>Docs: read shared/* (cumulative truth, #257)
+    Design->>Adv: challenge — architecture, then workflow plan (#312, unconditional)
     Design->>Docs: write #N/design.md (delta, self-contained)
     Design->>Docs: write #N/api-spec.md, #N/workflow.md, #N/flowchart.md as applicable
     Design->>Docs: regenerate shared/* as snapshot (NFR-1)
-    Design-->>Dev: branch + artifacts
+    Design->>Adv: conformance — artifacts vs issue Requirements (#312)
+    Adv-->>Design: verdict (≤2 rounds; escalate if still blocking)
+    Design->>Docs: write #N/conformance.md (every path, including skip)
+    Design-->>Dev: branch + artifacts (sign-off presented unless --unattended)
 
     Dev->>Implement: /implement N
     Implement->>Docs: read shared/* AND #N/* (constant cost wrt issue count, #257)
@@ -170,12 +180,16 @@ sequenceDiagram
     Implement-->>Dev: code + commits
 
     Dev->>Review: /review (optional)
+    Review->>Adv: diff review, in parallel with the external reviewer (#312)
+    Review->>Review: criteria 8 (vs design) + 9 (vs issue Requirements, #312)
     Review-->>Dev: review notes
 
     Dev->>PR: /pr
     PR->>GH: gh pr create
     PR-->>Dev: PR URL
 ```
+
+Under `/flow` the same sequence runs in one pass with no approval gates (#312): the two human confirmations that formerly sat before `design` and before `implement` are replaced by the two conformance consults above, and `/design` receives `--unattended` so its sign-off step is suppressed by an explicit argument rather than by inferring its caller. A run stops for the user only at requirement gathering, a conformance escalation surviving two rounds, argument resolution, or a `/pr` failure.
 
 ## Design-artifact migration (one-shot, #257)
 
