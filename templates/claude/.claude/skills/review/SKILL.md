@@ -69,15 +69,17 @@ Then **resolve the reviewer's model and reasoning effort** so they can be record
    - `git log --oneline ${MERGE_BASE}...HEAD` — commits
    - `git diff ${MERGE_BASE}...HEAD` — full diff
 2. **Construct review prompt** — Use the Review Prompt Template below with diff, commit history, design constraints, and scope-scaled criteria. Inline the criteria; do not replace them with a path reference, since the reviewer runs in a read-only sandbox against a piped prompt.
-3. **Execute**:
+3. **Execute**, passing the model and effort resolved in Phase 2 explicitly so the artifact attributes the review to settings that were actually used:
    ```bash
-   echo "${REVIEW_PROMPT}" | codex exec - --sandbox read-only
+   echo "${REVIEW_PROMPT}" | codex exec - --sandbox read-only \
+     -c model="${REVIEW_MODEL}" -c model_reasoning_effort="${REVIEW_EFFORT}"
    ```
+   Omit a `-c` flag whose value resolved to `default`, letting `.codex/config.toml` supply it, and record what the config holds. Add `--strict-config` when validating a changed model or effort — it rejects unrecognized values instead of silently falling back.
 4. **Capture output**
 
 ### Phase 3B: Review via `codex review` (with `--builtin`)
 
-1. **Run** `codex review --base "$TARGET_BRANCH"` and capture output.
+1. **Run** `codex review --base "$TARGET_BRANCH"`, passing the same resolved `-c model` / `-c model_reasoning_effort` overrides, and capture output.
 
 ### Phase 3C: Review via Claude subagent (fallback or `--claude`)
 
@@ -94,7 +96,9 @@ Then **resolve the reviewer's model and reasoning effort** so they can be record
 
 ### Phase 5: Report
 
-1. **Update review record** — Append a "Fixes Applied" section to `docs/review/#{issue_number}/review.md` listing the fixes and the fix commit hash. For any Critical or Major finding deliberately left unfixed, record the rationale next to it.
+1. **Update review record** — Append a "Fixes Applied" section to `docs/review/#{issue_number}/review.md` listing the fixes and the fix commit hash. For any Major finding deliberately left unfixed, record the rationale next to it. Critical findings are not deferrable and so never appear here as deferred.
+
+   This section is also what marks the review complete: `/flow` treats an artifact without it as a review still in progress, since Phase 4 writes the artifact before any fix is applied.
 2. **Summarize** — Issues found and resolved, deferrals with rationale, remaining minor findings and suggestions.
 
 ## Severity taxonomy and fix policy
@@ -103,7 +107,7 @@ One taxonomy is used repository-wide — by this skill, the `code-reviewer` suba
 
 | Severity | Meaning | Policy |
 | --- | --- | --- |
-| **Critical** | Breaks correctness, security, or a documented invariant | Must fix before the PR |
+| **Critical** | Breaks correctness, security, or a documented invariant | Must fix before the PR. Not deferrable — no rationale clears it |
 | **Major** | Materially wrong or materially harms maintainability | Must fix before the PR, unless deferred with a recorded rationale |
 | **Minor** | Real but small; localized cost | Fix when cheap, otherwise record |
 | **Suggestions** | Optional improvement | Discuss; no obligation |

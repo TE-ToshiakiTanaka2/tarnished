@@ -1268,6 +1268,18 @@ configure_ai_profile() {
     derive_agent_names "$AI_PROFILE" "$CODEX_ENABLED"
 }
 
+# Side-effect-free variant of derive_agent_names: emits
+# "<primary>\t<review>" on stdout instead of assigning globals, so callers
+# that only need the values cannot disturb the configured profile.
+#
+# Usage: derive_agent_names_pair <ai_profile> [codex_enabled]
+derive_agent_names_pair() {
+    (
+        derive_agent_names "$1" "${2:-false}"
+        printf '%s\t%s' "$AI_PRIMARY_AGENT" "$AI_REVIEW_AGENT"
+    )
+}
+
 prompt_ai_profile_selection() {
     if ! check_tty_available || [[ "$AI_PROFILE_SET" == true ]]; then
         configure_ai_profile
@@ -1865,8 +1877,19 @@ cleanup_upstream_dir() {
 # lifecycle contract files — so the regression only fires when one of
 # those changes upstream.
 #
-# Values come from the existing target rather than from scaffold-time
-# globals, because --upgrade never runs the profile prompt.
+# The AI profile comes from the manifest: apply_decisions_for_scope loads
+# .scaffold_options.{ai_profile,codex_enabled} and calls
+# configure_ai_profile before staging, and the manifest is the declared
+# source of truth for what was originally selected. Target files are only a
+# compatibility fallback for manifests written before those keys existed —
+# inferring the profile from whether .codex/config.toml happens to exist
+# would silently demote a Codex reviewer to "Manual review" if the user
+# deleted that file.
+#
+# The project name has no manifest field, so it is recovered from the
+# target. Both values are interpolated into a sed program by
+# replace_placeholders, so anything that is not a plain identifier is
+# rejected rather than escaped-and-hoped-for.
 #
 # Usage: stage_render_placeholders <staging_dir> <target_dir>
 stage_render_placeholders() {
@@ -1878,6 +1901,33 @@ stage_render_placeholders() {
         return 0
     fi
 
+    local ai_profile="$AI_PROFILE"
+    local primary_agent="$AI_PRIMARY_AGENT"
+    local review_agent="$AI_REVIEW_AGENT"
+
+    case "$ai_profile" in
+        claude-main | codex-main | dual) ;;
+        *)
+            # Manifest predates the ai_profile key, or carries a value this
+            # version does not know. Fall back to the target's own profile.
+            ai_profile=""
+            local profile_file="${target_dir}/.tarnished/agent-profile.json"
+            if [[ -f "$profile_file" ]]; then
+                ai_profile=$(jq -r '.ai_profile // empty' "$profile_file" 2>/dev/null || echo "")
+            fi
+            case "$ai_profile" in
+                claude-main | codex-main | dual) ;;
+                *) ai_profile="claude-main" ;;
+            esac
+            local codex_enabled=false
+            [[ -f "${target_dir}/.codex/config.toml" ]] && codex_enabled=true
+            local names
+            names="$(derive_agent_names_pair "$ai_profile" "$codex_enabled")"
+            primary_agent="${names%%$'\t'*}"
+            review_agent="${names##*$'\t'}"
+            ;;
+    esac
+
     # `.devcontainer/devcontainer.json` carries the rendered
     # {{PROJECT_NAME}} in its "name" field and is user-owned (it is in
     # MANIFEST_EXCLUDE_GLOBS), so it survives upgrades and is the most
@@ -1888,40 +1938,30 @@ stage_render_placeholders() {
     local devcontainer_json="${target_dir}/.devcontainer/devcontainer.json"
     if [[ -f "$devcontainer_json" ]]; then
         project_name=$(jq -r '.name // empty' "$devcontainer_json" 2>/dev/null || echo "")
-        case "$project_name" in
-            *'{{'*)
-                project_name=""
-                ;;
-        esac
     fi
-    if [[ -z "$project_name" ]]; then
+    if ! _is_safe_placeholder_value "$project_name"; then
         project_name="$(basename "$(cd "$target_dir" && pwd)")"
     fi
-
-    local ai_profile="claude-main"
-    local profile_file="${target_dir}/.tarnished/agent-profile.json"
-    if [[ -f "$profile_file" ]]; then
-        ai_profile=$(jq -r '.ai_profile // "claude-main"' "$profile_file" 2>/dev/null || echo "claude-main")
-        # A target scaffolded without rendering — or poisoned by a
-        # pre-fix upgrade — still carries the raw token here.
-        case "$ai_profile" in
-            "" | null | *'{{'*)
-                ai_profile="claude-main"
-                ;;
-        esac
+    if ! _is_safe_placeholder_value "$project_name"; then
+        print_warning "staging render: cannot recover a usable project name; skipping placeholder rendering"
+        return 0
     fi
 
-    local codex_enabled=false
-    [[ -f "${target_dir}/.codex/config.toml" ]] && codex_enabled=true
+    replace_placeholders "$staging_dir" "$project_name" "$ai_profile" \
+        "$primary_agent" "$review_agent"
+}
 
-    # Subshell: replace_placeholders' effects are filesystem writes, which
-    # persist, while derive_agent_names' assignments to AI_PRIMARY_AGENT /
-    # AI_REVIEW_AGENT stay contained and cannot leak across upgrade scopes.
-    (
-        derive_agent_names "$ai_profile" "$codex_enabled"
-        replace_placeholders "$staging_dir" "$project_name" "$ai_profile" \
-            "$AI_PRIMARY_AGENT" "$AI_REVIEW_AGENT"
-    )
+# A placeholder value is safe when it is a plain identifier: it ends up
+# inside a sed replacement, inside JSON, and inside shell-adjacent files
+# such as docker-compose service names. Anything else (an unrendered
+# {{token}}, a sed metacharacter, a newline, a quote) is rejected.
+#
+# Usage: _is_safe_placeholder_value <value>
+_is_safe_placeholder_value() {
+    local v="$1"
+    [[ -n "$v" ]] || return 1
+    [[ "$v" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || return 1
+    return 0
 }
 
 # Run the loaded plugin pipeline (copies + dockerfile + post-copy) against a
@@ -1963,18 +2003,22 @@ stage_plugin_run() {
     # files that would actually land in the target.
     stage_render_placeholders "$staging_dir" "$UPGRADE_TARGET_DIR"
 
-    # Walk the staging tree and record every emitted file, so NEW_HASHES
-    # is the complete set the upgraded templates produce. Honors
-    # MANIFEST_EXCLUDE_GLOBS.
+    # Rebuild MANIFEST_TRACKED from the staging tree alone, so NEW_HASHES
+    # describes exactly the files that exist after the full pipeline.
     #
-    # This walk is authoritative, not a fill-in: it also covers the
-    # backstop case the recording wrapper misses (plugins that emit via
-    # `sed > target`, `cat > target`, or `touch target` rather than
-    # copy_with_confirm), and it supersedes recorder entries for files
-    # the placeholder render just rewrote. Both sources hash the same
-    # tree against the same root and honor the same exclusion list, so
-    # they agree everywhere except on rendered files — where the tree is
-    # the truth.
+    # The walk supersedes the recording wrapper rather than filling gaps in
+    # it, for three reasons: it covers plugins that emit via `sed > target`,
+    # `cat > target`, or `touch target` instead of copy_with_confirm; it
+    # reflects the placeholder render above, which rewrote files the
+    # recorder had already hashed; and it drops recorder entries for files
+    # a later plugin_post_copy deleted. That last case is why the reset
+    # matters — several service plugins copy a docker-compose overlay and
+    # then remove it once merged (see templates/services/*/plugin.sh), and
+    # a surviving recorder entry would put a nonexistent staging path into
+    # NEW_HASHES, where manifest_apply's NEW/UPDATE branch would `cp` it
+    # and abort the upgrade mid-apply.
+    unset MANIFEST_TRACKED
+    declare -gA MANIFEST_TRACKED
     local rel hash
     while IFS=$'\t' read -r rel hash; do
         [[ -z "$rel" ]] && continue
@@ -2029,7 +2073,9 @@ stage_plugin_run_for_module() {
     # target root rather than from the module staging directory.
     stage_render_placeholders "$staging_dir" "$UPGRADE_TARGET_DIR"
 
-    # Authoritative walk — see stage_plugin_run for the rationale.
+    # Authoritative rebuild — see stage_plugin_run for the rationale.
+    unset MANIFEST_TRACKED
+    declare -gA MANIFEST_TRACKED
     local rel hash
     while IFS=$'\t' read -r rel hash; do
         [[ -z "$rel" ]] && continue

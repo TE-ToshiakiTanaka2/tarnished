@@ -35,11 +35,11 @@ Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and th
 
 Invoke each erd command by the first available route:
 
-1. `Skill(erd:<command>)` — loads the instructions into the current turn
-2. `Read(".claude/commands.local/erd/<command>.md")` — the project's overlay, when one exists
-3. `Read(".claude/commands/erd/<command>.md")` — the base copy
+1. `Read(".claude/commands.local/erd/<command>.md")` — the project's overlay, when one exists
+2. `Skill(erd:<command>)` — loads the base instructions into the current turn
+3. `Read(".claude/commands/erd/<command>.md")` — the base copy, when the Skill route is unavailable
 
-Check for the overlay before falling back to the base copy: a project that customizes an erd command does so in `commands.local/`, and reading the base copy directly would silently ignore it.
+The overlay is checked first because it is the only route guaranteed to honor a project's customization. `commands.local/` is where a project overrides an erd command, and taking the Skill route without looking would silently run the base version instead.
 
 ## What This Skill Does
 

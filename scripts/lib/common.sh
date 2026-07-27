@@ -706,6 +706,20 @@ make_scripts_executable() {
 # Placeholder Utility Functions
 # =============================================================================
 
+# Escape a string for use as the replacement text of a `sed s|…|…|` command.
+# Backslash must go first, then the `|` delimiter (which would otherwise end
+# the replacement and let the rest be read as sed flags or commands) and `&`
+# (which sed expands to the whole match).
+#
+# Usage: sed_escape_replacement <string>
+sed_escape_replacement() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//|/\\|}"
+    s="${s//&/\\&}"
+    printf '%s' "$s"
+}
+
 # Replace placeholders in files
 # Usage: replace_placeholders <target_dir> <project_name> [ai_profile] [primary_agent] [review_agent]
 replace_placeholders() {
@@ -714,6 +728,26 @@ replace_placeholders() {
     local ai_profile="${3:-claude-main}"
     local primary_agent="${4:-Claude Code}"
     local review_agent="${5:-Manual review}"
+
+    # Every value below is interpolated into a `sed` program. A newline
+    # cannot appear in a replacement at all, and an unescaped `|` would
+    # terminate the `s|…|…|` command so the remainder is parsed as sed
+    # flags or commands (`w FILE` writes an arbitrary file, `e` executes
+    # the pattern space). Reject newlines and escape the rest; fail closed
+    # rather than render a corrupted tree.
+    local v
+    for v in "$project_name" "$ai_profile" "$primary_agent" "$review_agent"; do
+        if [[ "$v" == *$'\n'* ]]; then
+            print_error "replace_placeholders: value contains a newline; refusing to render"
+            return 1
+        fi
+    done
+
+    local project_name_esc ai_profile_esc primary_agent_esc review_agent_esc
+    project_name_esc="$(sed_escape_replacement "$project_name")"
+    ai_profile_esc="$(sed_escape_replacement "$ai_profile")"
+    primary_agent_esc="$(sed_escape_replacement "$primary_agent")"
+    review_agent_esc="$(sed_escape_replacement "$review_agent")"
 
     print_info "Replacing placeholders with project name: ${project_name}"
 
@@ -743,16 +777,16 @@ replace_placeholders() {
             # Use sed to replace placeholder (using | delimiter for safety)
             if [[ "$(uname)" == "Darwin" ]]; then
                 # macOS
-                sed -i '' "s|{{PROJECT_NAME}}|${project_name}|g" "$file"
-                sed -i '' "s|{{AI_PROFILE}}|${ai_profile}|g" "$file"
-                sed -i '' "s|{{AI_PRIMARY_AGENT}}|${primary_agent}|g" "$file"
-                sed -i '' "s|{{AI_REVIEW_AGENT}}|${review_agent}|g" "$file"
+                sed -i '' "s|{{PROJECT_NAME}}|${project_name_esc}|g" "$file"
+                sed -i '' "s|{{AI_PROFILE}}|${ai_profile_esc}|g" "$file"
+                sed -i '' "s|{{AI_PRIMARY_AGENT}}|${primary_agent_esc}|g" "$file"
+                sed -i '' "s|{{AI_REVIEW_AGENT}}|${review_agent_esc}|g" "$file"
             else
                 # Linux
-                sed -i "s|{{PROJECT_NAME}}|${project_name}|g" "$file"
-                sed -i "s|{{AI_PROFILE}}|${ai_profile}|g" "$file"
-                sed -i "s|{{AI_PRIMARY_AGENT}}|${primary_agent}|g" "$file"
-                sed -i "s|{{AI_REVIEW_AGENT}}|${review_agent}|g" "$file"
+                sed -i "s|{{PROJECT_NAME}}|${project_name_esc}|g" "$file"
+                sed -i "s|{{AI_PROFILE}}|${ai_profile_esc}|g" "$file"
+                sed -i "s|{{AI_PRIMARY_AGENT}}|${primary_agent_esc}|g" "$file"
+                sed -i "s|{{AI_REVIEW_AGENT}}|${review_agent_esc}|g" "$file"
             fi
         fi
     done

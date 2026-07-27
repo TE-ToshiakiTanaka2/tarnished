@@ -40,11 +40,11 @@ Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and th
 
 Invoke each erd command by the first available route:
 
-1. `Skill(erd:<command>)` — loads the instructions into the current turn
-2. `Read(".claude/commands.local/erd/<command>.md")` — the project's overlay, when one exists
-3. `Read(".claude/commands/erd/<command>.md")` — the base copy
+1. `Read(".claude/commands.local/erd/<command>.md")` — the project's overlay, when one exists
+2. `Skill(erd:<command>)` — loads the base instructions into the current turn
+3. `Read(".claude/commands/erd/<command>.md")` — the base copy, when the Skill route is unavailable
 
-Check for the overlay before falling back to the base copy: a project that customizes an erd command does so in `commands.local/`, and reading the base copy directly would silently ignore it.
+The overlay is checked first because it is the only route guaranteed to honor a project's customization. `commands.local/` is where a project overrides an erd command, and taking the Skill route without looking would silently run the base version instead.
 
 ## MCP Tools
 
@@ -80,7 +80,9 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 
 ### Phase 4: CI Monitoring and Validation
 
-11. **Monitor GitHub Actions** - Wait for CI completion with `gh run watch <run_id> --exit-status` in the background, or with the harness's condition-waiting affordance where one is available. Background completion re-invokes the agent, so no manual re-check step is needed. Never `sleep`-poll — the runtime blocks it.
+11. **Monitor CI** - Wait on the pull request's **aggregate** check state, not on a single workflow run: `gh pr checks <pr_number> --watch --fail-fast` in the background, or the harness's condition-waiting affordance where one is available. Background completion re-invokes the agent, so no manual re-check step is needed. Never `sleep`-poll — the runtime blocks it.
+
+    Watching one `gh run watch <run_id>` is not sufficient. A repository can have several workflows and check suites on the same PR, so a single green run says nothing about the others, and merging on it can merge over a pending or failing check.
 
     Set an explicit timeout on the wait — 15 minutes unless the project's CI is known to run longer. The timeout is what owns the "CI status unknown" rule below: nothing else in this procedure measures elapsed time, so a rule without a wait deadline has no actor that can execute it.
 12. **Validate CI results** - Load `/erd:reflect`:
@@ -94,6 +96,7 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 ### Phase 5: Auto-Merge (if `--merge` flag is specified)
 
 15. **Merge PR** - Squash merge via `gh pr merge <pr_number> --squash --delete-branch`:
+    - Re-read `gh pr checks <pr_number>` immediately before merging and require every check to be green. The watch in Phase 4 can predate a check that started later
     - Only proceeds if CI has passed and validation is successful
     - If merge fails (e.g., merge conflict, branch protection), report the error to user
 16. **Update local target branch** - After a successful merge, switch to the target branch and update it with `git pull --ff-only origin <target_branch>`

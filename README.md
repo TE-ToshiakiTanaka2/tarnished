@@ -54,7 +54,7 @@ Generated projects include:
 - `.agents/skills/` — Codex repo-local skills mirroring `issue`, `design`, `implement`, `review`, `pr`, and `flow`
 
 Codex users can invoke the shared lifecycle with `$issue`, `$design`,
-`$implement`, `$review`, and `$pr`. The generated `AGENTS.md` also treats
+`$implement`, `$review`, `$pr`, and `$flow`. The generated `AGENTS.md` also treats
 plain `issue` prompts and natural-language mentions of Claude-style `/issue`
 as aliases for the same workflow. Codex's slash-command namespace remains
 reserved for Codex built-ins, so `$issue` is the native skill invocation. If

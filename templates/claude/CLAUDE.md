@@ -98,7 +98,7 @@ Available skills (slash commands):
 
 ### Always-latest assets and `.local/` overrides
 
-`.claude/{commands,skills,scripts}/` and shared rules such as
+`.claude/{commands,skills,scripts,agents}/` and shared rules such as
 `.claude/rules/shell.md` are kept always-latest by `refresh-assets.sh`
 (runs on every container start). To customize a command, skill, script,
 or shared rule locally, write to the sidecar `.local/` path instead of
