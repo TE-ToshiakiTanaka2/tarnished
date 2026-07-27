@@ -8,19 +8,36 @@ The lifecycle is expressed at three altitude levels. Each level has a distinct j
 
 | Level | Location | Role |
 | --- | --- | --- |
-| **Contract** | `.tarnished/workflows/{issue,design,implement,review,pr}.md` | Agent-neutral inputs/procedure/outputs per stage. Tool-specific entrypoints must preserve these semantics. |
-| **Operational spec** | `.claude/skills/*/SKILL.md` | The detailed, executable procedure (phases, branch/commit/PR contracts, artifact destinations, output templates). This is where behavior is authored. |
+| **Contract** | `.tarnished/workflows/{issue,design,implement,review,pr,flow}.md` | Agent-neutral inputs/procedure/outputs per stage. Tool-specific entrypoints must preserve these semantics. |
+| **Operational spec** | `.claude/skills/*/SKILL.md` | The detailed, executable procedure (phases, branch/commit/PR contracts, artifact destinations, reporting contracts). This is where behavior is authored. |
 | **Codex projection** | `.agents/skills/*/SKILL.md` | Thin pointers that read the contract and the operational spec, translating Claude-specific tool references for Codex. |
 
 Detailed sub-step behavior lives in the erd command docs. `.claude/commands/erd/*` is the authored copy; `.tarnished/workflows/erd/*` is a byte-identical projection for Codex-facing instructions (generated at scaffold time and kept current by `refresh-assets.sh` for projects whose `.tarnished/refresh.json` includes the `.tarnished/workflows/erd` and `.claude/agents` managed paths — projects scaffolded earlier must adopt those entries once from `templates/agent-workflows/.tarnished/refresh.json`).
 
-When editing any level, keep the others aligned in the same commit. Byte-identity of all mirrored trees is enforced by `scripts/verify-mirrors.sh` (CI: `asset-parity.yml`).
+When editing any level, keep the others aligned in the same commit. Upstream tarnished enforces byte-identity of its own mirrored template trees in CI; a scaffolded project carries no equivalent check, so alignment here is the author's responsibility.
 
 ## Agent Profile
 
 - **Profile**: `{{AI_PROFILE}}`
 - **Primary agent**: `{{AI_PRIMARY_AGENT}}`
 - **Review agent**: `{{AI_REVIEW_AGENT}}`
+
+## Roles
+
+Workflows name roles, never models, so a project can retarget models without editing workflow or skill files.
+
+| Role | Responsibility |
+| --- | --- |
+| `orchestrator` | Judgment: requirement scoping, architecture, interpreting design intent, review triage, merge decision |
+| `executor` | Mechanical, high-volume work with an objective success condition |
+| `external-reviewer` | Independent review from a different vendor or a fresh context |
+| `advisor` | Read-only second opinion on a decision, before it is committed to |
+
+Role bindings live in `.tarnished/agent-profile.json` under `roles`, which is the single authoritative place. When that key is absent — a project scaffolded before it shipped — every role binds to the primary agent and `external-reviewer` binds to the review agent.
+
+Work is routed by nature (judgment vs. mechanical) rather than by lifecycle stage, so a single stage can be part-inline and part-delegated. The routing table and the advisor's bounded invocation points are specified in `.claude/skills/_shared/delegation/SKILL.md`.
+
+The `advisor` role requires a primary agent that can run read-only subagents. Where that is unavailable, its invocation points are skipped rather than silently unhonored.
 
 ## Lifecycle
 
@@ -29,6 +46,8 @@ When editing any level, keep the others aligned in the same commit. Byte-identit
 3. `implement` - implement the issue in focused commits.
 4. `review` - obtain an independent review of the branch (configured review agent, external review CLI, or a fresh-context fallback review).
 5. `pr` - clean up, create a pull request, validate CI, and optionally merge.
+
+`flow` runs these stages end to end for one issue, entering at the first incomplete stage. It is an orchestration entrypoint over the five stages, not a sixth stage.
 
 ## Shared Artifacts
 

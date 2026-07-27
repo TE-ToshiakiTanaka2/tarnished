@@ -19,6 +19,8 @@ If Codex CLI is the primary agent, drive the full lifecycle:
 4. `review` - request independent review from the configured review agent.
 5. `pr` - create the pull request and validate CI.
 
+`flow` runs these five end to end for one issue, entering at the first incomplete stage.
+
 If Codex CLI is the review agent, focus on independent code review. Do not take over implementation unless the primary agent or user explicitly asks you to apply fixes.
 
 ## Shared Workflow Contract
@@ -30,6 +32,7 @@ Read `.tarnished/workflows/README.md` first, then follow the workflow file match
 - `.tarnished/workflows/implement.md`
 - `.tarnished/workflows/review.md`
 - `.tarnished/workflows/pr.md`
+- `.tarnished/workflows/flow.md` (absent in projects scaffolded before it shipped — proceed on the per-stage contracts)
 
 Detailed `erd:*` behavior is available under `.tarnished/workflows/erd/`. Use those files as Codex-readable equivalents of Claude Code's `.claude/commands/erd/*` slash-command docs.
 
@@ -44,8 +47,9 @@ Codex repo-local skills are shipped under `.agents/skills/`:
 - `$implement <issue_number>` - implement, build, test, and commit.
 - `$review` - request or perform independent review and save `docs/review/#{issue_number}/review.md`.
 - `$pr [target_branch] [--merge]` - create the PR, validate CI, optionally merge, and update the target branch.
+- `$flow [--issue N] [--base <branch>] [--from <stage>] [--merge]` - run the stages above end to end for one issue, entering at the first incomplete stage.
 
-Treat user prompts such as `issue`, `design`, `implement`, `review`, `pr`, and natural-language mentions of Claude-style `/issue`, `/design`, `/implement`, `/review`, and `/pr` as aliases for the matching Codex skill. If the skill is not visible in the current Codex session, read `.agents/skills/<name>/SKILL.md` directly and follow it. Codex's slash-command namespace remains reserved for Codex built-ins; `$issue` style invocation is the native skill path.
+Treat user prompts such as `issue`, `design`, `implement`, `review`, `pr`, `flow`, and natural-language mentions of Claude-style `/issue`, `/design`, `/implement`, `/review`, `/pr`, and `/flow` as aliases for the matching Codex skill. If the skill is not visible in the current Codex session, read `.agents/skills/<name>/SKILL.md` directly and follow it. Codex's slash-command namespace remains reserved for Codex built-ins; `$issue` style invocation is the native skill path.
 
 For Claude Code `--dangerously-skip-permissions` parity in externally sandboxed devcontainers, start Codex explicitly with:
 
@@ -57,15 +61,20 @@ Do not make this the project default; it disables approval prompts and sandboxin
 
 ## Review Responsibilities
 
+The canonical list lives in the "Review Criteria" section of the Review Prompt Template in `.claude/skills/review/SKILL.md`, which is what the `review` workflow sends to its reviewer. It is restated here because an ad-hoc Codex session never receives that prompt — this file is the only carrier.
+
 When acting as reviewer, check:
 
-1. **Correctness**: Does the code do what it is supposed to do?
-2. **Security**: Are there vulnerabilities such as injection, XSS, unsafe shell usage, or hardcoded secrets?
-3. **Error handling**: Are failures handled explicitly and usefully?
-4. **Edge cases**: Are boundary conditions covered?
-5. **Code style**: Does the code follow project conventions?
-6. **Performance**: Are there obvious inefficient patterns?
-7. **Tests**: Are new or changed behaviors verified?
+1. **Bugs & Logic Errors**: incorrect behavior, off-by-one, null/undefined issues
+2. **Security**: injection, auth issues, secrets exposure, input validation, unsafe shell usage
+3. **Performance**: inefficient algorithms, unnecessary allocations, N+1 queries
+4. **Code Quality**: readability, naming, DRY violations, overly complex logic
+5. **Type Safety**: missing types, unsafe casts, improper use of the type system
+6. **Error Handling**: unhandled exceptions, missing edge cases
+7. **Test Coverage**: are new or changed behaviors verified? Name the untested paths
+8. **Design Adherence**: does the implementation match the design artifacts?
+
+Report gaps and defects, not stylistic nitpicks. A code-quality finding must materially affect maintainability or violate a documented project rule. Verify claims by reading the code before asserting them.
 
 ## Review Output Format
 
@@ -88,6 +97,8 @@ When acting as reviewer, check:
 ```
 
 If there are no findings in a category, say so explicitly.
+
+Critical and Major must be fixed before the pull request; Major may be deferred only with a recorded rationale. Minor is fixed when cheap. Suggestions carry no obligation. These four levels are used by every reviewer in the project, so no per-reviewer translation is needed at triage.
 
 ## Project Context
 

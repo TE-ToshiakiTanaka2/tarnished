@@ -98,7 +98,7 @@ Dependency-ordered implementation plan. Every step that touches `.claude/`, `.ag
 **Depends on**: Step 8.
 
 - `.codex/config.toml` and its template: `model = "gpt-5.6-sol"`, `model_reasoning_effort = "ultra"`; rewrite the "always-latest" comment to match a pinned model.
-- Refresh the `.codex/config.toml` hash in `.tarnished-manifest.json`.
+- Leave `.tarnished-manifest.json` alone. The workspace manifest is a scaffold-time snapshot from v0.0.87 and its `.codex/config.toml` entry was already stale before this change (recorded `add21d6a…` vs. the hash at HEAD). The workspace is not upgraded via `--upgrade`, and refreshing one entry while the rest stay stale would misrepresent the file.
 
 **Done when**: `codex exec --strict-config` accepts the config and the artifact header reports the pinned values.
 

@@ -51,7 +51,7 @@ Generated projects include:
 - `.tarnished/workflows/erd/` — Codex-readable projection of the existing erd command assets
 - `CLAUDE.md` — Claude Code entrypoint when Claude is installed
 - `AGENTS.md` — Codex entrypoint when Codex is installed
-- `.agents/skills/` — Codex repo-local skills mirroring `issue`, `design`, `implement`, `review`, and `pr`
+- `.agents/skills/` — Codex repo-local skills mirroring `issue`, `design`, `implement`, `review`, `pr`, and `flow`
 
 Codex users can invoke the shared lifecycle with `$issue`, `$design`,
 `$implement`, `$review`, and `$pr`. The generated `AGENTS.md` also treats

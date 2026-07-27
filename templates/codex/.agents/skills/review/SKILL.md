@@ -14,11 +14,11 @@ Request or perform an independent review of the current branch before PR creatio
 1. Read `.tarnished/workflows/review.md`.
 2. If present, read `.claude/skills/review/SKILL.md` for compatibility details.
 3. Detect the current branch, target branch, merge base, issue number, commit history, and diff.
-4. Prefer the configured review agent in `.tarnished/agent-profile.json` when it is available and distinct from the current primary agent.
+4. Prefer the agent bound to the `external-reviewer` role in `.tarnished/agent-profile.json` — falling back to `review_agent` when the `roles` key is absent — when it is available and distinct from the current primary agent.
 5. If an external review agent is unavailable, perform the review yourself and mark it as a fallback review.
-6. Review for correctness, security, error handling, edge cases, style, performance, tests, and architecture.
-7. Save the complete result to `docs/review/#{issue_number}/review.md`.
-8. Fix critical and major findings, then append a fix summary to the review artifact.
+6. Review against the canonical criteria — the "Review Criteria" section of the Review Prompt Template in `.claude/skills/review/SKILL.md`, restated in `AGENTS.md`. Insert them inline when constructing a reviewer prompt; do not hand a reviewer a path.
+7. Save the complete result to `docs/review/#{issue_number}/review.md`, recording the reviewer along with the model and reasoning effort it resolved to.
+8. Fix Critical and Major findings before the pull request; record a rationale for anything deliberately deferred. Then append a fix summary to the review artifact.
 
 ## Output Format
 

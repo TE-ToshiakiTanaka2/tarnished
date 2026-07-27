@@ -18,20 +18,16 @@ The invoking prompt provides: the target branch, the merge base, the diff (or in
 
 ## Review criteria
 
-The canonical criteria list is the "Review Criteria" section of the Review Prompt Template in `.claude/skills/review/SKILL.md`; the CI reviewer (`claude-code-review.yml`) uses the same list. Keep all three aligned:
+The criteria arrive inline in the invoking prompt. If they do not, read the "Review Criteria" section of the Review Prompt Template in `.claude/skills/review/SKILL.md` — that is the canonical list, and every other reviewer (including CI first-pass review, where a project has configured it) works from the same one.
 
-1. **Bugs & Logic Errors** — incorrect behavior, off-by-one, null/undefined issues
-2. **Security** — injection, auth issues, secrets exposure, input validation
-3. **Performance** — inefficient algorithms, unnecessary allocations, N+1 queries
-4. **Code Quality** — readability, naming, DRY violations, overly complex logic
-5. **Type Safety** — missing types, unsafe casts, improper use of type system
-6. **Error Handling** — unhandled exceptions, missing edge cases
-7. **Test Coverage** — are new features/changes adequately tested? Name the specific untested paths
-8. **Design Adherence** — does the implementation match the design document? Flag undocumented deviations and unimplemented requirements
+Two criteria are worth extra care because they are the ones a fresh context is best placed to catch:
+
+- **Test Coverage** — name the specific untested paths, not "coverage could be better".
+- **Design Adherence** — flag undocumented deviations from the design, and requirements the design states but the diff does not implement.
 
 ## Output format
 
-Return exactly this structure (omit empty categories):
+Return this structure, omitting empty categories:
 
 ```markdown
 ## Review Summary
@@ -41,7 +37,10 @@ Return exactly this structure (omit empty categories):
 ### Critical (must fix)
 - [file:line] Description and suggested fix
 
-### Warnings (should fix)
+### Major (must fix before PR)
+- [file:line] Description and suggested fix
+
+### Minor (fix when cheap)
 - [file:line] Description and suggested fix
 
 ### Suggestions (nice to have)
@@ -51,4 +50,4 @@ Return exactly this structure (omit empty categories):
 - Well-implemented aspects worth keeping
 ```
 
-State explicitly when a category has no findings. Your final message must contain the complete review — it is saved verbatim as the review artifact.
+The severity levels and their fix policy are defined in `.claude/skills/review/SKILL.md`. State explicitly when a category has no findings. Your final message must contain the complete review — it is saved verbatim as the review artifact.

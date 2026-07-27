@@ -1,7 +1,7 @@
 ---
 name: design
 description: Design architecture and generate design artifacts for a GitHub Issue with UML diagrams. Uses erd commands (erd:research, erd:design, erd:workflow) and saves artifacts to docs/design/shared/ (cumulative project truth) and docs/design/#{issue_number}/ (per-issue delta).
-argument-hint: "[issue_number]"
+argument-hint: "<issue_number> [--base <branch>]"
 disable-model-invocation: true
 ---
 
@@ -21,25 +21,32 @@ This split keeps the read cost of `/design` and `/implement` constant with respe
 ## Usage
 
 ```
-/design <issue_number>
+/design <issue_number>              # branch from develop
+/design <issue_number> --base main  # branch from main instead
 ```
+
+`--base` defaults to `develop` and is passed through to `_shared/branch`, so branch creation uses the same base that later stages target.
+
+## Roles
+
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and the routing table. Architecture and interface decisions are judgment and stay with the orchestrator; repository survey and indexing are mechanical and can be delegated.
 
 ## erd Command Invocation
 
-All erd commands in this skill MUST be loaded via the **Read tool** and followed inline:
+Invoke each erd command by the first available route:
 
-```
-Read(".claude/commands/erd/<command>.md") → follow instructions inline
-```
+1. `Skill(erd:<command>)` — loads the instructions into the current turn
+2. `Read(".claude/commands.local/erd/<command>.md")` — the project's overlay, when one exists
+3. `Read(".claude/commands/erd/<command>.md")` — the base copy
 
-Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the entire workflow in a single turn, preventing flow interruption between phases.
+Check for the overlay before falling back to the base copy: a project that customizes an erd command does so in `commands.local/`, and reading the base copy directly would silently ignore it.
 
 ## What This Skill Does
 
 ### Phase 1: Preparation
 
 1. **Review Issue** - Use `gh issue view` to understand Issue content and requirements
-2. **Create branch** - Follow `_shared/branch` procedure (Issue mode) with the issue number. Branch naming, existing-branch detection, and checkout rules are defined in `_shared/branch/SKILL.md`. The branch created here is shared with `/implement`.
+2. **Create branch** - Follow `_shared/branch` procedure (Issue mode) with the issue number and the resolved `base`. Branch naming, existing-branch detection, and checkout rules are defined in `_shared/branch/SKILL.md`. The branch created here is shared with `/implement`.
 3. **Create per-issue docs directory** - Create `docs/design/#{issue_number}/` directory structure
 
 ### Phase 1.5: Migration check (one-shot bootstrap)
@@ -58,13 +65,13 @@ Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the ent
    - `docs/design/shared/class.md` — Cumulative class diagram (Mermaid)
    - `docs/design/shared/sequence.md` — Cumulative sequence/state diagram (Mermaid)
    - `docs/design/shared/research/*.md` — Cross-cutting external library research (if any)
-6. **Load `/erd:index-repo` and follow inline** (optional but recommended) - `Read(".claude/commands/erd/index-repo.md")`:
+6. **Load `/erd:index-repo`** (optional but recommended):
    - Use this to verify the shared layer matches the actual codebase before designing
    - Skip if the issue scope is small and well-understood
 
 ### Phase 3: Research (if needed)
 
-7. **Load `/erd:research` and follow inline** (conditional) - `Read(".claude/commands/erd/research.md")`:
+7. **Load `/erd:research`** (conditional):
    - **Decision rule**: If the issue references external libraries, APIs, or patterns that are not already established in the codebase, execute erd:research. Otherwise, skip.
 8. **Decide research destination**:
    - **Issue-specific** (the library is only relevant to this issue) → save to `docs/design/#{issue_number}/research.md`
@@ -73,54 +80,54 @@ Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the ent
 
 ### Phase 4: Architecture Design
 
-9. **Load `/erd:design` and follow inline** - `Read(".claude/commands/erd/design.md")`:
+9. **Advisor consult** (conditional) - When the issue's estimated size is M or larger, launch the `advisor` subagent (`.claude/agents/advisor.md`) once with the architecture you intend to adopt, the alternatives you considered, and the constraints that bound the choice. Read its objections before authoring `design.md`; you still decide. Skip when the issue is smaller than M, when the advisor definition is absent, or when read-only subagents are unavailable — and note the skip in the report. The trigger is the size estimate, not a feeling of uncertainty; see `_shared/delegation/SKILL.md`.
+10. **Load `/erd:design`**:
    - Module structure, interface/API design, type definitions, error handling strategy
-10. **Author per-issue design** - **Save to `docs/design/#{issue_number}/design.md`** using the "Per-issue design.md template" below:
+11. **Author per-issue design** - **Save to `docs/design/#{issue_number}/design.md`** using the "Per-issue design.md template" below:
     - Include a self-contained `## Context` section near the top, summarizing the slice of `shared/architecture.md` and `shared/data-model.md` that this issue acts on. Intentional duplication for standalone readability.
     - Describe the **delta** the issue introduces: new modules, changed interfaces, new types, new flows.
     - Reference shared docs by relative path where appropriate (e.g., `../shared/api-spec.md`).
-11. **Generate API/Interface Specification** (if applicable) - Endpoint or function signatures introduced or changed by this issue, input/output schemas, error definitions. **Save to `docs/design/#{issue_number}/api-spec.md`** using the "API/Interface Specification template" below.
+12. **Generate API/Interface Specification** (if applicable) - Endpoint or function signatures introduced or changed by this issue, input/output schemas, error definitions. **Save to `docs/design/#{issue_number}/api-spec.md`** using the "API/Interface Specification template" below.
 
 ### Phase 5: Workflow Planning
 
-12. **Load `/erd:workflow` and follow inline** - `Read(".claude/commands/erd/workflow.md")`:
+13. **Load `/erd:workflow`**:
     - Task dependencies, implementation order, test strategy
     - **Save the erd:workflow output to `docs/design/#{issue_number}/workflow.md`**, titled `# Workflow: #{issue_number} {title}`
 
 ### Phase 6: UML Diagram Generation
 
-13. **Auto-detect required diagrams** - Analyze issue complexity to determine which UML diagrams are needed (see "UML Auto-Detection Logic" below).
-14. **Generate Mermaid UML diagrams** with proper destination per type:
+14. **Auto-detect required diagrams** - Analyze issue complexity to determine which UML diagrams are needed (see "UML Auto-Detection Logic" below).
+15. **Generate Mermaid UML diagrams** with proper destination per type:
     - **Sequence diagram** — If the issue introduces or changes a system-wide flow, **update `docs/design/shared/sequence.md`** in snapshot mode (Phase 7 will re-write it). If the flow is purely internal to a single issue's logic, save to `docs/design/#{issue_number}/sequence.md` (rare; usually shared).
     - **Class diagram** — Class additions/changes always belong to the cumulative `docs/design/shared/class.md` (Phase 7 will re-write it).
     - **Flowchart** — Issue-local control flow / decision tree → save to `docs/design/#{issue_number}/flowchart.md`. System-wide state machines belong in `shared/sequence.md` instead.
 
 ### Phase 7: Snapshot regeneration of shared layer
 
-15. **Regenerate `docs/design/shared/*` as a complete snapshot** - For each shared file affected by this issue's design, **overwrite** the file with the merged latest state (existing shared content + this issue's contributions):
+16. **Regenerate `docs/design/shared/*` as a complete snapshot** - For each shared file affected by this issue's design, **overwrite** the file with the merged latest state (existing shared content + this issue's contributions):
     - `docs/design/shared/architecture.md`
     - `docs/design/shared/data-model.md`
     - `docs/design/shared/api-spec.md`
     - `docs/design/shared/class.md`
     - `docs/design/shared/sequence.md`
-16. **CRITICAL — Snapshot discipline (NFR-1)**:
-    - DO **overwrite** each shared file with the fully merged latest content.
-    - DO **remove** entries that no longer reflect the current truth (git history retains prior state).
-    - DO **NOT** append a `## Issue #N — changes` section. Append-style updates re-introduce the bloat this skill is designed to avoid.
-    - DO **NOT** keep stale entries from prior snapshots when they are no longer accurate.
+17. **Snapshot discipline (NFR-1)** — this one is irreversible in effect, because an append-style shared layer cannot be un-bloated later:
+    - Overwrite each shared file with the fully merged latest content.
+    - Remove entries that no longer reflect current truth; git history retains the prior state.
+    - Never append a `## Issue #N — changes` section, and never carry forward stale entries.
 
 ### Phase 8: Commit and Report
 
-17. **Stage design artifacts** — Use explicit paths to avoid pulling in unrelated untracked files (e.g. `.vscode/`, local scratchpads, MCP scratch directories):
+18. **Stage design artifacts** — Use explicit paths to avoid pulling in unrelated untracked files (e.g. `.vscode/`, local scratchpads, MCP scratch directories):
     ```bash
     git add docs/design/shared/<files-modified-in-phase-7> \
             docs/design/#{issue_number}/
     ```
     Stage only the `shared/*` files that Phase 7 actually wrote (e.g. omit `class.md` when there were no class-diagram changes), plus the entire per-issue directory. Include `docs/design/shared/research/<lib>.md` if Phase 3 produced cross-cutting research. Avoid `git add -A` and `git add .` — they sweep up unrelated untracked content.
 
-18. **Create commit** — Single commit covering both layers. Use the structure documented in "Commit Strategy" below: `docs:` subject, two-bullet body summarizing each layer's changes, and `Refs #{issue_number}` footer.
+19. **Create commit** — Single commit covering both layers. Use the structure documented in "Commit Strategy" below: `docs:` subject, two-bullet body summarizing each layer's changes, and `Refs #{issue_number}` footer.
 
-19. **Verify post-commit state** — Confirm the commit landed on the expected branch and the design-artifact working tree is clean:
+20. **Verify post-commit state** — Confirm the commit landed on the expected branch and the design-artifact working tree is clean:
     ```bash
     git log --oneline -1        # confirm subject + commit hash
     git status --short          # only unrelated untracked files (if any) should remain
@@ -128,7 +135,8 @@ Do NOT use the Skill tool to invoke erd commands. Loading via Read keeps the ent
     ```
     If `git status` still shows tracked files modified under `docs/design/`, Phase 7 did not write the snapshot or staging missed a file — investigate before reporting completion.
 
-20. **Report results** - Present branch name, commit hash, files written (per layer), and summary using the "Output Format" template below.
+21. **Report results** - See "Reporting" below.
+22. **Sign-off gate** - Present the design for approval before implementation begins. `/implement` is a separate invocation; when running under `/flow`, this is the approval gate that must clear before the implement stage starts.
 
 ## MCP Tools
 
@@ -238,11 +246,7 @@ Analyze the issue content and determine which diagrams are needed:
 | **Class** | `docs/design/shared/class.md` (snapshot) | New types, data models, entity relationships |
 | **Flowchart** | `docs/design/#{issue_number}/flowchart.md` | Issue-local branching logic, decision trees, complex algorithms |
 
-**Rules**:
-- Always generate at least one diagram
-- For XS/S issues: typically 1 diagram (most relevant)
-- For M issues: typically 1-2 diagrams
-- For L/XL issues: typically 2-3 diagrams
+Generate a diagram where it aids comprehension of something the prose does not already carry — a branch structure, an interaction order, an entity relationship. There is no minimum: when no diagram would add anything, state in one line that none was needed and why.
 
 ## Mermaid Diagram Format
 
@@ -347,38 +351,18 @@ Refs #{issue_number}
 - **Body** MUST contain both the "Per-issue delta" and "Shared snapshot" summary lines so reviewers can audit the snapshot regeneration without diffing every shared file.
 - **Footer** MUST be `Refs #{issue_number}` — NOT `Closes #{issue_number}`. `/design` only writes documentation; the issue is closed when the PR created by `/pr` merges (via `Closes #XXX` in the PR body).
 
-## Output Format
+## Reporting
 
-```
-Design Complete
+Report, in whatever shape fits the issue:
 
-Branch: refactor/username/#257/separate-shared-and-issue-specific-design
-Issue: #257
-
-Per-issue artifacts:
-  docs/design/#257/design.md       — Self-contained delta description
-  docs/design/#257/api-spec.md     — API/interface delta (if applicable)
-  docs/design/#257/workflow.md     — Implementation steps
-  docs/design/#257/flowchart.md    — Issue-local control flow (if applicable)
-  docs/design/#257/research.md     — Issue-specific research (if applicable)
-
-Shared layer (snapshot):
-  docs/design/shared/architecture.md     — Updated
-  docs/design/shared/data-model.md       — Updated
-  docs/design/shared/api-spec.md         — Updated
-  docs/design/shared/class.md            — Updated
-  docs/design/shared/sequence.md         — Updated
-  docs/design/shared/research/<lib>.md   — Updated (if applicable)
-
-Summary:
-- Migration: <ran/skipped>
-- Shared layer read at start (Phase 2): N files
-- Shared layer regenerated at end (Phase 7): M files
-- Per-issue artifacts: K files
-- UML diagrams: <list>
-
-Ready for /implement 257
-```
+- Branch and issue number
+- Per-issue artifacts written, each with a one-line description of what it covers
+- Shared files regenerated in Phase 7, and shared files deliberately left unchanged
+- Whether the migration ran or was skipped
+- Diagrams generated, or a line stating none was needed
+- Whether the advisor was consulted or skipped, and what changed as a result
+- Commit hash
+- The next command
 
 ## Best Practices
 

@@ -15,7 +15,7 @@ Create or update design artifacts before production code changes. This is the Co
 2. Read `.tarnished/workflows/design.md`.
 3. If present, read `.claude/skills/design/SKILL.md` and `.claude/skills/_shared/branch/SKILL.md` for compatibility details.
 4. Inspect the issue with `gh issue view <issue_number>`.
-5. Create or reuse the issue branch using the project convention:
+5. Create or reuse the issue branch using the project convention, cutting new branches from the requested base branch (default `develop`):
 
 ```text
 {label}/{assignee}/#{issue_number}/{title}

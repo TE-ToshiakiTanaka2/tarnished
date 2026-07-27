@@ -15,9 +15,18 @@ This skill currently supports Issue mode. Additional modes (Docs, Release) can b
 
 | Mode | Input | Branch Pattern | Used By |
 |------|-------|---------------|---------|
-| **Issue mode** | `issue_number` | `{label}/{assignee}/#{issue_number}/{title}` | `/design`, `/implement` |
+| **Issue mode** | `issue_number`, `base` | `{label}/{assignee}/#{issue_number}/{title}` | `/design`, `/implement`, `/flow` |
 
 ## Issue Mode
+
+### Parameters
+
+| Parameter | Required | Default | Description |
+| --- | --- | --- | --- |
+| `issue_number` | Yes | — | GitHub Issue number |
+| `base` | No | `develop` | Branch that new branches are cut from and pulled |
+
+Callers that accept `--base <branch>` pass it through here. `base` is the same value the caller uses for its review diff base and PR target, so one flag holds end to end.
 
 ### Branch Naming Convention
 
@@ -86,8 +95,10 @@ Convert the issue title to kebab-case:
 ### Step 5: Check for Existing Branches
 
 ```bash
-git branch -a | grep "#{issue_number}"
+git branch -a | grep -F "#{issue_number}/"
 ```
+
+The trailing `/` is a delimiter anchor, not decoration: the branch pattern always places `/` immediately after the issue number, so without it a search for `#12` also matches `#123`, `#124`, … and checks out an unrelated branch.
 
 ### Step 6: Branch Decision
 
@@ -95,19 +106,19 @@ git branch -a | grep "#{issue_number}"
 - Checkout the existing branch: `git checkout <existing_branch_name>`
 - If the existing branch is remote-only: `git checkout -b <local_name> origin/<remote_name>`
 - If you need to create a new branch but want to preserve artifacts from the existing one:
-  1. Create the new branch from `develop`
+  1. Create the new branch from `{base}`
   2. Immediately merge the existing branch: `git merge <existing_branch> --no-edit`
 
 **If no branch exists:**
 ```bash
-git checkout develop
-git pull origin develop
+git checkout {base}
+git pull origin {base}
 git checkout -b {label}/{assignee}/#{issue_number}/{title}
 ```
 
 ## Base Branch
 
-Always use `develop` as the base branch when creating new branches.
+`base` defaults to `develop`. Every step that names a base — checkout, pull, and the artifact-preserving merge path — uses the parameter, so a caller passing `--base main` gets a branch cut from `main` rather than one cut from `develop` while every later stage targets `main`.
 
 ## Error Handling
 
@@ -117,12 +128,13 @@ Always use `develop` as the base branch when creating new branches.
 | No labels match priority list | Use `feature` as default |
 | `gh api user` / `gh auth status` fails | Report error, ask user to run `gh auth login` |
 | Branch creation fails | Report error with details |
-| `develop` branch not found | Report error, ask user to verify branch exists |
+| `{base}` branch not found | Report error naming the resolved base, ask user to verify it exists |
 
 ## Integration
 
 This skill is referenced by:
 - `/design` — Phase 1 (Create branch) — Issue mode
 - `/implement` — Phase 1 (Detect or create branch) — Issue mode
+- `/flow` — Stage 2 onward, threading its own `--base` through
 
 The branch created by `/design` is shared with `/implement`. The `/implement` skill will detect and reuse the branch created by `/design`.

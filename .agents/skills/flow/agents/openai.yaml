@@ -1,0 +1,3 @@
+interface:
+  display_name: "Flow"
+  short_description: "Run the issue lifecycle from design through pull request"
