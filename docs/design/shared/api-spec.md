@@ -278,6 +278,20 @@ Composite actions (`dtolnay/rust-toolchain@stable`, `taiki-e/install-action@*`) 
 
 See "CLI Surface :: `setup.sh`" above for flags and modes (#263). The completion message is unchanged from #246. Per #279, `setup.sh`'s `--upgrade` mode automatically excludes the always-latest path whitelist via the `MANIFEST_EXCLUDE_GLOBS` extension — no new flags or modes are required, and the eight-case `manifest_decide` state machine is unchanged. Pre-#279 manifests that contain hashes for now-excluded paths become inert; the next `--create-manifest` produces a clean manifest.
 
+### `setup.sh::derive_agent_names()` (#308)
+
+Signature: `derive_agent_names <ai_profile>`. Sets the globals `AI_PRIMARY_AGENT` and `AI_REVIEW_AGENT` from an `ai_profile` value (`claude-main` / `codex-main` / `dual`), with `claude-main` as the fallback for an unrecognized value. Extracted from the previously inline case block so the scaffold path and the upgrade path share exactly one mapping.
+
+Note the values are human display strings — `"Claude Code"`, `"Codex CLI"`, `"Manual review"`, `"Claude Code + Codex CLI"`, `"Cross-agent review"` — not dispatchable agent identifiers. Consumers that need a machine-readable binding read `.tarnished/agent-profile.json :: roles` instead.
+
+### `setup.sh::stage_plugin_run()` placeholder rendering (#265, fixed #308)
+
+Signature unchanged: `stage_plugin_run <upstream_dir> <staging_dir>` (and the per-module variant `stage_plugin_run_for_module <upstream_dir> <staging_dir> <lang> <module_name>`). Both now call `replace_placeholders` against `<staging_dir>` after `execute_plugin_post_copies`, using the project name derived from the target directory basename and the `ai_profile` read from the target's `.tarnished/agent-profile.json` (the same source `detect_scaffold_options` uses).
+
+Without this, `--upgrade` staged **unrendered** template copies while the manifest held hashes of **rendered** files, so `manifest_decide` saw `current == old && new != old` and emitted `UPDATE` — writing `{{PROJECT_NAME}}` / `{{AI_PROFILE}}` / `{{AI_PRIMARY_AGENT}}` / `{{AI_REVIEW_AGENT}}` back over correctly rendered downstream files. Most placeholder-bearing files escaped this because they sit in `MANIFEST_EXCLUDE_GLOBS` (`CLAUDE.md`, `AGENTS.md`, `README.md`, `docker-compose.yml`, `.devcontainer/devcontainer.json`); the exposed set was exactly `.tarnished/agent-profile.json` and `.tarnished/workflows/{README,issue,design,implement,review,pr}.md`, which are manifest-tracked and placeholder-bearing. The regression only fired when one of those files changed upstream — which #308 is the first change to do.
+
+`replace_placeholders` carries a hard-coded file list (`scripts/lib/common.sh`), so any new placeholder-bearing scaffolded file must be added there. New contract files introduced by #308 (`.tarnished/workflows/flow.md`) are authored placeholder-free instead.
+
 ### `scripts/lib/common.sh::sha256_file()` (#265)
 
 Signature: `sha256_file <path>`. Cross-platform sha256 wrapper. Picks `sha256sum` (Linux/devcontainer default) or `shasum -a 256` (macOS), extracts the leading 64-hex-char digest, and emits `sha256:<lowercase-hex>` on stdout. Returns `1` if neither tool is available or if the file is missing. The `sha256:` prefix reserves space for future algorithm migrations (e.g., `blake3:`) without rewriting old manifests.
@@ -408,17 +422,37 @@ Codex repo-local skills are copied verbatim by `templates/codex/plugin.sh::plugi
 | `implement` | Implementation, build, test, and commits |
 | `review` | Independent branch review and `docs/review/#{issue_number}/review.md` |
 | `pr` | PR creation, CI validation, optional merge, and target branch update |
+| `flow` | Lifecycle orchestration across the five stages (#308) |
 
-### `templates/codex/.codex/config.toml` (#261)
+Each skill directory also carries `agents/openai.yaml` declaring `interface.display_name` and `interface.short_description`.
+
+### Lifecycle skill argument surface (#308)
+
+| Skill | Arguments |
+| --- | --- |
+| `/issue` | *(none)* |
+| `/design` | `<issue_number> [--base <branch>]` |
+| `/implement` | `<issue_number> [--base <branch>]` |
+| `/review` | `[target_branch] [--codex\|--claude\|--builtin]` |
+| `/pr` | `[target_branch] [--merge]` |
+| `/flow` | `[--issue N] [--base <branch>] [--from <stage>] [--merge]` |
+
+`--base` defaults to `develop` and is threaded to `_shared/branch` Issue mode, which uses it for both `git checkout <base>` and `git pull origin <base>`. Before #308 the parameter did not exist and branch creation was hardcoded to `develop` while later stages honored the requested base.
+
+`/flow` derives its entry stage from repository evidence — an anchored `#<n>/` branch match, the `docs: add design documents for #<n>` commit, later commits, `docs/review/#<n>/review.md`, and `gh pr list --head <branch>` — rather than from a persisted state file. `--from <stage>` overrides the derivation and fails closed when that stage's prerequisites are absent.
+
+### `templates/codex/.codex/config.toml` (#261, #308)
 
 Project-level Codex CLI configuration written verbatim into downstream projects (and into `/workspace/.codex/config.toml` for workspace dogfooding). Flat top-level TOML, four keys (full schema in `data-model.md::.codex/config.toml schema`):
 
 | Key | Default value |
 | --- | --- |
-| `model` | `"gpt-5.5"` (bumped from `"gpt-5.3-codex"` in #261, from `"gpt-5.4"` in #292) |
-| `model_reasoning_effort` | `"high"` (added in #261) |
+| `model` | `"gpt-5.6-sol"` (bumped from `"gpt-5.3-codex"` in #261, `"gpt-5.4"` in #292, `"gpt-5.5"` in #308) |
+| `model_reasoning_effort` | `"ultra"` (added as `"high"` in #261, raised in #308) |
 | `approval_policy` | `"on-request"` |
 | `sandbox_mode` | `"workspace-write"` |
+
+Validated against the installed Codex CLI with `codex exec --strict-config`, which rejects unrecognized keys and values.
 
 The workspace's own `/workspace/.codex/config.toml` MUST stay in sync with this template default so a `/review` run inside the tarnished repo behaves identically to a `/review` run inside any newly bootstrapped downstream project.
 

@@ -299,10 +299,38 @@ Flat top-level TOML. All keys optional from Codex's perspective; tarnished sets 
 
 | Key | Type | Value (workspace + template) | Purpose |
 | --- | --- | --- | --- |
-| `model` | string | `"gpt-5.5"` | Always-latest reasoning model |
-| `model_reasoning_effort` | string | `"high"` | Higher cost, deeper review (paid only when `/review` runs) |
+| `model` | string | `"gpt-5.6-sol"` | Pinned review model (#308) |
+| `model_reasoning_effort` | string | `"ultra"` | Deepest reasoning tier (paid only when `/review` runs) |
 | `approval_policy` | string | `"on-request"` | Codex prompts before destructive actions |
 | `sandbox_mode` | string | `"workspace-write"` | File writes restricted to workspace |
+
+`model` and `model_reasoning_effort` are read back by `/review` at review time and recorded in the artifact metadata header (#308, task 2-5), so a config change is visible in the artifact instead of silently changing review quality. Unset or unreadable keys are recorded as `default`.
+
+### `.tarnished/agent-profile.json` schema (agent and role binding, #261, extended #308)
+
+Flat JSON object. Written by `templates/agent-workflows/plugin.sh` and rendered by `replace_placeholders`. Not refresh-managed, so a downstream edit survives every container start — the property that lets a project retarget models without forking skill files.
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `ai_profile` | string | Yes | `claude-main` \| `codex-main` \| `dual`. Read back by `setup.sh::detect_scaffold_options`. |
+| `primary_agent` | string | Yes | Human display name, e.g. `"Claude Code"`. Rendered from `{{AI_PRIMARY_AGENT}}`. |
+| `review_agent` | string | Yes | Human display name, e.g. `"Codex CLI"`. Rendered from `{{AI_REVIEW_AGENT}}`. |
+| `workflow_source` | string | Yes | Path to the agent-neutral workflow contracts, `.tarnished/workflows`. |
+| `roles` | object | No | Role→binding map (#308). Absent on projects scaffolded before #308. |
+
+`roles` recognizes four role keys — `orchestrator`, `executor`, `advisor`, `external-reviewer`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `roles.<role>.agent` | string | `"primary"` / `"review"` (indirections to the sibling fields), or a concrete agent identifier |
+| `roles.<role>.model` | string \| null | `null` = use that agent's configured default |
+| `roles.external-reviewer.reasoning_effort` | string \| null | `null` = use the reviewer CLI's configured default |
+
+`roles` values are deliberately **placeholder-free**. `primary_agent` / `review_agent` render to display strings — including `"Claude Code + Codex CLI"` and `"Manual review"` for the `dual` and non-Codex profiles (`setup.sh::derive_agent_names`) — which are not dispatchable identifiers.
+
+**Resolution contract** (identical across every consumer): `roles` absent, or any field still containing an unrendered `{{...}}` token, falls back to binding all roles to the primary agent and `external-reviewer` to `review_agent`. Unknown role keys are ignored rather than treated as errors. Consumers report whether the binding came from the profile or from the fallback.
+
+**Forward compatibility**: unknown top-level keys are ignored, so adding roles or per-role fields is non-breaking.
 
 ## Generated-Artifact Contracts
 
