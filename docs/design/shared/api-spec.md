@@ -426,7 +426,7 @@ Codex repo-local skills are copied verbatim by `templates/codex/plugin.sh::plugi
 
 Each skill directory also carries `agents/openai.yaml` declaring `interface.display_name` and `interface.short_description`.
 
-### Lifecycle skill argument surface (#308)
+### Lifecycle skill argument surface (#308, #310)
 
 | Skill | Arguments |
 | --- | --- |
@@ -439,7 +439,20 @@ Each skill directory also carries `agents/openai.yaml` declaring `interface.disp
 
 `--base` defaults to `develop` and is threaded to `_shared/branch` Issue mode, which uses it for both `git checkout <base>` and `git pull origin <base>`. Before #308 the parameter did not exist and branch creation was hardcoded to `develop` while later stages honored the requested base.
 
-`/flow` derives its entry stage from repository evidence — an anchored `#<n>/` branch match, the `docs: add design documents for #<n>` commit, later commits, `docs/review/#<n>/review.md`, and `gh pr list --head <branch>` — rather than from a persisted state file. `--from <stage>` overrides the derivation and fails closed when that stage's prerequisites are absent.
+`/flow` derives its entry stage from repository evidence — an anchored `#<n>/` branch match, the `docs: add design documents for #<n>` commit, later commits, `docs/review/#<n>/review.md`, and `gh pr list --head <branch>` — rather than from a persisted state file. `--from <stage>` overrides the derivation and fails closed when that stage's prerequisites are absent. The `issue` stage is the one exception: it has no prerequisites, because it creates them.
+
+`/flow` resolves its issue number by a fixed precedence, first match wins (#310):
+
+| # | Condition | Result |
+| --- | --- | --- |
+| 1 | `--from issue` | Skip number resolution; entry stage is `issue` |
+| 2 | `--issue N` | `N` |
+| 3 | Current branch matches `.../#<n>/...` | `<n>` |
+| 4 | Nothing resolved | Structured choice: name an existing issue, or start from a requirement (entry stage `issue`) |
+
+Rule 1 precedes rule 4 by necessity, not convention: a rule that only offers the choice "when no number resolves" still prompts on `--from issue`, since no number resolves there either. `--from issue` combined with `--issue N` is contradictory — the stage creates the number the flag supplies — and is reported rather than silently resolved.
+
+`/flow` carries two approval gates with deliberately different resume semantics. The issue→design gate covers the estimation, approach, and task breakdown that `/issue` produces *after* its own requirements-summary approval, and is skipped on resumed runs. The design→implement gate re-runs on resumed runs, because a design commit proves the artifacts were written rather than approved.
 
 ### `templates/codex/.codex/config.toml` (#261, #308)
 
