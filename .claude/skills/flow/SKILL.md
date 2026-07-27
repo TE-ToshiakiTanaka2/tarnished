@@ -35,23 +35,23 @@ Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary, the r
 
 ## Stage 1: Resolve inputs
 
-Resolve the issue number by this precedence, first match wins:
+**First, reject contradictory argument pairs.** This happens before any precedence rule, because a first-match-wins table would otherwise short-circuit on rule 1 and never notice the conflicting flag:
+
+- `--from issue` with `--issue N` — the stage creates the number the flag supplies. Report the contradiction and ask which was meant.
+- `--from <stage after issue>` with no resolvable issue number — a later stage cannot run against an issue that does not exist yet. Ask for an existing issue number, or cancel. Do not offer the requirement-first entry here; it would override the `--from` the user just gave.
+
+**Then** resolve the issue number by this precedence, first match wins:
 
 | # | Condition | Result |
 | --- | --- | --- |
 | 1 | `--from issue` given | Skip number resolution entirely — the entry stage is `issue`, and `/issue` creates the number |
 | 2 | `--issue N` given | `N` |
 | 3 | Current branch matches `.../#<n>/...` | `<n>` |
-| 4 | Nothing above resolved | Ask a structured question offering two entries: **name an existing issue**, or **start from a requirement** (the latter sets the entry stage to `issue`) |
+| 4 | Nothing above resolved | Ask a structured question offering two entries: **name an existing issue**, or **start from a requirement** (the latter sets the entry stage to `issue`). When `--from` named a stage after `issue`, the contradiction check above has already narrowed this to the first option |
 
 Rule 1 comes first by necessity, not convention. A rule that only offers the choice "when no number resolves" would still prompt on `--from issue`, because no number resolves there either — which is the bug this ordering exists to prevent. Consult the flag before asking the question.
 
 Rule 4 asks rather than assuming, because "no number" is ambiguous: it means either genuinely new work or a forgotten `--issue`. Auto-entering `issue` would push the second case into an unwanted requirements brainstorm.
-
-Two combinations are contradictory rather than merely unusual:
-
-- `--from issue` with `--issue N` — the stage creates the number the flag supplies. Report it and ask which was meant, rather than silently preferring one.
-- `--from <stage after issue>` reaching rule 4 — a later stage cannot run against an issue that does not exist yet. Offer only "name an existing issue" in that case; the requirement-first entry would override the `--from` the user just gave.
 
 Resolve `--base`, defaulting to `develop`. Pass the same value to `/design`, `/implement`, `/review`, and `/pr` — a base that holds for the PR target but not for branch creation is the bug this argument exists to prevent.
 
@@ -63,10 +63,20 @@ Derive the entry point from repository evidence rather than a state file. Eviden
 
 Otherwise, first **resolve the issue branch itself** and evaluate every subsequent question against that ref — not against `HEAD`. `/flow --issue N` is frequently run from `develop` or from another issue's branch, and reading `HEAD` there reports another issue's progress as this one's. Fetch the branch when it exists only on the remote, and check it out before running any stage.
 
+Before reading branch evidence, **check the issue itself**. `/pr --merge` deletes the source branch both locally and remotely, so a completed issue leaves no branch behind and "no branch" would otherwise be read as "not started":
+
+```bash
+gh issue view <n> --json state,stateReason,closedByPullRequestsReferences
+```
+
+A `CLOSED`/`COMPLETED` issue, or one with a merged pull request in `closedByPullRequestsReferences`, is finished — report and stop. Recover the branch name from that pull request's `headRefName` when you need it for reporting.
+
+The requirement-first entry never reaches this table — Stage 1 already set it and the paragraph above skips the derivation. The table covers only runs that carry an issue number.
+
 | Evidence, evaluated on the issue branch ref | Entry stage |
 | --- | --- |
-| No issue number, requirement-first entry chosen in Stage 1 | `issue` |
-| No branch matching `#<n>/`, local or remote | `design` |
+| Issue closed as completed, or closed by a merged PR | Nothing to do — report and stop |
+| No branch matching `#<n>/`, local or remote, and the issue is open | `design` |
 | Branch exists, no `docs: add design documents for #<n>` commit on it | `design` |
 | Design commit present, no later commit touching anything outside `docs/design/` | `implement` |
 | Implementation commits present, no `docs/review/#<n>/review.md` on the branch, or one with no "Fixes Applied" section | `review` |
@@ -88,7 +98,15 @@ Track the stages as tasks so a long run stays observable, and keep the task stat
 
 ## Stage 3: Run the stages
 
-Run from the entry stage through `pr`. For each stage, read its skill and follow it.
+Run from the entry stage through `pr` in this exact order, honouring each gate **as it is reached** — not as a review afterwards:
+
+```
+issue → Gate A → design → Gate B → implement → review → triage → pr
+```
+
+Both gates are defined in Stage 4. A gate that comes before your entry stage does not apply. Never run a later stage before a gate that precedes it has cleared.
+
+For each stage, read its skill and follow it.
 
 When the entry stage is `issue`, run `/issue` with no arguments, capture the number it returns, and use that number for every later stage. Stage 1 rules 1 and 4 are the two routes into it.
 
@@ -122,6 +140,11 @@ Present the design for approval and do not proceed until the user approves.
 
 Unlike Gate A, this gate runs on **resumed** runs too. `/design` commits its artifacts in Phase 8 and only then reaches its sign-off gate, so a design commit proves the artifacts were written, not that anyone approved them — an interrupted run would otherwise resume straight into implementation past a gate that never cleared. On a resumed run, present the already-committed design rather than re-deriving it.
 
+Two cases skip it:
+
+- **Entering at `review` or `pr`** — implementation already happened, so a gate before it has nothing left to guard.
+- **Entering at `implement` with no design artifacts** — `/implement` treats design as optional, so there may be nothing to present. Say so in the report rather than blocking; the user asked for that entry explicitly.
+
 The asymmetry between the two is deliberate: Gate B has no way to tell an approved design from an unapproved one, while Gate A's subject is a GitHub issue that remains visible and editable after the run ends.
 
 ## Stage 5: Review triage
@@ -153,8 +176,9 @@ Report, in whatever shape fits the run:
 
 | Condition | Action |
 | --- | --- |
-| Issue number unresolvable | Offer both entries — name an existing issue, or start from a requirement. Never a bare number prompt, and never a guess |
-| `--from issue` given with `--issue N` | Report the contradiction and ask which was meant |
+| Issue number unresolvable, no `--from` after `issue` | Offer both entries — name an existing issue, or start from a requirement. Never a bare number prompt, and never a guess |
+| Issue number unresolvable, `--from` names a stage after `issue` | Ask for an existing issue number, or cancel. The requirement-first entry is not offered — it would override the `--from` just given |
+| `--from issue` given with `--issue N` | Report the contradiction and ask which was meant. Checked before the precedence rules, so rule 1 cannot short-circuit past it |
 | `/issue` returns no number (aborted) | Stop. Do not proceed to `design` |
 | Gate A declined | Stop, leaving the created issue in place for editing |
 | `--from <stage>` prerequisites absent | Report the missing prerequisite and stop |

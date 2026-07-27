@@ -439,7 +439,7 @@ Each skill directory also carries `agents/openai.yaml` declaring `interface.disp
 
 `--base` defaults to `develop` and is threaded to `_shared/branch` Issue mode, which uses it for both `git checkout <base>` and `git pull origin <base>`. Before #308 the parameter did not exist and branch creation was hardcoded to `develop` while later stages honored the requested base.
 
-`/flow` derives its entry stage from repository evidence — an anchored `#<n>/` branch match, the `docs: add design documents for #<n>` commit, later commits, `docs/review/#<n>/review.md`, and `gh pr list --head <branch>` — rather than from a persisted state file. `--from <stage>` overrides the derivation and fails closed when that stage's prerequisites are absent. The `issue` stage is the one exception: it has no prerequisites, because it creates them.
+`/flow` derives its entry stage from repository evidence — the issue's own state via `gh issue view <n> --json state,stateReason,closedByPullRequestsReferences`, then an anchored `#<n>/` branch match, the `docs: add design documents for #<n>` commit, later commits, `docs/review/#<n>/review.md`, and `gh pr list --head <branch> --state all` — rather than from a persisted state file. The issue check precedes the branch evidence because `/pr --merge` deletes the source branch, so a completed issue leaves no branch and "no branch" would otherwise read as "not started". `--from <stage>` overrides the derivation and fails closed when that stage's prerequisites are absent. The `issue` stage is the one exception: it has no prerequisites, because it creates them.
 
 `/flow` resolves its issue number by a fixed precedence, first match wins (#310):
 
@@ -450,9 +450,11 @@ Each skill directory also carries `agents/openai.yaml` declaring `interface.disp
 | 3 | Current branch matches `.../#<n>/...` | `<n>` |
 | 4 | Nothing resolved | Structured choice: name an existing issue, or start from a requirement (entry stage `issue`) |
 
-Rule 1 precedes rule 4 by necessity, not convention: a rule that only offers the choice "when no number resolves" still prompts on `--from issue`, since no number resolves there either. `--from issue` combined with `--issue N` is contradictory — the stage creates the number the flag supplies — and is reported rather than silently resolved.
+Rule 1 precedes rule 4 by necessity, not convention: a rule that only offers the choice "when no number resolves" still prompts on `--from issue`, since no number resolves there either.
 
-`/flow` carries two approval gates with deliberately different resume semantics. The issue→design gate covers the estimation, approach, and task breakdown that `/issue` produces *after* its own requirements-summary approval, and is skipped on resumed runs. The design→implement gate re-runs on resumed runs, because a design commit proves the artifacts were written rather than approved.
+Contradictory pairs are rejected **before** the precedence table is consulted, because first-match-wins would otherwise short-circuit on rule 1 and never notice the conflicting flag: `--from issue` with `--issue N` (the stage creates the number the flag supplies), and `--from <stage after issue>` with no resolvable number (a later stage cannot run against an issue that does not exist — rule 4 then offers only the existing-issue option).
+
+`/flow` carries two approval gates, honoured inline as the run reaches them (`issue → gate → design → gate → implement → review → triage → pr`) rather than as a review after every stage has run. They have deliberately different resume semantics. The issue→design gate covers the estimation, approach, and task breakdown that `/issue` produces *after* its own requirements-summary approval, and is skipped on resumed runs. The design→implement gate re-runs on resumed runs, because a design commit proves the artifacts were written rather than approved; it is skipped when entering at `review` or `pr`, and when entering at `implement` with no design artifacts, since `/implement` treats design as optional.
 
 ### `templates/codex/.codex/config.toml` (#261, #308)
 

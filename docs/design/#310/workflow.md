@@ -81,4 +81,15 @@ Dependency-ordered plan. Three authored files, each mirrored into `templates/` i
 
 No executable surface changes, so there is no new automated coverage to add. The invariant these files carry is mirror byte-identity, enforced by `verify-mirrors.sh` in CI via `asset-parity.yml`.
 
-The behavioral claims are verified by tracing the four invocations the design enumerates against the final text: `/flow` no-args, `/flow --from issue`, `/flow --issue N` from an unrelated branch, and `/flow` on a `#<n>/` branch. Each must reach its intended entry without a spurious prompt. This trace is the review's job and is stated here so it is not skipped.
+The behavioral claims are verified by tracing these invocations against the final text. Each must reach its intended entry without a spurious prompt, and none may run a stage before a gate that precedes it:
+
+1. `/flow` — no arguments, from `develop`
+2. `/flow --from issue`
+3. `/flow --issue N` — from an unrelated branch
+4. `/flow` — from a branch named `.../#<n>/...`
+5. `/flow --from issue --issue N` — contradictory pair
+6. `/flow --from implement` — forced later stage, no issue number
+7. `/flow --from review` — issue exists, no review artifact yet
+8. `/flow --issue N` — where N was already completed and its branch deleted by a merge
+
+Cases 5-8 are the ones that expose ordering and short-circuit defects; the first four are the happy paths. This trace is the review's job and is enumerated here so it is not narrowed.

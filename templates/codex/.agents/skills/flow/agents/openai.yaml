@@ -1,3 +1,3 @@
 interface:
   display_name: "Flow"
-  short_description: "Run the issue lifecycle from design through pull request"
+  short_description: "Run the issue lifecycle, from a requirement or an issue, through to a pull request"
