@@ -327,3 +327,84 @@ bootstrap_and_commit() {
     [[ "$status" -eq 0 ]]
     [[ ! -f .github/versioning.yml ]]
 }
+
+# -----------------------------------------------------------------------------
+# #308: --upgrade renders template placeholders in the staging tree
+# -----------------------------------------------------------------------------
+#
+# `.tarnished/agent-profile.json` and `.tarnished/workflows/*.md` are the
+# only files that are BOTH placeholder-bearing AND manifest-tracked (every
+# other placeholder-bearing file sits in MANIFEST_EXCLUDE_GLOBS). Before
+# #308 the staging run never called replace_placeholders, so an UPDATE
+# decision on one of these wrote raw {{...}} tokens over the rendered
+# downstream file.
+
+# Seed a scaffold whose .tarnished/ files are rendered but stale, so the
+# upgrade must take the UPDATE branch on them.
+seed_tarnished_scaffold() {
+    seed_scaffold
+    # devcontainer.json is user-owned and carries the rendered project
+    # name; stage_render_placeholders prefers it over the directory
+    # basename (the scratch dir has a mktemp name).
+    echo '{"name": "my-proj"}' > .devcontainer/devcontainer.json
+    mkdir -p .tarnished/workflows
+    sed -e "s|{{PROJECT_NAME}}|my-proj|g" \
+        -e "s|{{AI_PROFILE}}|claude-main|g" \
+        -e "s|{{AI_PRIMARY_AGENT}}|Claude Code|g" \
+        -e "s|{{AI_REVIEW_AGENT}}|Codex CLI|g" \
+        "${SCRIPT_DIR}/templates/agent-workflows/.tarnished/agent-profile.json" \
+        > .tarnished/agent-profile.json
+    for f in README design implement issue pr review; do
+        sed -e "s|{{PROJECT_NAME}}|my-proj|g" \
+            -e "s|{{AI_PROFILE}}|claude-main|g" \
+            -e "s|{{AI_PRIMARY_AGENT}}|Claude Code|g" \
+            -e "s|{{AI_REVIEW_AGENT}}|Codex CLI|g" \
+            "${SCRIPT_DIR}/templates/agent-workflows/.tarnished/workflows/${f}.md" \
+            > ".tarnished/workflows/${f}.md"
+        # Make the seeded copy differ from the upgraded template so the
+        # lifecycle engine picks UPDATE rather than NOOP.
+        echo "" >> ".tarnished/workflows/${f}.md"
+        echo "<!-- stale marker from an older tarnished -->" >> ".tarnished/workflows/${f}.md"
+    done
+}
+
+@test "#308: --upgrade does not write raw placeholders into .tarnished/" {
+    seed_tarnished_scaffold
+    bootstrap_and_commit
+
+    # Pre-condition: the seeded tree is fully rendered.
+    ! grep -rq '{{' .tarnished/
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+
+    # The stale marker is gone, proving UPDATE actually fired on these
+    # files rather than the assertion below passing via a NOOP.
+    ! grep -q "stale marker" .tarnished/workflows/README.md
+
+    # The whole point: no placeholder token survives the upgrade.
+    run grep -rl '{{' .tarnished/
+    [[ "$status" -ne 0 ]]
+
+    # And the rendered values are the ones derived from the target.
+    grep -q "my-proj" .tarnished/workflows/README.md
+    run jq -r '.ai_profile' .tarnished/agent-profile.json
+    [[ "$output" == "claude-main" ]]
+}
+
+@test "#308: --upgrade manifest records rendered hashes, so a re-run is a NOOP" {
+    seed_tarnished_scaffold
+    bootstrap_and_commit
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+    git add -A; git commit -q -m "post-upgrade"
+
+    # If NEW_HASHES had recorded unrendered staging hashes, the manifest
+    # would disagree with the on-disk rendered file and the second run
+    # would misclassify it as user-edited.
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+    [[ "$output" != *"Skipped (edited)"*".tarnished/workflows/README.md"* ]]
+    ! grep -rq '{{' .tarnished/
+}
