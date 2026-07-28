@@ -184,10 +184,13 @@ sequenceDiagram
     Exe-->>O: fix commits
 
     Dev->>O: /pr
-    O->>Exe: delegate PR body, quality pass, CI monitoring
-    Exe->>GH: gh pr create
-    Exe-->>O: PR URL + CI status
-    O->>O: content check + merge decision (not delegated)
+    O->>Exe: delegate quality pass, push, and PR body drafting
+    Exe-->>O: drafted body (nothing created yet)
+    O->>O: content check — revise or re-dispatch
+    O->>GH: gh pr create (the orchestrator's own command)
+    O->>Exe: delegate CI monitoring and fix commits
+    Exe-->>O: CI status
+    O->>O: merge decision (never delegated)
     O-->>Dev: PR URL
 ```
 

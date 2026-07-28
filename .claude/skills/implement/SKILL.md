@@ -69,7 +69,9 @@ Steps 4-6 form a cycle: `analyze findings → improve → build → test`. The e
 
 ### Orchestrator review
 
-When the executor returns, the orchestrator reviews the implementation against the design: does it carry what the design specified, does it match the conventions the codebase already uses, and are the decisions the executor reported as unsettled acceptable. A blocking finding is sent back, capped at 2 rounds, then escalated. Reaching the cap is always reported.
+When the executor returns, the orchestrator reviews the implementation: does it carry what was specified, does it match the conventions the codebase already uses, and are the decisions the executor reported as unsettled acceptable. A blocking finding is sent back and the result is **re-reviewed**; at most 2 returns, then escalate. Reaching the cap is always reported.
+
+**Ground truth when there is no design.** This stage treats design artifacts as optional, so a run can reach it with none. In that case the issue's Requirements section is the ground truth for both the executor and the review — say so in the dispatch prompt and in the report. Reviewing "against the design" when no design exists would otherwise leave the review with nothing to check against, and the executor with nothing to build from.
 
 ## MCP Tools
 
@@ -130,7 +132,7 @@ Report, in whatever shape fits the change:
 
 ## Best Practices
 
-- **Design First**: Load and follow design artifacts from `/design` if available
+- **Design First**: Load and follow design artifacts from `/design` if available; where they are absent, the issue's Requirements take their place as the ground truth for both authoring and review
 - **Return, Do Not Guess**: An unsettled judgment goes back to the orchestrator. A subagent that assumes its way past an ambiguity is the failure the protocol exists to prevent
 - **Skip Deliberately**: A skipped step is a decision to report, not a step to hide
 - **Incremental Implementation**: Implement and commit in small logical units

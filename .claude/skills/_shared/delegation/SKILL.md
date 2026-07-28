@@ -11,7 +11,7 @@ Internal reference that defines who executes what across the lifecycle. Referenc
 
 Skills name **roles**, never models. A model name written into a skill cannot be changed by a downstream project without forking the file; a role can be rebound in one place.
 
-Where this file disagrees with `.tarnished/workflows/*.md`, this file is authoritative. `.claude/skills/` and `.claude/agents/` are refresh-managed while `.tarnished/workflows/` is not, so a project can be running current skills against a stale contract.
+Where this file disagrees with `.tarnished/workflows/*.md` or `.agents/skills/*/SKILL.md`, this file is authoritative. `.claude/skills/` and `.claude/agents/` are refresh-managed; `.tarnished/workflows/` and `.agents/` are not. A project can therefore be running current skills against both a stale contract and a stale Codex projection, and the two stale altitudes can disagree with each other as well — resolve every such conflict here.
 
 ## Roles
 
@@ -70,9 +70,11 @@ Bindings live in `.tarnished/agent-profile.json`:
   "orchestrator":      { "agent": "primary", "model": null },
   "designer":          { "agent": "primary", "model": null },
   "executor":          { "agent": "primary", "model": null },
-  "external-reviewer": { "agent": "review",  "model": null }
+  "external-reviewer": { "agent": "review" }
 }
 ```
+
+`external-reviewer` carries no `model` key: its model and reasoning effort come from the reviewer CLI's own config, which is their single source.
 
 - `"primary"` and `"review"` are indirections to the sibling `primary_agent` / `review_agent` fields.
 - This file is not refresh-managed, so a downstream edit survives every container start.
@@ -82,10 +84,13 @@ Bindings live in `.tarnished/agent-profile.json`:
 | Condition | Behavior |
 | --- | --- |
 | `roles` key absent (project predates it) | Bind every role to the primary agent; `external-reviewer` to `review_agent` |
+| `roles` present but a role this policy names is **missing** from it | Bind that role as if `roles` were absent — to the primary agent, or to `review_agent` for `external-reviewer`. Resolve per role, never all-or-nothing |
 | A value still contains an unrendered `{{...}}` token | Treat as absent |
-| Unknown role key present | Ignore it; do not error |
+| Unknown role key present (e.g. a retired `advisor` entry) | Ignore it; do not error |
 
-Report which of the two paths was taken when a stage's output names a role.
+The missing-key row is not hypothetical: a project scaffolded before `designer` existed carries a `roles` map with `advisor` and no `designer`, so an all-or-nothing fallback keyed on the *object* would leave `designer` unresolved while the map itself is present. Resolution is per role for that reason.
+
+Report which path was taken when a stage's output names a role.
 
 ## Delegation and the blocked-result protocol
 
@@ -116,7 +121,7 @@ The orchestrator reviews each delegated artifact before it is committed or built
 - **Implementation** — against the design.
 - **Review findings** — triaged by the orchestrator; fixes applied by the executor.
 
-A blocking finding sends the artifact back to its author, capped at **2 rounds**. A blocking finding surviving round 2 is escalated to the user with the finding and what was attempted. Reaching the cap is always reported, never passed over silently.
+A blocking finding sends the artifact back to its author, and the orchestrator **re-reviews whatever comes back** — a return that is not re-reviewed is not a review loop. The count is of *return* rounds: the first review is round 0, the first send-back and its re-review is round 1, and the second is round 2. At most **2 returns**; a blocking finding still present after the second re-review is escalated to the user with the finding and what was attempted. Reaching the cap is always reported, never passed over silently.
 
 ## Triage policy
 

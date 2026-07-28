@@ -7,6 +7,6 @@
     "orchestrator": { "agent": "primary", "model": null },
     "designer": { "agent": "primary", "model": null },
     "executor": { "agent": "primary", "model": null },
-    "external-reviewer": { "agent": "review", "model": null }
+    "external-reviewer": { "agent": "review" }
   }
 }

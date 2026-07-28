@@ -338,7 +338,7 @@ Flat JSON object. Written by `templates/agent-workflows/plugin.sh` and rendered 
 
 | Role | Execution | Channel | Shipped value |
 | --- | --- | --- | --- |
-| `orchestrator` | Inline — it *is* the session | `.claude/settings.json :: model` | `claude-opus-5[1m]` |
+| `orchestrator` | Inline — it *is* the session | `.claude/settings.json :: model` | `claude-fable-5` |
 | `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
 | `designer` | Delegated subagent | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
 | `external-reviewer` | Separate vendor CLI | `.codex/config.toml` | reviewer-owned (`gpt-5.6-sol` / `ultra`) |

@@ -107,7 +107,7 @@ The orchestrator resolves the question when it can, and escalates to the user wh
 | Phase | Owner |
 | --- | --- |
 | Read the issue, resolve the branch, load `docs/design/shared/*` | orchestrator |
-| Author `#{issue}/design.md`, `api-spec.md`, `workflow.md`, diagrams; regenerate the shared snapshot | **designer** |
+| Research, author `#{issue}/design.md`, `api-spec.md`, `workflow.md`, diagrams; regenerate the shared snapshot | **designer** |
 | Review the artifacts against the issue's Requirements | orchestrator |
 | Blocking finding → designer revises → re-review, capped at 2 rounds | both |
 | Write `#{issue}/orchestrator-review.md`; stage and commit everything | orchestrator |
@@ -118,17 +118,21 @@ A blocking finding surviving round 2 escalates to the user. Reaching the cap is 
 
 Authoring moves to the executor; the orchestrator reviews. The carve-out is FR-7: the executor returns rather than deciding whenever the design does not settle a judgment.
 
+This stage treats design artifacts as optional, so a run can reach it with none. In that case the issue's Requirements are the ground truth for both the executor and the review — otherwise the review would have nothing to check against and the executor nothing to build from.
+
 This **deliberately overwrites** the position currently recorded in `implement/SKILL.md`, which states that this stage is "the one most often mis-delegated" and that interpreting the design and matching existing conventions "stays with the orchestrator". That position assumed the orchestrator was the only capable writer, and that delegation meant handing off with no return path. With a model-pinned executor and a mandatory return-on-judgment protocol, the trade differs. The reversal is recorded as intentional, with its reason, rather than left to contradict the old text silently — a reader who finds the new instruction without the rationale will reasonably assume it is an error.
 
 ### `/pr` — split at the irreversible operation
 
 | Work | Owner |
 | --- | --- |
-| PR body authoring, mechanical quality pass, `gh pr create`, CI monitoring, log collection | executor |
-| Checking the PR content before creation | orchestrator |
+| Mechanical quality pass, `git push`, PR body **drafting**, CI monitoring, log collection, fix commits | executor |
+| Checking the drafted body, then running `gh pr create` | orchestrator |
 | Merge decision, including under `--merge` | orchestrator |
 
 A pull request is outward-facing and a merge is irreversible, so neither is delegated to the stage's writing agent.
+
+Creation is the orchestrator's **command**, not merely its approval. "The executor creates it but the orchestrator checks first" has no executable boundary — by the time the orchestrator sees anything, the pull request exists and any correction is visible to everyone who was notified. The executor therefore returns the drafted body and stops.
 
 ## Data Flow
 

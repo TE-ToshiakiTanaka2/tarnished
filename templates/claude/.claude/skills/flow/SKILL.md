@@ -81,11 +81,13 @@ The requirement-first entry never reaches this table — Stage 1 already set it 
 | No branch matching `#<n>/`, local or remote, and the issue is open | `design` |
 | Branch exists, no `docs: add design documents for #<n>` commit on it | `design` |
 | Design commit present, no later commit touching anything outside `docs/design/` | `implement` |
-| Implementation commits present, no `docs/review/#<n>/review.md` on the branch, or one with no "Fixes Applied" section | `review` |
+| Implementation commits present, no `docs/review/#<n>/review.md` on the branch, or one with no "Fixes Applied" section | `review` — but **first re-run the implementation review** (see below) |
 | Review artifact complete, no pull request for the branch | `pr` |
 | Open pull request for the branch | Resume at `pr` — CI validation and, with `--merge`, the merge still have to run |
 | Merged pull request for the branch | Nothing to do — report and stop |
 | Closed but unmerged pull request | Report it and stop; reopening or superseding it is the user's call |
+
+A resumed run entering `review` re-runs the orchestrator's implementation review before the external review. The executor commits incrementally, so an interrupted `/implement` leaves commits on the branch that were never reviewed — and "implementation commits exist" cannot distinguish reviewed work from abandoned partial work. Re-running the review is cheap, is idempotent, and needs no extra artifact; the alternative, a durable completion marker, reintroduces exactly the evidence bookkeeping that moving `/design`'s commit after its review removed.
 
 Two evidence rules are deliberately stricter than "the file exists":
 
@@ -137,9 +139,11 @@ A run therefore stops for the user in exactly four places. The list is stated so
 
 Anything else is the orchestrator's to decide. A stop that is not on this list is a bug in the run, not a courtesy.
 
+Stage skills carry their own interactive prompts for degraded conditions, and under `/flow` those resolve automatically rather than becoming a fifth stop. In particular, `/review` offers a choice when the configured reviewer is missing or unauthenticated: under `/flow`, fall through its resolution ladder to the next available reviewer, mark the artifact as a fallback review, and record which reviewer was used and why. Stop only when **no** reviewer at all can be resolved — that is a stage that cannot complete, which is covered by the rule below rather than by a consent prompt.
+
 ## Stage 5: Review triage
 
-After `review`, decide the disposition of each finding using the severity policy in `review/SKILL.md`: Critical and Major must be fixed before the PR.
+After `review`, decide the disposition of each finding using the severity policy in `review/SKILL.md`.
 
 Critical findings are not deferrable. A Critical finding blocks PR creation until it is fixed; no rationale clears it.
 

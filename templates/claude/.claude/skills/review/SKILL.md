@@ -89,6 +89,8 @@ Then **resolve the reviewer's model and reasoning effort** so they can be record
 
 1. **Run** `codex review --base "$TARGET_BRANCH"`, passing the same resolved `-c model` / `-c model_reasoning_effort` overrides, and capture output.
 
+This path takes no custom prompt, so it receives **neither** ground truth and applies the reviewer's own built-in criteria rather than the list below — no design reference, and no requirement-adherence check. Record that limitation in the artifact so the review is not read as having covered criteria 8 and 9. It is opt-in via `--builtin` and is never selected automatically for this reason.
+
 ### Phase 3C: Review via Claude subagent (fallback or `--claude`)
 
 1. **Launch the `code-reviewer` subagent** (defined in `.claude/agents/code-reviewer.md`) with the Review Prompt Template below as its task. The subagent runs read-only in a fresh context — do not paste your own analysis of the changes into the prompt; let it judge the diff independently.
@@ -101,10 +103,11 @@ Then **resolve the reviewer's model and reasoning effort** so they can be record
 2. **Present review results** to the user.
 3. **Triage** — the orchestrator classifies each finding per the severity policy below and decides what must be fixed.
 4. **Apply fixes** — dispatch the `executor` (`.claude/agents/executor.md`) with the triaged must-fix list. It commits as `fix: address review feedback for #<issue_number>`. A blocked-result comes back to the orchestrator, which answers it or escalates.
+5. **Verify the fixes** — the orchestrator reads the fix commits against the findings they claim to resolve, before anything is recorded as fixed. A fix that is incomplete, that addresses a different problem, or that regresses something else goes back to the executor and is re-reviewed; at most 2 returns, then escalate. A delegated artifact that is recorded as complete without being reviewed defeats the point of delegating it, and a Critical finding marked fixed on an incomplete patch is the worst version of that.
 
 ### Phase 5: Report
 
-1. **Update review record** — Append a "Fixes Applied" section to `docs/review/#{issue_number}/review.md` listing the fixes and the fix commit hash. For any Major finding deliberately left unfixed, record the rationale next to it. Critical findings are not deferrable and so never appear here as deferred.
+1. **Update review record** — Append a "Fixes Applied" section to `docs/review/#{issue_number}/review.md` listing the fixes and the fix commit hash. Write it only after Phase 4's verification step has cleared: this section is what marks the review complete, so recording it on unverified fixes lets a resumed run move past a finding nobody confirmed. For any Major finding deliberately left unfixed, record the rationale next to it. Critical findings are not deferrable and so never appear here as deferred.
 
    This section is also what marks the review complete: `/flow` treats an artifact without it as a review still in progress, since Phase 4 writes the artifact before any fix is applied.
 2. **Summarize** — Issues found and resolved, deferrals with rationale, remaining minor findings and suggestions.

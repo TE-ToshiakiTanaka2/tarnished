@@ -31,7 +31,7 @@ This split keeps the read cost of `/design` and `/implement` constant with respe
 
 Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and stage ownership; where the two disagree with `.tarnished/workflows/design.md`, the skills are authoritative.
 
-Artifact authoring belongs to the **`designer`** subagent (`.claude/agents/designer.md`). The orchestrator prepares the inputs (Phases 1-2), dispatches the designer (Phases 3-7), reviews what comes back against the issue's Requirements, and performs the commit (Phase 8).
+Artifact authoring belongs to the **`designer`** subagent (`.claude/agents/designer.md`). The orchestrator prepares the inputs (Phases 1-2), dispatches the designer at the **start of Phase 3**, reviews what comes back against the issue's Requirements, and performs the commit (Phase 8). Phases 3 through 7 are the designer's work in full — research included, and both artifact layers: the per-issue delta *and* the regenerated shared snapshot.
 
 The order is **write → review → commit**, and it is load-bearing. Committing first and reviewing second would make a design commit prove only that artifacts were *written*, which is exactly the ambiguity that used to require a separate approval gate. With the commit last, the commit itself records that the review happened, and an interrupted run simply leaves uncommitted files that `/flow` already reads as "enter at `design`".
 
@@ -75,7 +75,11 @@ The overlay is checked first because it is the only route guaranteed to honor a 
    - Use this to verify the shared layer matches the actual codebase before designing
    - Skip if the issue scope is small and well-understood
 
-### Phase 3: Research (if needed)
+### Phase 3: Dispatch, then research (if needed)
+
+6a. **Dispatch the designer** - Launch the `designer` subagent (`.claude/agents/designer.md`) with the issue number, the branch, the base branch, and the shared-layer state loaded in Phase 2. Everything from here through Phase 7 is its work — research, the per-issue delta, the diagrams, and the shared snapshot regeneration. It authors and returns; it does not commit. If it returns a **blocked-result** instead of artifacts, answer the question and re-dispatch, or escalate to the user when the answer is the user's to give — see `_shared/delegation/SKILL.md`.
+
+   Dispatch belongs here rather than after research: research produces an artifact (`research.md`), so running it before the hand-off would split authorship of the stage across two agents and leave no single accountable author.
 
 7. **Load `/erd:research`** (conditional):
    - **Decision rule**: If the issue references external libraries, APIs, or patterns that are not already established in the codebase, execute erd:research. Otherwise, skip.
@@ -86,8 +90,7 @@ The overlay is checked first because it is the only route guaranteed to honor a 
 
 ### Phase 4: Architecture Design
 
-9. **Dispatch the designer** - Launch the `designer` subagent (`.claude/agents/designer.md`) with the issue number, the branch, the base branch, and the shared-layer state. Phases 4 through 7 are its work; it authors and returns, and does not commit. If it returns a **blocked-result** instead of artifacts, answer the question and re-dispatch, or escalate to the user when the answer is the user's to give — see `_shared/delegation/SKILL.md`.
-10. **Load `/erd:design`**:
+9. **Load `/erd:design`**:
    - Module structure, interface/API design, type definitions, error handling strategy
 11. **Author per-issue design** - **Save to `docs/design/#{issue_number}/design.md`** using the "Per-issue design.md template" below:
     - Include a self-contained `## Context` section near the top, summarizing the slice of `shared/architecture.md` and `shared/data-model.md` that this issue acts on. Intentional duplication for standalone readability.
@@ -128,7 +131,7 @@ Phases 4-7 produced artifacts but committed nothing. The orchestrator now review
 
 17a. **Review the artifacts against the issue's Requirements** — read `gh issue view <n>` and the artifacts the designer wrote, and judge whether each requirement is carried. Look hardest at what the designer reported as decisions the issue did not settle. Classify each finding as blocking or worth noting.
 
-17b. **Send blocking findings back** — re-dispatch the designer with the findings, capped at **2 rounds**. When a blocking finding survives round 2, escalate to the user with the finding and what was attempted. Reaching the cap is always reported, never passed over silently.
+17b. **Send blocking findings back** — re-dispatch the designer with the findings, and **re-review whatever comes back**. At most **2 returns**: the first review is round 0, and a blocking finding still present after the second re-review is escalated to the user with the finding and what was attempted. Reaching the cap is always reported, never passed over silently.
 
 17c. **Write `docs/design/#{issue_number}/orchestrator-review.md`** — findings, rounds used, and what was revised. This is an audit trail, not an evidence key: the commit below is what records that the review happened.
 
