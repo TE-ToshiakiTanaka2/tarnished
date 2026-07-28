@@ -230,8 +230,9 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `.codex/config.toml` (workspace + template) | `model` bumped `gpt-5.4` → `gpt-5.5`. Repairs the invalid `"gpt-5.5/"` value accidentally committed to the workspace copy in #288 and restores workspace/template parity. | #292 |
 | `.codex/config.toml` (workspace + template) | `model` pinned to `gpt-5.6-sol` and `model_reasoning_effort` raised to `ultra`. `/review` now reads both back and records them in the review artifact header, so a config change is attributable rather than silent. | #308 |
 | `.claude/skills/flow/`, `.tarnished/workflows/flow.md`, `.agents/skills/flow/` | New lifecycle orchestration entrypoint across all three altitudes. `workflows/flow.md` is manifest-tracked, not refresh-managed, so projects scaffolded earlier receive the SKILL without the contract — the SKILL tolerates its absence. | #308 |
-| `.claude/skills/_shared/delegation/SKILL.md`, `.claude/agents/advisor.md` | Role vocabulary and work-routing table; read-only advisory subagent. Both refresh-managed, so they arrive downstream on the next container start. #312 adds the `challenge` / `conformance` consult classes, unconditional triggers, per-finding fix proposals, and the escalation rule. | #308 / #312 |
-| `docs/design/#{issue}/conformance.md` | Durable record of the design-stage conformance verdict, written by `/design` Phase 7.5 and committed with the design artifacts. Carries a machine-greppable `**Verdict**:` line (`conform` / `non-blocking gap` / `blocking mismatch` / `skipped — <reason>`) plus `**Rounds**:`, `**Checked**:`, `**Against**:`, and `## Findings`. Written on every path including the capability skip; read by `/flow`'s Stage 2 evidence derivation. Overwritten by a second `/design` run. | #312 |
+| `.claude/skills/_shared/delegation/SKILL.md` | Role vocabulary, stage/role matrix, model binding, and the subagent escalation protocol. Refresh-managed, so it arrives downstream on the next container start. #312 replaces the role vocabulary and the routing principle. | #308 / #312 |
+| `.claude/agents/designer.md`, `.claude/agents/executor.md` | Writing subagents for the `design` and `implement` stages, each carrying a pinned model and the blocked-result protocol. Refresh-managed. `advisor.md` is removed in the same change. | #312 |
+| `docs/design/#{issue}/orchestrator-review.md` | Audit trail of the orchestrator's review of the designer's artifacts — findings, rounds used, and what was revised. Committed with the design artifacts. Deliberately **not** an evidence key: because the commit follows the review, the design commit itself records that the review happened. | #312 |
 | `.gitignore` (workspace) | Codex whitelist block (`# Codex CLI (track shared config only)` + `.codex/*` + `!.codex/config.toml`) and Codex agent skills block (`.agents/*` + `!.agents/skills/` + `!.agents/skills/**`) appended to the workspace's own `.gitignore` so local agent/auth files are never committed | #261 / Codex workflow parity |
 | `.claude/settings.json` (workspace) | `permissions.allow` gains `Bash(codex:*)` so `/review` can invoke the Codex CLI without per-call approval | #261 |
 | `modules.json` (downstream monorepo target) | New schema introduced for monorepo support; `version: 1` with a `modules: []` array. Forward-compatible via unknown-key tolerance and a `version` escape hatch. | #263 |
@@ -322,24 +323,24 @@ Flat JSON object. Written by `templates/agent-workflows/plugin.sh` and rendered 
 | `workflow_source` | string | Yes | Path to the agent-neutral workflow contracts, `.tarnished/workflows`. |
 | `roles` | object | No | Role→binding map (#308). Absent on projects scaffolded before #308. |
 
-`roles` recognizes four role keys — `orchestrator`, `executor`, `advisor`, `external-reviewer`:
+`roles` recognizes four role keys — `orchestrator`, `designer`, `executor`, `external-reviewer` (#312 replaced `advisor` with `designer`):
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `roles.<role>.agent` | string | `"primary"` / `"review"` (indirections to the sibling fields), or a concrete agent identifier |
-| `roles.<role>.model` | string \| null | `null` = fall through to the agent definition's `model:` frontmatter, and failing that to `inherit` (the session model). See the precedence chain below. Read only for roles this repository dispatches itself — `advisor` and `executor` |
+| `roles.<role>.model` | string \| null | `null` = fall through to the agent definition's `model:` frontmatter, and failing that to `inherit` (the session model). Read only for the delegated subagent roles — `designer` and `executor` |
 
 `roles` values are deliberately **placeholder-free**. `primary_agent` / `review_agent` render to display strings — including `"Claude Code + Codex CLI"` and `"Manual review"` for the `dual` and non-Codex profiles (`setup.sh::derive_agent_names`) — which are not dispatchable identifiers.
 
 **Resolution contract** (identical across every consumer): `roles` absent, or any field still containing an unrendered `{{...}}` token, falls back to binding all roles to the primary agent and `external-reviewer` to `review_agent`. Unknown role keys are ignored rather than treated as errors. Consumers report whether the binding came from the profile or from the fallback.
 
-**Model binding by role** (#312): each role's model comes from exactly one place, chosen by how that role is dispatched. Before #312 every cell resolved to "the session model", because no level of any chain named a model for any role — which made the `advisor`'s second opinion independent in context but not in weights.
+**Model binding by role** (#312): each role's model comes from exactly one place, chosen by how that role is dispatched. Before #312 every cell resolved to "the session model", because no level of any chain named a model for any role.
 
 | Role | Execution | Channel | Shipped value |
 | --- | --- | --- | --- |
 | `orchestrator` | Inline — it *is* the session | `.claude/settings.json :: model` | `claude-opus-5[1m]` |
 | `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
-| `advisor` | Delegated subagent | `.claude/agents/advisor.md` frontmatter | `claude-fable-5` |
+| `designer` | Delegated subagent | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
 | `external-reviewer` | Separate vendor CLI | `.codex/config.toml` | reviewer-owned (`gpt-5.6-sol` / `ultra`) |
 
 For the two delegated roles the precedence is `roles.<role>.model` when non-null → the agent definition's `model:` frontmatter → `inherit`. Claude Code's subagent frontmatter accepts `sonnet`, `opus`, `haiku`, `fable`, a full model ID, or `inherit`, and defaults to `inherit`. Level 1 is not refresh-managed, so a downstream override survives every container start; level 2 lives in refresh-managed `.claude/agents/`, so a shipped default reaches every project on the next start.

@@ -1,217 +1,178 @@
-# Design: #312 extend the advisor role to standing content review with fix proposals
+# Design: #312 restructure lifecycle roles around a long-context orchestrator with delegated designer and executor
 
 ## Context
 
-The AI lifecycle in this repository is expressed at three altitudes that are projections of one another (`architecture.md` :: "Lifecycle asset altitudes"): the agent-neutral contract in `.tarnished/workflows/*.md`, the operational spec in `.claude/skills/*/SKILL.md` where behavior is authored, and the thin Codex projection in `.agents/skills/*/SKILL.md`. `scripts/verify-mirrors.sh` (CI: `asset-parity.yml`) enforces byte-identity between each workspace tree and its `templates/` mirror.
+The AI lifecycle in this repository is expressed at three altitudes that are projections of one another (`architecture.md` :: "Lifecycle asset altitudes"): the agent-neutral contract in `.tarnished/workflows/*.md`, the operational spec in `.claude/skills/*/SKILL.md` and `.claude/agents/*.md` where behavior is authored, and the thin Codex projection in `.agents/skills/*/SKILL.md`. `scripts/verify-mirrors.sh` (CI: `asset-parity.yml`) enforces byte-identity between each workspace tree and its `templates/` mirror.
 
-Work inside a stage is routed by **nature**, not by stage (`architecture.md` :: "Role-based delegation policy", #308). Four roles exist: `orchestrator` (judgment, inline), `executor` (mechanical, delegated), `external-reviewer` (independent cross-vendor review), and `advisor` (read-only second opinion). The routing table and the advisor's invocation points live once, in `.claude/skills/_shared/delegation/SKILL.md`. Role→agent/model binding lives in `.tarnished/agent-profile.json :: roles`, which is manifest-tracked rather than refresh-managed so a downstream retarget survives container restarts.
+Since #308 the lifecycle has named four **roles** rather than models — `orchestrator`, `executor`, `external-reviewer`, `advisor` — and routed work **by nature** rather than by stage, so a single stage could be part-inline and part-delegated. Role→agent binding lives in `.tarnished/agent-profile.json :: roles`; `roles.<role>.model` is `null` for every role.
 
-`/flow` runs the five stages in one pass and derives its entry stage from **repository evidence** rather than a state file — the issue's own state, an anchored `#<n>/` branch match, the design commit, later commits, the review artifact, and the pull-request list. Evidence is authoritative, survives a failed run, and needs no cleanup. Two of its evidence rules are deliberately stricter than "the file exists", because `/design` and `/review` both write artifacts *before* reaching their own completion step.
-
-`/flow` currently carries two human approval gates: Gate A after an issue the run created, Gate B before implementation.
+`/flow` runs the five stages in one pass, derives its entry stage from repository evidence rather than a state file, and carries two human approval gates: after an issue the run created, and before implementation.
 
 ## Architecture Overview (delta)
 
-This issue changes what the `advisor` role is for, not what roles exist.
+The role model is restructured, not extended. Four roles remain, but who they are and what they do changes:
 
-Today every advisor consult fires **before** its stage writes anything, and asks *"is this the right choice?"*. No consult asks *"does the artifact carry the requirement it was supposed to carry?"* — that question is answered by the two `/flow` gates, i.e. by a human. The delta introduces a second consult class, `conformance`, staffs the question with the advisor, and removes the gates.
+| Role | Execution | Owns | Model |
+| --- | --- | --- | --- |
+| `orchestrator` | **Inline — it *is* the main session** | Requirements dialogue, issue authoring, review of every delegated artifact, review triage, merge decision, escalation | `claude-fable-5` |
+| `designer` | Delegated subagent | Design artifacts, once the specification is settled | `claude-opus-5[1m]` |
+| `executor` | Delegated subagent | Implementation, review-fix application, PR authoring and CI monitoring | `claude-sonnet-5` |
+| `external-reviewer` | Separate vendor CLI | Independent review of the branch diff | reviewer-owned |
 
-Three structural changes follow, in dependency order:
+`advisor` is removed. Its function — an independent check on an artifact before it is committed to — becomes the orchestrator's, which is a strictly better place for it (see below).
 
-1. **Contract layer** — `_shared/delegation/SKILL.md` gains the `challenge` / `conformance` class distinction, a rewritten invocation table with a class column, the escalation rule, the stage/role matrix, and a stated per-run ceiling. Every stage reads this file, so it is edited first and the stage specs derive from it.
-2. **Stage layer** — `/issue` and `/design` each gain one conformance consult and, in `/design`'s case, a durable record. `/review` gains a second ground truth. `/flow` loses its gates and gains the escalation path plus two evidence-table rows.
-3. **Projection layer** — the same semantics restated in `.tarnished/workflows/*.md` and `.agents/skills/*/SKILL.md`, then mirrored into `templates/`.
-
-The advisor stays read-only. It labels findings; the orchestrator decides, applies, and owns the outcome. Escalation to the user is an orchestrator action taken after its own correction failed twice — not the advisor withholding permission.
-
-### Why the gates can be replaced but not simply deleted
-
-Each gate was load-bearing for something, and each thing needs a new owner:
-
-| Gate | What it actually guarded | New owner |
+| Stage | Writes | Reviews |
 | --- | --- | --- |
-| A | The estimation, approach, and task breakdown that `/issue` produces *after* its requirements summary is approved, and never re-presents | FR-13 conformance consult, subject narrowed to exactly that delta |
-| B | That a design commit means "approved", not merely "written" — `/design` commits in Phase 8 *before* its sign-off step | FR-17 durable conformance record, which is what the evidence table keys on |
-| A + B jointly | The last human sight of the work before implementation | FR-18: `/review` gains the issue's Requirements as a second ground truth, so a dropped requirement is catchable downstream |
+| `issue` | orchestrator | the user, through the requirements dialogue |
+| `design` | designer | orchestrator |
+| `implement` | executor | orchestrator |
+| `review` | external-reviewer | orchestrator triages; executor applies fixes |
+| `pr` | executor | orchestrator checks PR content and owns the merge decision |
 
-FR-18 is what makes the trade defensible rather than merely cheaper. Without it, a requirement dropped at the `/issue` stage propagates unchallenged: the code matches the design, the design matches the reduced issue, `/review`'s criterion 8 compares implementation against design only, and every check returns green. One unproven check replaces two human looks. With it, the requirement is checked at two different altitudes by two different agents.
+### Why this shape
+
+Three problems dissolve together.
+
+**The model tier was inverted.** No level of the binding chain names a model for any role today — `roles.<role>.model` is `null`, no agent definition carries `model:`, and subagent frontmatter defaults to `inherit` — so every role runs on the session's model. An earlier revision of this issue proposed pinning the strongest model to the `advisor`, which would have put the most capable model in the one seat that cannot write, while the seat that makes and applies every decision stayed a tier below. Since the orchestrator applies every fix, correction quality is bounded by the orchestrator no matter how good the advice is. Putting the strongest model in the session and delegating authoring downward inverts that correctly.
+
+**The conformance check was circular.** A read-only subagent's only input channel is the prompt the orchestrator writes, so asking it to verify an artifact against "the requirement" means the orchestrator supplies the very source of truth it is being checked against. Both derive from the same reading and the check returns `conform`. The previous revision designed real mitigations — verbatim quoting, a narrowed subject, treating a paraphrased source of truth as itself a finding — but they mitigate a structural flaw rather than remove it. Here the reviewing party **is** the session that conducted the requirements dialogue, so it holds the ground truth natively.
+
+**Gates existed because the reviewer could not reach the user.** The recorded reason for keeping human gates was that subagents cannot interact with the user, so a sign-off could not be delegated. That constraint is real. This restructure inverts what gets delegated: the *writing* goes to subagents and the *review* stays in the session, so the reviewer can escalate whenever it needs to. The gates then have nothing left to add.
+
+There is also a capability motive. With authoring delegated, the main session's context stays clean, which is what makes long-running multi-stage work viable on a 1M-context model.
+
+### The write → review → commit order
+
+`/design` currently commits its artifacts in Phase 8 and only then reaches its sign-off step. That ordering is why a design commit proved artifacts were *written* rather than *approved*, why Gate B had to re-run on resumed runs, and why the previous revision needed a durable conformance record purely so evidence derivation could tell the two states apart.
+
+Moving the commit after the review removes all of it: **the design commit is itself the record that the review happened.** No new evidence artifact, no new evidence-table row, no verification-only re-entry path, no skip-vs-success record semantics. An interrupted run leaves uncommitted files, which the existing table already reads correctly as "no design commit → enter at design".
+
+`docs/design/#{issue}/orchestrator-review.md` still records the findings, but as an audit trail rather than an evidence key — a distinction worth keeping explicit, because the previous design's complexity came entirely from the artifact being load-bearing.
 
 ## Module Structure (delta)
 
 ```
-.claude/skills/_shared/delegation/SKILL.md   # consult classes, invocation table, escalation, ceiling, role matrix,
-                                             #   model precedence chain per role
-.claude/agents/advisor.md                    # fix proposals; conformance mode; model: claude-fable-5
-.claude/agents/executor.md                   # NEW — mechanical-work definition; model: claude-sonnet-5
-.claude/settings.json                        # model: claude-opus-5[1m] (the orchestrator's only channel)
-.tarnished/agent-profile.json                # roles.external-reviewer loses model / reasoning_effort
-.claude/skills/issue/SKILL.md                # Phase 1 unconditional challenge; Phase 2 estimation challenge;
-                                             #   Phase 3.5 conformance consult on the post-approval delta
-.claude/skills/design/SKILL.md               # unconditional challenge; workflow-plan challenge;
-                                             #   Phase 7.5 conformance consult; conformance.md; --unattended
-.claude/skills/review/SKILL.md               # parallel advisor diff review + arbitration; issue Requirements
-                                             #   as second ground truth; requirement-adherence criterion;
-                                             #   Phase 2 resolves model/effort from .codex/config.toml alone
-.claude/skills/flow/SKILL.md                 # gates removed; escalation; two evidence rows; --unattended
-.tarnished/workflows/{README,issue,design,review,flow}.md    # contract projection
-.agents/skills/{issue,design,review,flow}/SKILL.md           # Codex projection
-templates/claude/…, templates/agent-workflows/…, templates/codex/…   # byte-identical mirrors
-docs/design/shared/{architecture,api-spec}.md                # snapshot regeneration
+.claude/skills/_shared/delegation/SKILL.md   # role vocabulary, stage/role matrix, model binding,
+                                             #   escalation protocol, triage trigger fix
+.claude/agents/designer.md                   # NEW — design authoring; model: claude-opus-5[1m]
+.claude/agents/executor.md                   # NEW — implementation authoring; model: claude-sonnet-5
+.claude/agents/advisor.md                    # DELETED
+.claude/agents/code-reviewer.md              # unchanged — still the /review fallback reviewer
+.claude/settings.json                        # model: claude-fable-5 (the orchestrator's only channel)
+.claude/skills/issue/SKILL.md                # authored inline; advisor consult removed
+.claude/skills/design/SKILL.md               # delegate authoring; review; commit after review
+.claude/skills/implement/SKILL.md            # delegate authoring; record the reversal as intentional
+.claude/skills/review/SKILL.md               # triage by orchestrator, fixes by executor;
+                                             #   issue Requirements as a second ground truth
+.claude/skills/pr/SKILL.md                   # executor authors and monitors; orchestrator merges
+.claude/skills/flow/SKILL.md                 # gates removed; stop-point list; delegation targets
+.tarnished/workflows/{README,issue,design,implement,review,pr,flow}.md   # contract projection
+.agents/skills/{issue,design,implement,review,pr,flow}/SKILL.md          # Codex projection
+templates/claude/…, templates/agent-workflows/…, templates/codex/…       # byte-identical mirrors
 ```
-
-New artifact: `docs/design/#{issue}/conformance.md`, written by `/design`.
 
 ## Interface Design (delta)
 
-### `--unattended`, an internal stage argument
+### Role → model binding
 
-`/flow` must be able to suppress `/design`'s sign-off gate without the gate's presence depending on who invoked the skill. There is no channel for that today: `/flow`'s Stage 3 table passes `issue number, --base`, and the Codex projection reads the skill with no notion of a caller. Left inferred, "the caller selects the behaviour" reduces to "the model remembers who invoked it" — the judgment-dependent trigger NFR-3 forbids, and the same defect class FR-2 and FR-3 exist to remove.
+Each role's model comes from exactly one place, chosen by how that role is dispatched.
 
-`--gates` / `--no-gates` was rejected as *user-facing* surface on `/flow`. An internal stage argument is a different object, and `--base` and `--merge` already establish the pattern of `/flow` parameterizing a stage skill.
-
-| Skill | Arguments after this change |
-| --- | --- |
-| `/design` | `<issue_number> [--base <branch>] [--unattended]` |
-| `/flow` → `/design` | issue number, `--base`, `--unattended` |
-
-`/design` step 22 presents the design for approval **unless** `--unattended` was passed; with it, the conformance record stands in the gate's place and the report says so.
-
-### Role model binding
-
-Before this issue, **no level of the binding chain named a model for any role**. `roles.<role>.model` is `null` everywhere, no agent definition carries a `model:` field, and Claude Code's subagent frontmatter defaults to `inherit`. Every role therefore ran on the session's model. For the advisor that is the sharpest problem: its independence was contextual only — a fresh context that has not seen the reasoning, but identical weights and therefore identical blind spots. That is thin for a second opinion and untenable once it takes over checks a human used to perform.
-
-Three roles are bound by different mechanisms, because they are dispatched differently. `_shared/delegation/SKILL.md` states this normatively, since today it says only "use that agent's configured default" and never says what the default is.
-
-| Role | Execution | Model channel | Value |
+| Role | Channel | Value | Parity / refresh behaviour |
 | --- | --- | --- | --- |
-| `orchestrator` | Inline — it *is* the session | `.claude/settings.json :: model` | `claude-opus-5[1m]` |
-| `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
-| `advisor` | Delegated subagent | `.claude/agents/advisor.md` frontmatter | `claude-fable-5` |
-| `external-reviewer` | Separate vendor CLI | `.codex/config.toml` | owned by the reviewer's own config |
+| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5` | Neither parity-checked nor manifest-tracked; user-owned downstream. Read once at session start |
+| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` | Parity-checked **and** refresh-managed — ships to every project on the next container start |
+| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` | Same |
+| `external-reviewer` | `.codex/config.toml` | `gpt-5.6-sol` / `ultra` | Parity-checked |
 
-For the two subagent roles the precedence chain is:
+`roles.<role>.model` stays `null`. The profile keeps answering "which agent"; the model comes from the channel above. This is not merely a preference: `verify-mirrors.sh` enforces byte-identity between `.tarnished/agent-profile.json` and its template, so **this repository cannot populate `roles.<role>.model` at all** without failing CI — and its copy still carries unrendered `{{...}}` placeholders in `ai_profile` / `primary_agent` / `review_agent`, which the resolution contract treats as absent, so tarnished always runs the fallback path. Downstream copies are rendered and manifest-tracked rather than parity-checked, so a per-role override remains available there and takes precedence over the frontmatter.
 
-| Precedence | Source | Refresh behaviour |
-| --- | --- | --- |
-| 1 | `roles.<role>.model` in `.tarnished/agent-profile.json` | Not refresh-managed — a downstream override survives every container start |
-| 2 | `model:` in the agent definition frontmatter | `.claude/agents/` **is** refresh-managed — the shipped default reaches every project on the next start |
-| 3 | `inherit` — the session model | What applies when neither above names a model; the state of every role before this issue |
+**Pinned IDs rather than aliases.** An alias silently re-points at a new generation; this repository already pins exactly and bumps in a tracked commit, and #292 exists *because* a model value changed invisibly. The cost is that a retired ID breaks its consumer until bumped; the mitigation is that each pin lives in exactly one file.
 
-Verified against the Claude Code subagent documentation: frontmatter `model` accepts `sonnet`, `opus`, `haiku`, `fable`, a full model ID, or `inherit`, and defaults to `inherit`.
+**Only the designer's pin carries `[1m]`, and its acceptance is unverified.** Subagent frontmatter is documented to accept `sonnet` / `opus` / `haiku` / `fable`, a full model ID, or `inherit`; the `[1m]` suffix is documented for `/model` and for `ANTHROPIC_DEFAULT_*` environment variables, which is a different code path. The fallback is `claude-opus-5` plain. On the Anthropic API, Fable 5, Sonnet 5, and Opus 4.7 and later all default to the 1M window, so the suffix is inert there; it matters behind an LLM gateway and on Pro, where Opus with 1M requires usage credits. A designer subagent's context is bounded by construction, so the suffix is insurance rather than a capacity requirement — which is what makes the fallback acceptable rather than a compromise.
 
-**Pinned IDs rather than aliases**, because an alias silently re-points at a new generation. This repository already pins exactly and bumps in a tracked commit — `.codex/config.toml` pins `gpt-5.6-sol`, #292 exists *because* a model value changed invisibly, and `/review` records the resolved model in the review artifact for the same reason. The cost is that a retired ID breaks its consumer until bumped; the mitigation is that each pin lives in exactly one file with an established bump path.
+### Subagent escalation protocol
 
-**Only `claude-opus-5` carries the `[1m]` suffix**, and the asymmetry is principled rather than an oversight — it will otherwise read as one. On the Anthropic API, Fable 5, Sonnet 5, and Opus 4.7 and later all run with the 1M window by default, so the suffix is a no-op for all three there. It becomes meaningful only where the window is budgeted at 200K instead: behind an LLM gateway, where Claude Code cannot verify 1M support, and under `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`. What separates Opus from the other two is **plan** rather than provider: Opus with 1M context is included on Max/Team/Enterprise but requires usage credits on Pro, whereas Sonnet 5 and Fable 5 are unconditional on every plan. The suffix is therefore worth carrying on Opus as insurance for gateway and Pro deployments, and is inert on the others — the documentation states outright that Sonnet 5 has "no 200K variant, no `[1m]` suffix to select", and no `fable[1m]` alias is documented at all.
+`designer` and `executor` cannot interact with the user. Both are therefore required to **stop and return a structured blocked-result** — the question, and the options they can see — rather than assume, whenever the answer is not derivable from the issue, the design artifacts, or the codebase.
 
-One deployment interaction to be aware of: `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` exists so an operator can cap context deliberately, and it removes 1M variants from the model picker. A pinned `[1m]` in `settings.json` is working against that setting rather than with it. This is noted rather than guarded — the pin is a default, and an operator who sets that variable owns the override.
-
-**The orchestrator cannot use the chain at all.** It is the session, not a subagent, so nothing dispatches it and no frontmatter applies. `.claude/settings.json :: model` is the only channel, and it is read once at session start. That file is neither parity-checked (`verify-mirrors.sh` covers skills, commands, agents, scripts, and `rules/shell.md`) nor manifest-tracked (`MANIFEST_EXCLUDE_GLOBS` treats it as user-owned), so the workspace copy may diverge from the template freely, and the template value is a scaffold-time default that `--upgrade` never revisits. Both copies carry the pin regardless; a default that only new projects receive is still a default.
-
-**Parity blocks precedence 1 inside this repository.** `verify-mirrors.sh` enforces byte-identity between `.tarnished/agent-profile.json` and its template, so setting `roles.advisor.model` in the workspace fails the gate. The workspace copy also still carries unrendered `{{...}}` placeholders in `ai_profile` / `primary_agent` / `review_agent`, which the resolution contract treats as absent, so tarnished itself always runs the fallback path. Frontmatter is the only channel that works here; precedence 1 stays available downstream, where the copy is rendered and manifest-tracked rather than parity-checked.
-
-### The external reviewer is single-sourced on the reviewer's own config
-
-`/review` Phase 2 currently resolves the reviewer's model and effort by preferring `roles.external-reviewer.model` / `.reasoning_effort` and falling back to `.codex/config.toml`. Two declaration sites for one value can only drift, and the reviewer is the one role executed by a different vendor's tool that already owns a config file. The two keys are removed from `roles.external-reviewer`, leaving `{ "agent": "review" }`, and Phase 2 reads `.codex/config.toml` alone.
-
-The artifact header keeps recording the resolved values — the reason it exists (a config change must be attributable rather than silently changing review quality) is unaffected by where the values came from.
-
-Accepted consequence: a downstream project can no longer run `/review` on a different model from its interactive `codex` sessions. That capability was never exercised, and one source of truth is worth more than an unused override. Note that inside tarnished the duplication was never even reachable — both `agent-profile.json` and `.codex/config.toml` are parity-checked, so neither could be edited to disagree with the other; the drift risk was entirely downstream, which is exactly where the fix lands.
-
-### `executor` gains a definition
-
-The `executor` role has carried a binding entry since #308 but **no agent definition**, unlike `advisor` and `code-reviewer`. There has been nowhere to put its model and nowhere to state what it is for, which is part of why "delegate the mechanical parts" has been easy to state and hard to check. `.claude/agents/executor.md` is added with the `claude-sonnet-5` pin and a system prompt scoped to the delegation table's own definition of mechanical work: an objective success condition, no judgment calls, escalate rather than decide when the task turns out to need one.
-
-### Consult classes
-
-| Class | Runs | Asks | Advisor's posture |
-| --- | --- | --- | --- |
-| `challenge` | Before the artifact is written | Is the intended choice right? | Argue for an alternative |
-| `conformance` | After the artifact is written | Does it carry the requirement it was supposed to carry? | Compare artifact against source of truth; report mismatches |
-
-The two are not interchangeable. A stage that runs only `challenge` is unverified — that is the gap the gates were covering.
-
-### Conformance consult inputs and verdicts
-
-| Field | Contract |
+| Trigger | Example |
 | --- | --- |
-| Source of truth | Supplied **verbatim**. Quoting is mechanical; summarizing is not |
-| Subject | The artifact under check, named by path or quoted in full |
-| Verdict | `conform` \| `non-blocking gap` \| `blocking mismatch` \| `skipped — <reason>` |
+| Requirement-level ambiguity | Two readings of an acceptance criterion that produce different interfaces |
+| Design/convention conflict | The design implies a pattern the codebase consistently does otherwise |
+| Missing prerequisite | A design artifact the stage depends on does not exist |
 
-`advisor.md`'s conformance mode states that a source of truth supplied as a paraphrase is **itself a reportable finding**. This is the guard against the check's central weakness: a read-only subagent's only input channel is the prompt the orchestrator writes, so an orchestrator that paraphrases hands the advisor its own reading of the requirement and asks whether the artifact matches it. Both derive from the same misunderstanding and the check returns `conform`. Gate A did not have this property, because its ground truth sat in the user's head.
+The orchestrator resolves the question when it can, and escalates to the user when the answer is the user's to give. This protocol is what makes delegating the two highest-judgment stages defensible: it is the mechanism that keeps "delegated authoring" from becoming "unsupervised guessing".
 
-Two properties bound the residual circularity for FR-13:
+### `/design` — delegate, review, then commit
 
-- The **approved requirements summary is user-approved text** — `/issue` iterates on it with the user until approved. Passed verbatim, it is an anchor the orchestrator cannot silently rewrite.
-- The **subject is the post-approval delta**, not the whole issue. The Requirements section was already approved by the user directly; including it dilutes the check and drags approved text into the circular part.
-
-### `docs/design/#{issue}/conformance.md`
-
-```markdown
-# Conformance: #{issue_number}
-
-**Verdict**: conform | non-blocking gap | blocking mismatch (escalated, unresolved) | skipped — <reason>
-**Rounds**: 1 | 2
-**Checked**: <artifact paths>
-**Against**: <source of truth>
-
-## Findings
-<per finding: severity label, what mismatches, what was corrected or why it stands>
-```
-
-The `**Verdict**:` line is machine-greppable by construction. Existence alone is not a verdict — `/flow` already keys review completeness on a *section* ("Fixes Applied") rather than file existence, precisely so an interrupted run cannot resume past the check, and a record reading "blocking mismatch, escalated, unresolved" satisfies existence.
-
-A separate file rather than a section in `design.md`: `design.md` is the *subject* of the check, so a verdict inside it is self-certification, and a second `/design` run re-authors `design.md` and would silently drop the verdict. A separate file rather than a commit trailer: `/pr` squash-merges with `--delete-branch`, so a trailer does not survive into `develop`, while the per-issue directory is the documented durable audit surface. A second `/design` run **overwrites** the record, matching the snapshot discipline the rest of `/design` already follows.
-
-### `/flow` Stage 2 evidence table (delta)
-
-Two rows change, one is added **above** the existing design row:
-
-| Evidence | Entry stage |
+| Phase | Owner |
 | --- | --- |
-| Design commit present, **no conformance record** | Run the conformance consult against the already-committed artifacts, commit the record, continue at `implement` — **never** re-run `/design` |
-| Design commit present, conformance record present, no later commit outside `docs/design/` | `implement` (unchanged) |
+| Read the issue, resolve the branch, load `docs/design/shared/*` | orchestrator |
+| Author `#{issue}/design.md`, `api-spec.md`, `workflow.md`, diagrams; regenerate the shared snapshot | **designer** |
+| Review the artifacts against the issue's Requirements | orchestrator |
+| Blocking finding → designer revises → re-review, capped at 2 rounds | both |
+| Write `#{issue}/orchestrator-review.md`; stage and commit everything | orchestrator |
 
-The verification-only re-entry is the load-bearing choice. Treating a missing record as "design incomplete" would send every branch designed before this change — including every downstream in-flight branch, and every branch produced under NFR-2's skip fallback — back through `/design`, whose Phase 7 **overwrites** `docs/design/shared/*` and re-authors `design.md`. That is a destructive redesign on every resume, permanently. Verification-only re-entry preserves Gate B's own resume semantics, which presented the already-committed design rather than re-deriving it, and composes with the table unchanged: the record commit touches only `docs/design/`, so the next resume still resolves to `implement`.
+A blocking finding surviving round 2 escalates to the user. Reaching the cap is always reported, never passed over silently.
 
-`--from <stage>` **bypasses** the conformance precondition and reports it as a warning rather than failing closed, matching the existing carve-out for `--from implement` with no design artifacts at all.
+### `/implement` — delegated authoring with a judgment carve-out
 
-### `/review` prompt (delta)
+Authoring moves to the executor; the orchestrator reviews. The carve-out is FR-7: the executor returns rather than deciding whenever the design does not settle a judgment.
 
-The template gains the issue's Requirements section alongside the Design Reference, and a ninth criterion: *"Requirement adherence — does the branch carry every requirement in the issue?"*. Because the criteria are single-sourced into a piped `codex exec` prompt and into CI workflow YAML, the addition must be inline in the template, not a path reference.
+This **deliberately overwrites** the position currently recorded in `implement/SKILL.md`, which states that this stage is "the one most often mis-delegated" and that interpreting the design and matching existing conventions "stays with the orchestrator". That position assumed the orchestrator was the only capable writer, and that delegation meant handing off with no return path. With a model-pinned executor and a mandatory return-on-judgment protocol, the trade differs. The reversal is recorded as intentional, with its reason, rather than left to contradict the old text silently — a reader who finds the new instruction without the rationale will reasonably assume it is an error.
+
+### `/pr` — split at the irreversible operation
+
+| Work | Owner |
+| --- | --- |
+| PR body authoring, mechanical quality pass, `gh pr create`, CI monitoring, log collection | executor |
+| Checking the PR content before creation | orchestrator |
+| Merge decision, including under `--merge` | orchestrator |
+
+A pull request is outward-facing and a merge is irreversible, so neither is delegated to the stage's writing agent.
 
 ## Data Flow
 
-The conformance check is a bounded loop, identical in shape at both invocation points:
-
 ```
-artifact written ─▶ consult (round 1)
-                      ├─ conform / non-blocking gap ─▶ record, continue
-                      └─ blocking mismatch ─▶ orchestrator corrects ─▶ consult (round 2)
-                                                  ├─ resolved ─▶ record, continue
-                                                  └─ still blocking ─▶ record + escalate to user
+user ──dialogue──▶ orchestrator ──writes──▶ issue
+                        │
+                        ├──delegates──▶ designer ──▶ design artifacts
+                        │                                │
+                        │◀──────── review ───────────────┘
+                        │   (≤2 rounds, then commit)
+                        │
+                        ├──delegates──▶ executor ──▶ implementation
+                        │                                │
+                        │◀──────── review ───────────────┘
+                        │
+                        ├──invokes───▶ external-reviewer ──▶ findings
+                        │                                        │
+                        │◀──── triage ───────────────────────────┘
+                        │        └──delegates fixes──▶ executor
+                        │
+                        └──delegates──▶ executor ──▶ PR + CI
+                                 orchestrator checks content, decides merge
+
+escalation: designer/executor ──blocked-result──▶ orchestrator ──▶ user (only if the answer is the user's)
 ```
 
-The cap is 2 rounds, consistent with FR-7. Reaching the cap with a blocking mismatch outstanding is always reported and always recorded; it is never passed over silently.
-
-After this change a `/flow` run stops for the user in exactly four places: requirement gathering in `/issue` Phase 1, an FR-15 escalation, argument resolution (an unresolvable issue number or a contradictory flag pair), and a `/pr` failure. `flow/SKILL.md` states that list explicitly, so the property is checkable rather than emergent.
+A `/flow` run stops for the user in exactly four places, and `flow/SKILL.md` states the list so the property is checkable rather than emergent: requirement gathering, an escalation the orchestrator cannot resolve, argument resolution, and a `/pr` failure.
 
 ## Error Handling
 
 | Condition | Behavior |
 | --- | --- |
-| Advisor definition absent, or the primary agent has no read-only subagent mechanism | Skip the consult, continue the stage, and **write the record with verdict `skipped — <reason>`**. A record written only on success deadlocks against NFR-2 |
-| Blocking mismatch survives round 2 | Record `blocking mismatch (escalated, unresolved)`, escalate to the user with the finding and what was attempted |
-| Conformance record missing on a resumed run | Verification-only re-entry (above). Never a redesign |
-| `--from` names a stage whose conformance precondition is unmet | Warn and proceed. `--from` is an explicit user instruction |
-| Refreshed skill disagrees with a stale `.tarnished/workflows/*.md` | The skill is authoritative. `.claude/skills/` is refresh-managed; `.tarnished/workflows/` and `.agents/` are not |
+| Subagent hits an ambiguity | Return a structured blocked-result; never assume. Orchestrator resolves or escalates |
+| Blocking review finding survives round 2 | Report, record, escalate to the user |
+| Primary agent has no subagent mechanism | Run every stage inline under the primary agent and record that delegation was unavailable. The lifecycle stays functional rather than degrading quietly |
+| `[1m]` suffix rejected in frontmatter | Fall back to `claude-opus-5`; the suffix is insurance, not a capacity requirement |
+| Pinned model ID retired | The consumer breaks until the pin is bumped. Each pin lives in one file; bumping follows the `.codex/config.toml` precedent |
+| Refreshed skill disagrees with a stale `.tarnished/workflows/*.md` | The skill is authoritative |
 
 ## Implementation Notes
 
-- **Edit order is contract → stage → projection → mirror.** Both new consults are instances of the class distinction, and both new stage phases derive from the policy rather than restating it.
-- **The `/design` consult belongs between Phase 7 and Phase 8**, not after the commit. After would produce a correction commit on top of a design commit the evidence table has already accepted as complete — the exact ambiguity FR-17 exists to close.
-- **Sweep every gate-bearing location, not only `flow/SKILL.md` Stage 4.** The skill's frontmatter `description` is its discovery text; the Stage 3 stage-order line, the Stage 2 skip paragraph, the Reporting list, and the `Gate A declined` error row all carry gate semantics, as do `.tarnished/workflows/flow.md`'s procedure steps 6-7 and Output list, `.agents/skills/flow/SKILL.md`'s two "confirmations", `design/SKILL.md` step 22, and `docs/design/shared/api-spec.md`'s approval-gates paragraph.
-- **`architecture.md`'s claim that the advisor is "bounded to three mechanically-triggered invocation points" stops being true** and is regenerated in Phase 7.
-- **The model mechanism is verified, not assumed** (FR-9). Frontmatter `model` accepts a full model ID and defaults to `inherit`; no fallback mechanism is needed.
-- **Cost is the main non-correctness risk.** The per-run ceiling rises from ≤1 advisor invocation to 11 (7 challenge + 4 conformance), and the advisor now runs on a separately-priced model rather than inheriting the session's. NFR-5 requires the derivation to be written down where the invocation points are documented.
-- **The escalation path must be reachable and testable.** A conformance check that can never escalate is indistinguishable from no check at all.
+- **Edit order is contract → agents → stage skills → projections → mirrors.** Every stage skill reads the delegation policy, so the vocabulary and the stage/role matrix are authored once and the stage specs derive from them.
+- **`advisor.md` is deleted in the same commit** that removes its last reference, so no dangling pointer survives a partial edit. `.claude/agents/` is refresh-managed and directory-managed, so the deletion propagates downstream on the next container start.
+- **`code-reviewer.md` stays.** It is the `/review` fallback when no external reviewer is installed, and is unrelated to the removed advisory role.
+- **The routing principle changes, not just the cast.** Until now work was routed by *nature* within a stage. Now each stage's authoring has a single owner and the orchestrator reviews rather than co-authors; within a delegated stage the subagent routes its own internal work. Both statements have to land in the delegation policy, or the old sentence will keep justifying inline authoring.
+- **Self-hosting caveat**: this repository dogfoods its own lifecycle assets, so this issue's own `/implement`, `/review`, and `/pr` run under the *pre-change* model. The new structure is first exercised on the next issue. Say so in the PR body rather than treating it as a gap.
+- **Cost is a redistribution, not a straight increase, and is unmeasured.** The session moves to the most capable tier and runs every turn; authoring moves to cheaper agents whose context is bounded by construction. What to measure is stated in NFR-5: per-run token split across the three agents, escalation rate, and review-loop round counts.

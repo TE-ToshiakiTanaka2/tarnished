@@ -1,129 +1,121 @@
-# API Specification: #312 extend the advisor role to standing content review with fix proposals
+# API Specification: #312 restructure lifecycle roles around a long-context orchestrator with delegated designer and executor
 
-## Skill argument surface (delta)
-
-| Skill | Arguments before | Arguments after |
-| --- | --- | --- |
-| `/design` | `<issue_number> [--base <branch>]` | `<issue_number> [--base <branch>] [--unattended]` |
-| `/flow` | `[--issue N] [--base <branch>] [--from <stage>] [--merge]` | unchanged — `--unattended` is not user-facing |
-
-`--unattended` is an internal stage argument passed by `/flow` to `/design`. It is documented in `design/SKILL.md`'s usage block and in `flow/SKILL.md`'s Stage 3 argument table, so it is greppable and projects into `.agents/skills/`. It is deliberately absent from `/flow`'s own surface: the user does not choose it, the caller supplies it.
-
-| Value | `/design` step 22 behavior |
-| --- | --- |
-| absent (standalone invocation) | Present the design for approval and wait — current behavior, unchanged |
-| present (invoked by `/flow`) | Skip the presentation; the Phase 7.5 conformance record stands in its place; the report states that it did |
-
-## Role → model binding (delta)
-
-| Role | Execution | Channel | Value after this change |
-| --- | --- | --- | --- |
-| `orchestrator` | Inline (the session) | `.claude/settings.json :: model` | `claude-opus-5[1m]` |
-| `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
-| `advisor` | Delegated subagent | `.claude/agents/advisor.md` frontmatter | `claude-fable-5` |
-| `external-reviewer` | Separate vendor CLI | `.codex/config.toml` | reviewer-owned |
-
-Before this change every cell read "inherit the session model", because no level of the chain named a model anywhere.
-
-### `roles` schema change
+## Role vocabulary (delta)
 
 ```diff
-  "roles": {
-    "orchestrator":      { "agent": "primary", "model": null },
-    "executor":          { "agent": "primary", "model": null },
-    "advisor":           { "agent": "primary", "model": null },
--   "external-reviewer": { "agent": "review",  "model": null, "reasoning_effort": null }
-+   "external-reviewer": { "agent": "review" }
-  }
+- orchestrator | executor | external-reviewer | advisor
++ orchestrator | designer | executor | external-reviewer
 ```
 
-Backward compatible in both directions: absent keys already fall back, and unknown keys are already ignored, so a downstream profile that still carries the two removed keys is not an error — the keys are simply no longer read.
+| Role | Execution | Writes? | Status |
+| --- | --- | --- | --- |
+| `orchestrator` | Inline (the main session) | Yes | redefined — now reviews rather than co-authors |
+| `designer` | Delegated subagent | Yes | **new** |
+| `executor` | Delegated subagent | Yes | gains an agent definition and a broadened scope |
+| `external-reviewer` | Separate vendor CLI | No | unchanged |
+| `advisor` | — | — | **removed** |
 
-| Property | Constraint |
+## Stage ownership (delta)
+
+| Stage | Writes | Reviews | Change |
+| --- | --- | --- | --- |
+| `issue` | orchestrator | user dialogue | advisor consult removed |
+| `design` | designer | orchestrator | authoring delegated; commit moved after review |
+| `implement` | executor | orchestrator | authoring delegated; reverses the prior "stays with the orchestrator" position |
+| `review` | external-reviewer | orchestrator triages, executor fixes | fixes now delegated; second ground truth added |
+| `pr` | executor | orchestrator | split at the irreversible operation |
+
+Routing principle: previously **by nature of work within a stage**, so a stage could be part-inline and part-delegated. Now each stage's *authoring* has a single owner and the orchestrator reviews; within a delegated stage the subagent routes its own internal work.
+
+## Role → model binding
+
+| Role | Channel | Value | Parity | Refresh-managed |
+| --- | --- | --- | --- | --- |
+| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5` | No | No (user-owned downstream) |
+| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` | Yes | Yes |
+| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` | Yes | Yes |
+| `external-reviewer` | `.codex/config.toml` | `gpt-5.6-sol` / `ultra` | Yes | No |
+
+`roles.<role>.model` stays `null` in `.tarnished/agent-profile.json` for every role. Precedence for the two delegated roles remains `roles.<role>.model` → frontmatter → `inherit`; this repository cannot use the first level because `agent-profile.json` is parity-checked, but downstream projects can.
+
+| Property | Value |
 | --- | --- |
-| `.tarnished/agent-profile.json` | Parity-checked against its template — the workspace copy cannot carry a per-role model without failing CI. Downstream copies are rendered and manifest-tracked, so precedence 1 works there |
-| `.claude/agents/` | Parity-checked **and** refresh-managed — a frontmatter pin ships to every project on the next container start |
-| `.claude/settings.json` | Neither parity-checked nor manifest-tracked. The two copies may diverge; the template value is a scaffold-time default only |
-| `.codex/config.toml` | Parity-checked. Sole source for the reviewer's model and reasoning effort |
+| Frontmatter `model` accepted values | `sonnet`, `opus`, `haiku`, `fable`, a full model ID, or `inherit`. Defaults to `inherit` — **verified** |
+| `.claude/settings.json :: model` | Supported; read once at session start — **verified** |
+| `[1m]` suffix in frontmatter | **Unverified.** Documented for `/model` and `ANTHROPIC_DEFAULT_*`; frontmatter is a separate code path. Fallback: `claude-opus-5` |
 
-## Advisor consult contract (delta)
+## Agent definition contracts
 
-### Classes
+### `.claude/agents/designer.md` (new)
 
-| Class | Position | Question | Output posture |
-| --- | --- | --- | --- |
-| `challenge` | Before the artifact is written | Is the intended choice right? | Strongest objection, strongest alternative, per-finding fix proposal |
-| `conformance` | After the artifact is written | Does the artifact carry the requirement it was supposed to carry? | Per-mismatch finding with a verdict |
+| Field | Value |
+| --- | --- |
+| `model` | `claude-opus-5[1m]` |
+| `tools` | Read, Grep, Glob, Write, Edit, Bash |
+| Scope | Author design artifacts from a settled specification, following `design/SKILL.md`'s phases |
+| Must not | Re-decide scope; commit; interact with the user |
+| On ambiguity | Return a structured blocked-result (see below) |
 
-### Conformance invocation inputs
+### `.claude/agents/executor.md` (new)
 
-| Input | Required | Contract |
+| Field | Value |
+| --- | --- |
+| `model` | `claude-sonnet-5` |
+| `tools` | Read, Grep, Glob, Write, Edit, Bash |
+| Scope | Implement against committed design artifacts; apply review fixes; author the PR body and monitor CI |
+| Must not | Decide a judgment the design does not settle; decide a merge |
+| On ambiguity | Return a structured blocked-result |
+
+### `.claude/agents/advisor.md`
+
+Deleted, together with every reference to the `advisor` role across the three altitudes and the template mirrors. `.claude/agents/` is refresh-managed and directory-managed, so the deletion reaches downstream projects on the next container start.
+
+### `.claude/agents/code-reviewer.md`
+
+Unchanged. It is the `/review` fallback when no external reviewer is installed and is unrelated to the removed advisory role.
+
+## Blocked-result contract
+
+Returned by `designer` or `executor` instead of proceeding on an assumption.
+
+| Field | Required | Description |
 | --- | --- | --- |
-| Source of truth | Yes | Quoted **verbatim**. A paraphrase is itself a reportable finding, stated in `advisor.md`'s conformance mode |
-| Subject | Yes | Artifact paths, or the artifact text when it is not yet on disk |
-| Round | Yes | `1` or `2`; round 2 additionally receives what was corrected after round 1 |
+| Question | Yes | What could not be resolved, stated as a question |
+| Options | Yes | The readings or approaches the subagent can see, with what each implies |
+| Evidence checked | Yes | Issue, design artifacts, and code paths already consulted — this is what distinguishes a real block from an unasked question |
+| Partial work | No | What was completed before the block, so it is not redone |
 
-### Conformance verdicts
+| Trigger | Definition |
+| --- | --- |
+| Requirement-level ambiguity | Two readings of an acceptance criterion producing different interfaces |
+| Design/convention conflict | The design implies a pattern the codebase consistently does otherwise |
+| Missing prerequisite | A required artifact does not exist |
 
-| Verdict | Meaning | Stage proceeds? | Counts as a complete record? |
-| --- | --- | --- | --- |
-| `conform` | No mismatch found | Yes | Yes |
-| `non-blocking gap` | Mismatch found, does not defeat the requirement | Yes, recorded | Yes |
-| `blocking mismatch` | The artifact does not carry a requirement | Round 1: orchestrator corrects, re-consult. Round 2: escalate | Yes, as `(escalated, unresolved)` |
-| `skipped — <reason>` | NFR-2 fallback: no advisor definition, or no read-only subagent mechanism | Yes | Yes |
+The orchestrator resolves it, or escalates to the user when the answer is the user's to give.
 
-Every verdict is written to the record. A record produced only on success deadlocks against NFR-2 and turns every resumed run into a destructive redesign.
+## `/design` phase ownership (delta)
 
-### Per-run invocation ceiling
-
-| Class | Points | Max invocations |
+| Phase | Owner | Change |
 | --- | --- | --- |
-| `challenge` | `/issue` scope, `/issue` estimation, `/design` architecture, `/design` workflow plan, Major-deferral triage | 5 |
-| `challenge` | `/review` diff, 2-round loop | 2 |
-| `conformance` | `/issue` and `/design`, each 2-round | 4 |
-| | **Total** | **11** |
+| Read issue, resolve branch, load `shared/*` | orchestrator | — |
+| Author per-issue artifacts and regenerate the shared snapshot | **designer** | delegated |
+| Review artifacts against the issue Requirements | orchestrator | **new** |
+| Revise → re-review, capped at 2 rounds | designer / orchestrator | **new** |
+| Write `orchestrator-review.md`, stage, commit | orchestrator | **commit moved after the review** |
 
-## `docs/design/#{issue}/conformance.md` schema
+The commit ordering is the load-bearing change. Previously Phase 8 committed and only then reached the sign-off step, so a design commit proved artifacts were written rather than approved — which is why the gate had to re-run on resumed runs. With the commit after the review, the design commit *is* the record that the review happened, and `/flow`'s Stage 2 evidence table needs no new row and no new artifact to key on.
 
-Written by `/design` Phase 7.5, staged and committed with the design artifacts in Phase 8.
+`docs/design/#{issue}/orchestrator-review.md` records the findings as an audit trail, not as an evidence key.
 
-```markdown
-# Conformance: #{issue_number}
+## `/pr` split (delta)
 
-**Verdict**: <one of the four verdict strings>
-**Rounds**: <1 | 2>
-**Checked**: <artifact paths>
-**Against**: <source of truth identifier>
-
-## Findings
-
-<per finding: severity label, the mismatch, and what was corrected or why it stands>
-```
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `**Verdict**:` line | string | Yes | Machine-greppable. The single field `/flow`'s evidence derivation reads |
-| `**Rounds**:` line | integer | Yes | `2` means a correction round ran |
-| `**Checked**:` line | paths | Yes | What was verified |
-| `**Against**:` line | string | Yes | What it was verified against |
-| `## Findings` | section | Yes | Empty is permitted only under `conform` or `skipped` |
-
-A second `/design` run **overwrites** the record, matching the snapshot discipline `/design` already applies to `docs/design/shared/*`.
-
-## `/flow` Stage 2 evidence derivation (delta)
-
-| # | Evidence, on the issue branch ref | Entry stage | Status |
-| --- | --- | --- | --- |
-| … | Branch exists, no design commit | `design` | unchanged |
-| **new** | Design commit present, **no `docs/design/#<n>/conformance.md`** | Run the conformance consult against the already-committed artifacts, commit the record, then continue at `implement` | **added, ordered above the row below** |
-| … | Design commit present, conformance record present, no later commit outside `docs/design/` | `implement` | precondition added |
-| … | Implementation commits, no complete review artifact | `review` | unchanged |
-
-`--from <stage>` bypasses the conformance precondition, warning rather than stopping. Without the carve-out, `--from implement` on a branch designed before this change fails closed against an explicit user instruction.
+| Work | Owner |
+| --- | --- |
+| PR body authoring, mechanical quality pass, `gh pr create`, CI monitoring, log collection | executor |
+| Checking PR content before creation | orchestrator |
+| Merge decision, including under `--merge` | orchestrator |
 
 ## `/review` prompt template (delta)
-
-Two additions, both inline in the template because the criteria are piped to `codex exec` inside a read-only sandbox and embedded in CI workflow YAML:
 
 ```diff
   ## Design Reference
@@ -140,14 +132,24 @@ Two additions, both inline in the template because the criteria are piped to `co
 + 9. **Requirement Adherence** — Does the branch carry every requirement in the issue?
 ```
 
-Criterion 8 compares implementation against design; criterion 9 compares the branch against the issue. Only the second can catch a requirement dropped upstream of the design.
+Criterion 8 compares implementation against design; criterion 9 compares the branch against the issue. Only the second catches a requirement dropped upstream of the design. Inline in the template, because the criteria are piped to `codex exec` in a read-only sandbox and embedded in CI workflow YAML.
+
+## `/flow` (delta)
+
+| Element | Change |
+| --- | --- |
+| Gate A, Gate B | **Removed** |
+| Stage order | `issue → design → implement → review → triage → pr`, no gates |
+| Stage 3 argument table | Gains the delegation target per stage |
+| Stage 2 evidence derivation | **Unchanged** — the write→review→commit order preserves the meaning of every existing row |
+| User stop points | Stated explicitly: requirement gathering, an unresolvable escalation, argument resolution, a `/pr` failure |
 
 ## Error surface (delta)
 
-| Condition | Response | Where |
-| --- | --- | --- |
-| Advisor unavailable | Record `skipped — <reason>`, continue | `/issue`, `/design` |
-| Blocking mismatch after round 2 | Record `(escalated, unresolved)`, escalate to user | `/flow` |
-| Conformance record missing on resume | Verification-only re-entry; never `/design` | `/flow` Stage 2 |
-| `--from` prerequisite is only the conformance record | Warn, proceed | `/flow` Stage 2 |
-| Refreshed skill disagrees with stale `.tarnished/workflows/*.md` | The skill is authoritative | every affected skill |
+| Condition | Response |
+| --- | --- |
+| Subagent ambiguity | Blocked-result → orchestrator resolves or escalates |
+| Blocking review finding after 2 rounds | Report, record, escalate |
+| No subagent mechanism (e.g. `codex-main`) | Every stage runs inline under the primary agent; the report records that delegation was unavailable |
+| `[1m]` rejected in frontmatter | Fall back to `claude-opus-5` |
+| Refreshed skill vs stale contract | The skill is authoritative |
