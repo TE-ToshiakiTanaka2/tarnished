@@ -25,7 +25,11 @@ This skill is the Claude Code projection of `.tarnished/workflows/review.md`. Ke
 
 ## Roles
 
-This skill fills the `external-reviewer` role. Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and binding. Independence is the point: the reviewer must not have seen the reasoning that produced the diff.
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and stage ownership; where the two disagree with `.tarnished/workflows/review.md`, the skills are authoritative.
+
+The review itself is the `external-reviewer`'s. Independence is the point: the reviewer must not have seen the reasoning that produced the diff. The **orchestrator** triages the findings, and the **executor** applies the fixes — triage is a judgment about what matters, application is work with an objective success condition.
+
+Where the primary agent has no subagent mechanism, the orchestrator applies the fixes inline; record in the report that delegation was unavailable.
 
 ## MCP Tools
 
@@ -46,7 +50,9 @@ If a listed MCP server is unavailable in the current environment, fall back to t
    MERGE_BASE=$(git merge-base "$TARGET_BRANCH" HEAD)
    ```
 2. **Determine issue number** — Extract from branch name (e.g., `feature/user/#123/desc` → `123`)
-3. **Load design artifacts** — Read `docs/design/#<issue_number>/design.md` and `api-spec.md` if available: architecture decisions, constraints, expected behavior
+3. **Load both ground truths** — the design and the issue:
+   - `docs/design/#<issue_number>/design.md` and `api-spec.md` if available: architecture decisions, constraints, expected behavior
+   - The issue's Requirements section via `gh issue view <issue_number>`. Without it the reviewer treats the design as ground truth, so a requirement dropped upstream of the design passes every check: the code matches the design, and the design matches the reduced issue
 4. **Determine review scope** — Based on change size:
    - **Small** (< 100 lines changed): Quick review — bugs, security, correctness
    - **Medium** (100–500 lines): Standard review — all criteria
@@ -61,7 +67,9 @@ Resolve in priority order (stop at the first match):
 3. **Codex CLI** — If `command -v codex` succeeds, use Codex (Phase 3A).
 4. **Claude-native fallback** — Use the `code-reviewer` subagent (Phase 3C). Mark the artifact as a fallback review.
 
-Then **resolve the reviewer's model and reasoning effort** so they can be recorded in Phase 4. For Codex, read `model` and `model_reasoning_effort` from `.codex/config.toml`, preferring `roles.external-reviewer.model` / `.reasoning_effort` from `agent-profile.json` when set. Record `default` for any value that is unset or unreadable. A config change must be visible in the artifact rather than silently changing review quality.
+Then **resolve the reviewer's model and reasoning effort** so they can be recorded in Phase 4. For Codex, read `model` and `model_reasoning_effort` from `.codex/config.toml` — the reviewer CLI's own config is the single source for both. Record `default` for any value that is unset or unreadable. A config change must be visible in the artifact rather than silently changing review quality.
+
+`roles.external-reviewer` carries no `model` or `reasoning_effort`: the reviewer is executed by another vendor's tool that already owns a config file, and a second declaration site could only drift. `roles.external-reviewer.agent` still selects *which* agent reviews.
 
 ### Phase 3A: Review via `codex exec` (Codex default)
 
@@ -91,8 +99,8 @@ Then **resolve the reviewer's model and reasoning effort** so they can be record
 
 1. **Save review results** to `docs/review/#{issue_number}/review.md`. The metadata header records branch, base and merge base, review scope with changed-line count, ISO 8601 timestamp, and the reviewer — **including the resolved model and reasoning effort**, e.g. `Codex CLI (model: gpt-5.6-sol, reasoning effort: ultra)`. Mark a Claude-native review as a fallback. The full review output follows the header verbatim.
 2. **Present review results** to the user.
-3. **Implement fixes** per the severity policy below.
-4. **Commit fixes**: `fix: address review feedback for #<issue_number>`
+3. **Triage** — the orchestrator classifies each finding per the severity policy below and decides what must be fixed.
+4. **Apply fixes** — dispatch the `executor` (`.claude/agents/executor.md`) with the triaged must-fix list. It commits as `fix: address review feedback for #<issue_number>`. A blocked-result comes back to the orchestrator, which answers it or escalates.
 
 ### Phase 5: Report
 
@@ -131,6 +139,10 @@ You are a senior code reviewer. Review the implementation on this feature branch
 {Contents of docs/design/#<issue_number>/design.md, if available.
 Otherwise: "No design document available."}
 
+## Requirement Reference
+{The issue's Requirements section, from `gh issue view <issue_number>`.
+Otherwise: "No issue requirements available."}
+
 ## Review Criteria
 Please review for:
 1. **Bugs & Logic Errors** — Incorrect behavior, off-by-one, null/undefined issues
@@ -141,6 +153,10 @@ Please review for:
 6. **Error Handling** — Unhandled exceptions, missing edge cases
 7. **Test Coverage** — Are new features/changes adequately tested?
 8. **Design Adherence** — Does the implementation match the design document?
+9. **Requirement Adherence** — Does the branch carry every requirement in the issue?
+   Criterion 8 compares the implementation against the design; this one compares
+   the branch against the issue. Only this one catches a requirement that was
+   dropped before the design was written.
 
 Report gaps and defects, not stylistic nitpicks — code-quality findings must
 materially affect maintainability or violate a documented project rule
@@ -183,7 +199,7 @@ Report to the user, in whatever shape fits the review:
 - Review scope and changed-line count
 - The review output
 - Where the artifact was saved
-- Fixes applied, with the fix commit
+- Fixes applied, with the fix commit, and whether the executor applied them or they were applied inline
 - Any Critical or Major finding left unfixed, with its rationale
 - Readiness for `/pr`
 

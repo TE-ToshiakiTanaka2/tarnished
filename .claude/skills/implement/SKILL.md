@@ -22,9 +22,15 @@ This skill is the Claude Code projection of `.tarnished/workflows/implement.md`.
 
 ## Roles
 
-Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and the routing table.
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and stage ownership; where the two disagree with `.tarnished/workflows/implement.md`, the skills are authoritative.
 
-This stage is the one most often mis-delegated. Interpreting the design and matching existing conventions is the highest-judgment work in the lifecycle and stays with the orchestrator. What is genuinely mechanical — the repository survey, the lint/format/type-check fix loop, boilerplate test authoring, and bulk application of an already-decided change — is delegated. Route per unit of work, not per phase.
+Implementation belongs to the **`executor`** subagent (`.claude/agents/executor.md`). The orchestrator prepares the inputs, dispatches the executor, and reviews the result against the design.
+
+**This reverses the previous position**, which held that this stage was "the one most often mis-delegated" and that interpreting the design and matching existing conventions "stays with the orchestrator". That position rested on two assumptions that no longer hold: that the orchestrator was the only writer capable of the work, and that delegation meant handing off with no way back. The executor is model-pinned for this job, and the blocked-result protocol gives it a mandatory return path. The reversal is recorded here rather than left implicit, because an instruction that contradicts the old text without explaining itself reads as an error.
+
+The carve-out is what makes the delegation safe: the executor **returns rather than decides** whenever interpreting the design or reconciling it with an existing convention requires a judgment the design does not settle. On receiving a blocked-result the orchestrator answers and re-dispatches, or escalates to the user when the answer is the user's to give.
+
+Where the primary agent has no subagent mechanism, the orchestrator implements inline; record in the report that delegation was unavailable.
 
 ## erd Command Invocation
 
@@ -38,7 +44,7 @@ The overlay is checked first because it is the only route guaranteed to honor a 
 
 ## Pipeline
 
-Seven steps. Each carries its own skip condition — a one-file change should not run a full repository survey just because the pipeline lists one.
+Seven steps, executed by the executor. Each carries its own skip condition — a one-file change should not run a full repository survey just because the pipeline lists one.
 
 | # | Step | Skip when |
 | --- | --- | --- |
@@ -59,7 +65,11 @@ The shared layer is the cumulative project truth maintained by `/design`; the pe
 
 ### The quality loop
 
-Steps 4-6 form a cycle: `analyze findings → improve → build → test`. Deciding what counts as a finding and which refactor preserves behavior is judgment; running the tools and fixing what they report is mechanical.
+Steps 4-6 form a cycle: `analyze findings → improve → build → test`. The executor runs the loop. Deciding that a failing test encodes the wrong expectation is a judgment the design does not settle, so it is returned rather than decided — a failing test whose cause is clear is simply fixed.
+
+### Orchestrator review
+
+When the executor returns, the orchestrator reviews the implementation against the design: does it carry what the design specified, does it match the conventions the codebase already uses, and are the decisions the executor reported as unsettled acceptable. A blocking finding is sent back, capped at 2 rounds, then escalated. Reaching the cap is always reported.
 
 ## MCP Tools
 
@@ -99,18 +109,21 @@ Stage explicit paths. Avoid `git add -A` and `git add .` — they sweep up unrel
 ## Error Handling
 
 - **Build errors**: Auto-fix with linters and formatters, retry. This is mechanical; a retry budget applies
-- **Test failures**: Analyze the cause and fix. Deciding that a failing test encodes the wrong expectation is judgment, not a retry
+- **Test failures**: Analyze the cause and fix. Deciding that a failing test encodes the wrong expectation is a judgment, so the executor returns it rather than deciding
 - **Persistent failures**: Escalate to `/erd:troubleshoot` for root cause analysis
-- **Blockers**: Report to the user with what you tried, and request guidance
+- **Blocked-result from the executor**: The orchestrator answers the question and re-dispatches, or escalates to the user when the answer is the user's to give
+- **Blockers the orchestrator cannot resolve**: Report to the user with what was tried, and request guidance
 
 ## Reporting
 
 Report, in whatever shape fits the change:
 
 - Branch and issue number
+- Whether implementation was delegated to the executor or run inline because no subagent mechanism was available
 - Pipeline steps run, and steps skipped with the reason
 - Build and test results, with the commands actually run
 - Analysis findings and the improvements applied
+- The orchestrator's review outcome: findings raised, rounds used, what was revised, and anything escalated
 - Commits made
 - Remaining risks, and anything left incomplete
 - The next command
@@ -118,6 +131,7 @@ Report, in whatever shape fits the change:
 ## Best Practices
 
 - **Design First**: Load and follow design artifacts from `/design` if available
+- **Return, Do Not Guess**: An unsettled judgment goes back to the orchestrator. A subagent that assumes its way past an ambiguity is the failure the protocol exists to prevent
 - **Skip Deliberately**: A skipped step is a decision to report, not a step to hide
 - **Incremental Implementation**: Implement and commit in small logical units
 - **Type Safety**: Maximize use of type systems where available

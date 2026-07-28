@@ -19,7 +19,9 @@ This skill is the Claude Code projection of `.tarnished/workflows/issue.md`. Kee
 
 ## Roles
 
-Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and the routing table. Scoping is judgment and stays with the orchestrator.
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and stage ownership; where the two disagree with `.tarnished/workflows/issue.md`, the skills are authoritative.
+
+This stage is authored **inline by the orchestrator**, and nothing in it is delegated. The requirements dialogue is the one place where the user is the irreplaceable input, and the estimation, implementation approach, and task breakdown are written in the same session that held that dialogue — which is why they need no separate check that they match what was asked.
 
 ## erd Command Invocation
 
@@ -39,24 +41,23 @@ The overlay is checked first because it is the only route guaranteed to honor a 
 2. **Load `/erd:brainstorm`**:
    - Discover hidden requirements, edge cases, technical constraints, and non-functional requirements through Socratic dialogue
    - When a question has a small set of concrete answers — which layer to change, which of two approaches, in or out of scope — ask it as a structured choice rather than as free text. Keep open-ended prose for questions that genuinely have no enumerable answer
-3. **Organize requirements** - Structure and summarize discovered requirements; iterate with the user until approved
-4. **Advisor consult** (conditional) - When the scope is still ambiguous after the summary — competing readings of what is in scope, or an unresolved boundary — launch the `advisor` subagent (`.claude/agents/advisor.md`) once to challenge the scope before the issue is written. Skip when the scope is settled, when the advisor definition is absent, or when read-only subagents are unavailable. Unresolved ambiguity is the trigger, not general caution
+3. **Organize requirements** - Structure and summarize discovered requirements; iterate with the user until approved. This loop is the stage's quality gate: the user approves the summary directly, so the scope is settled by the person who owns it rather than inferred afterwards
 
 ### Phase 2: Estimation
 
-5. **Load `/erd:estimate`**:
+4. **Load `/erd:estimate`**:
    - Determine Size and Priority using the criteria tables below, identify risks, dependencies, and affected layers
 
 ### Phase 3: Issue Creation and Configuration
 
-6. **Create GitHub Issue** - Follow `_shared/issue` procedure with the prepared parameters:
+5. **Create GitHub Issue** - Follow `_shared/issue` procedure with the prepared parameters:
    - `title`: English title from brainstorm/estimation results
    - `body`: Issue body formatted per the Issue Description Format below
    - `labels`: Determined from issue type (feature, bugfix, refactor, etc.)
    - `size`: From `/erd:estimate` results (XS/S/M/L/XL)
    - `priority`: `P0` / `P1` / `P2`. `/erd:estimate` reports High/Medium/Low; map it here — High → `P0`, Medium → `P1`, Low → `P2`. This mapping exists only at the erd boundary: everything written into the issue, including the body and the criteria table below, uses P-values
    - See `_shared/issue/SKILL.md` for full procedure (Issue creation, milestone, project fields)
-7. **Return Issue number**
+6. **Return Issue number**
 
 ## erd Commands Used
 
@@ -133,7 +134,7 @@ Context and purpose
 
 ## Reporting
 
-Report the issue number and URL, the label, milestone, and assignee actually set, the estimation results (size, priority, affected layers, risk), any metadata operation that failed non-blockingly, whether the advisor was consulted, any question left unresolved, and the next command.
+Report the issue number and URL, the label, milestone, and assignee actually set, the estimation results (size, priority, affected layers, risk), any metadata operation that failed non-blockingly, any question left unresolved, and the next command.
 
 ## Integration
 

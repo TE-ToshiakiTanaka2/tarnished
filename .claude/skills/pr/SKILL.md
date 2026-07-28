@@ -34,7 +34,20 @@ Examples:
 
 ## Roles
 
-Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and the routing table. Phase 1 mixes judgment (which findings matter, which refactor preserves behavior) with mechanics (formatters, linters, dead-code removal); route within it per unit of work rather than delegating the phase as a block. CI log collection is mechanical; interpreting a CI failure is judgment.
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and stage ownership; where the two disagree with `.tarnished/workflows/pr.md`, the skills are authoritative.
+
+This stage splits at the irreversible operation.
+
+| Work | Owner |
+| --- | --- |
+| Quality pass, PR body authoring, `git push`, `gh pr create`, CI monitoring, failed-log collection, fix commits | `executor` |
+| Checking the PR content **before** it is created | `orchestrator` |
+| Interpreting a CI failure | `orchestrator` |
+| The merge decision, including under `--merge` | `orchestrator` |
+
+A pull request is outward-facing and a merge is irreversible, so neither is delegated to the stage's writing agent. The executor never runs `gh pr merge`.
+
+Where the primary agent has no subagent mechanism, the orchestrator runs the whole stage inline; record in the report that delegation was unavailable.
 
 ## erd Command Invocation
 
@@ -76,7 +89,7 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 
 8. **Collect change history** - Analyze commit history and diff against target branch
 9. **Push to remote** - `git push -u origin <branch>`
-10. **Create PR** - Create PR with `gh pr create` targeting the specified branch, using the "Pull Request Format" below
+10. **Create PR** - The executor drafts the body per the "Pull Request Format" below; the **orchestrator reads it before creation**, since a PR is outward-facing and editing one after the fact is a worse experience than getting it right. Then create the PR with `gh pr create` targeting the specified branch
 
 ### Phase 4: CI Monitoring and Validation
 
@@ -95,7 +108,7 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 
 ### Phase 5: Auto-Merge (if `--merge` flag is specified)
 
-15. **Merge PR** - Squash merge via `gh pr merge <pr_number> --squash --delete-branch`:
+15. **Merge PR** — the orchestrator's decision and the orchestrator's command; the executor never runs it. Squash merge via `gh pr merge <pr_number> --squash --delete-branch`:
     - Re-read `gh pr checks <pr_number>` immediately before merging and require every check to be green. The watch in Phase 4 can predate a check that started later
     - Only proceeds if CI has passed and validation is successful
     - If merge fails (e.g., merge conflict, branch protection), report the error to user
@@ -182,6 +195,7 @@ Report, in whatever shape fits the run:
 
 - PR number, title, and URL
 - Source and target branches
+- Whether the mechanical work was delegated to the executor or run inline because no subagent mechanism was available
 - Analysis findings and the improvements and cleanup applied
 - CI status, and the number of fix iterations if any were needed
 - What each fix iteration changed
