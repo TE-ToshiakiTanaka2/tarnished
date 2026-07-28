@@ -9,7 +9,7 @@ Create a GitHub Issue from a rough requirement while preserving enough context f
 
 ## Procedure
 
-1. Clarify functional and non-functional requirements.
+1. Clarify functional and non-functional requirements with the user. This stage is authored inline by the orchestrator; nothing in it is delegated, because the user is the irreplaceable input.
 2. Identify affected layers, risks, dependencies, and edge cases.
 3. Estimate size and priority.
 4. Create a GitHub Issue with a structured body.

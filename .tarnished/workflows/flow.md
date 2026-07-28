@@ -27,21 +27,22 @@ Run the lifecycle end to end for one issue, entering at the first incomplete sta
    - closed but unmerged pull request → report it and stop
    When an entry stage is given explicitly and its prerequisites are absent, report what is missing and stop. The `issue` stage has no prerequisites, because it creates them.
 5. Surface stage progress so a long run is observable.
-6. Run each stage from the entry point through `pr`, honouring each gate as it is reached rather than as a review afterwards: `issue` → gate → `design` → gate → `implement` → `review` → triage → `pr`. Follow each stage's own contract and pass the base branch through unchanged. When the run starts at `issue`, capture the number it produces and use it for every later stage.
-7. The first gate covers an issue this run created and is skipped on a resumed run, which arrives with a number already. The second applies on resumed runs too, because a design commit records that artifacts were written, not that they were approved; skip it when entering at `review` or `pr`, and when entering at `implement` with no design artifacts, since `implement` treats design as optional.
-8. Triage review findings before `pr`. Critical findings are not deferrable and block the pull request until fixed. Major findings may be deferred only after an advisor consult, with the rationale recorded.
+6. Run each stage from the entry point through `pr`: `issue` → `design` → `implement` → `review` → triage → `pr`. Follow each stage's own contract and pass the base branch through unchanged. When the run starts at `issue`, capture the number it produces and use it for every later stage.
+7. There are no approval gates. Each delegated stage ends with the orchestrator's own review of what its author returned, and a blocking finding goes back to that author — capped at two rounds, then escalated. Never advance past a stage whose review has not cleared. A run stops for the user in exactly four places: requirement gathering, an escalation the orchestrator cannot resolve, argument resolution, and a `pr` failure.
+8. Triage review findings before `pr`. Critical findings are not deferrable and block the pull request until fixed. Major findings may be deferred only with the rationale recorded. Triage is the orchestrator's judgment; applying the fixes is the executor's work.
 9. Stop and report at the first stage that cannot complete, naming the stage and what blocked it.
 
 ## Roles
 
-Work within each stage is routed by nature, not by stage — see the role vocabulary in `README.md`. Stage boundaries are not delegation boundaries.
+`flow` runs as the orchestrator: it holds the requirements dialogue, dispatches the `designer` and the `executor`, reviews what each returns, triages review findings, and owns the merge decision. Each stage's authoring has one owner — see the role vocabulary and stage ownership in `README.md`. The orchestrator is the only role that can reach the user, which is why this entrypoint carries no approval gates.
 
 ## Output
 
 - The entry stage and why it was chosen.
 - Per-stage outcome, including stages skipped as already complete.
-- Which approval gates ran and which were skipped.
+- Which stages were delegated and which ran inline, and every point where the run stopped for the user.
 - The artifacts each stage produced.
 - Review verdict and how each Critical or Major finding was resolved or deferred.
+- Blocked-results received, how each was resolved, and any review loop that reached its two-round cap.
 - Pull request URL, CI status, and merge result when merging was requested.
 - Anything left incomplete, and what blocked it.

@@ -26,18 +26,30 @@ When editing any level, keep the others aligned in the same commit. Upstream tar
 
 Workflows name roles, never models, so a project can retarget models without editing workflow or skill files.
 
-| Role | Responsibility |
-| --- | --- |
-| `orchestrator` | Judgment: requirement scoping, architecture, interpreting design intent, review triage, merge decision |
-| `executor` | Mechanical, high-volume work with an objective success condition |
-| `external-reviewer` | Independent review from a different vendor or a fresh context |
-| `advisor` | Read-only second opinion on a decision, before it is committed to |
+| Role | Execution | Responsibility |
+| --- | --- | --- |
+| `orchestrator` | Inline — it **is** the main session | Requirements dialogue, issue authoring, review of every delegated artifact, review triage, merge decision, escalation to the user |
+| `designer` | Delegated subagent | Design artifacts, once the specification is settled |
+| `executor` | Delegated subagent | Implementation, review-fix application, PR authoring and CI monitoring |
+| `external-reviewer` | Separate vendor CLI or a fresh context | Independent review of the branch diff |
 
 Role bindings live in `.tarnished/agent-profile.json` under `roles`, which is the single authoritative place. When that key is absent — a project scaffolded before it shipped — every role binds to the primary agent and `external-reviewer` binds to the review agent.
 
-Work is routed by nature (judgment vs. mechanical) rather than by lifecycle stage, so a single stage can be part-inline and part-delegated. The routing table and the advisor's bounded invocation points are specified in `.claude/skills/_shared/delegation/SKILL.md`.
+Each stage's **authoring** has one owner and the orchestrator reviews rather than co-authors; a delegated subagent routes its own internal work. This replaces the earlier rule that routed work by nature *within* a stage.
 
-The `advisor` role requires a primary agent that can run read-only subagents. Where that is unavailable, its invocation points are skipped rather than silently unhonored.
+| Stage | Writes | Reviews |
+| --- | --- | --- |
+| `issue` | `orchestrator` | the user, through the requirements dialogue |
+| `design` | `designer` | `orchestrator`, against the issue's Requirements |
+| `implement` | `executor` | `orchestrator`, against the design |
+| `review` | `external-reviewer` | `orchestrator` triages; `executor` applies the fixes |
+| `pr` | `executor` | `orchestrator` checks the content and owns the merge decision |
+
+The orchestrator is the only role that can interact with the user. `designer` and `executor` therefore return a **blocked-result** — the question, the options, and the evidence already checked — rather than assuming, whenever an answer is not derivable from the issue, the design, or the codebase.
+
+Delegation requires a primary agent that can run subagents. Where it cannot, every stage runs inline under the primary agent and the report says so; the procedure is unchanged, and what is lost is the model separation between roles.
+
+The routing table, the model binding per role, and the blocked-result contract are specified in `.claude/skills/_shared/delegation/SKILL.md`. Where this contract and the skills disagree, the skills are authoritative: `.claude/skills/` and `.claude/agents/` are refresh-managed while this directory is not, so a project can be running current skills against a stale contract.
 
 ## Lifecycle
 
