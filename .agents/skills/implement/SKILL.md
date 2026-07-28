@@ -18,13 +18,14 @@ Implement an issue in focused commits, then verify with build, lint, and tests. 
 5. Load both design layers:
    - `docs/design/shared/*`
    - `docs/design/#{issue_number}/*`
-6. Inspect relevant code before editing. Prefer narrow, reviewable changes.
+6. Inspect relevant code before editing. Prefer narrow, reviewable changes. Where a subagent mechanism is available, delegate implementation to the `executor` role; a judgment the design does not settle comes back as a blocked-result rather than being decided. Otherwise implement inline and say so in the report.
 7. Use `.tarnished/workflows/erd/index-repo.md`, `implement.md`, `build.md`, `test.md`, `analyze.md`, `improve.md`, and `troubleshoot.md` as needed.
 8. Run the stack-appropriate formatter, linter, build, and tests.
 9. Commit each logical unit with conventional commit subjects.
+10. Review the result against the design. Send blocking findings back, capped at two rounds, then escalate.
 
 ## Output
 
-Report the branch, commits, verification commands, failures or skipped checks, and remaining risks.
+Report the branch, commits, verification commands, failures or skipped checks, the review outcome, whether implementation was delegated or inline, and remaining risks.
 
 Do not create or merge a pull request in this skill.

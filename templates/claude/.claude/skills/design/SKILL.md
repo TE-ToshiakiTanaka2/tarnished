@@ -29,7 +29,13 @@ This split keeps the read cost of `/design` and `/implement` constant with respe
 
 ## Roles
 
-Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and the routing table. Architecture and interface decisions are judgment and stay with the orchestrator; repository survey and indexing are mechanical and can be delegated.
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and stage ownership; where the two disagree with `.tarnished/workflows/design.md`, the skills are authoritative.
+
+Artifact authoring belongs to the **`designer`** subagent (`.claude/agents/designer.md`). The orchestrator prepares the inputs (Phases 1-2), dispatches the designer at the **start of Phase 3**, reviews what comes back against the issue's Requirements, and performs the commit (Phase 8). Phases 3 through 7 are the designer's work in full — research included, and both artifact layers: the per-issue delta *and* the regenerated shared snapshot.
+
+The order is **write → review → commit**, and it is load-bearing. Committing first and reviewing second would make a design commit prove only that artifacts were *written*, which is exactly the ambiguity that used to require a separate approval gate. With the commit last, the commit itself records that the review happened, and an interrupted run simply leaves uncommitted files that `/flow` already reads as "enter at `design`".
+
+Where the primary agent has no subagent mechanism, the orchestrator authors the artifacts inline and reviews its own work before committing; record in the report that delegation was unavailable.
 
 ## erd Command Invocation
 
@@ -69,7 +75,11 @@ The overlay is checked first because it is the only route guaranteed to honor a 
    - Use this to verify the shared layer matches the actual codebase before designing
    - Skip if the issue scope is small and well-understood
 
-### Phase 3: Research (if needed)
+### Phase 3: Dispatch, then research (if needed)
+
+6a. **Dispatch the designer** - Launch the `designer` subagent (`.claude/agents/designer.md`) with the issue number, the branch, the base branch, and the shared-layer state loaded in Phase 2. Everything from here through Phase 7 is its work — research, the per-issue delta, the diagrams, and the shared snapshot regeneration. It authors and returns; it does not commit. If it returns a **blocked-result** instead of artifacts, answer the question and re-dispatch, or escalate to the user when the answer is the user's to give — see `_shared/delegation/SKILL.md`.
+
+   Dispatch belongs here rather than after research: research produces an artifact (`research.md`), so running it before the hand-off would split authorship of the stage across two agents and leave no single accountable author.
 
 7. **Load `/erd:research`** (conditional):
    - **Decision rule**: If the issue references external libraries, APIs, or patterns that are not already established in the codebase, execute erd:research. Otherwise, skip.
@@ -80,8 +90,7 @@ The overlay is checked first because it is the only route guaranteed to honor a 
 
 ### Phase 4: Architecture Design
 
-9. **Advisor consult** (conditional) - When the issue's estimated size is M or larger, launch the `advisor` subagent (`.claude/agents/advisor.md`) once with the architecture you intend to adopt, the alternatives you considered, and the constraints that bound the choice. Read its objections before authoring `design.md`; you still decide. Skip when the issue is smaller than M, when the advisor definition is absent, or when read-only subagents are unavailable — and note the skip in the report. The trigger is the size estimate, not a feeling of uncertainty; see `_shared/delegation/SKILL.md`.
-10. **Load `/erd:design`**:
+9. **Load `/erd:design`**:
    - Module structure, interface/API design, type definitions, error handling strategy
 11. **Author per-issue design** - **Save to `docs/design/#{issue_number}/design.md`** using the "Per-issue design.md template" below:
     - Include a self-contained `## Context` section near the top, summarizing the slice of `shared/architecture.md` and `shared/data-model.md` that this issue acts on. Intentional duplication for standalone readability.
@@ -116,7 +125,15 @@ The overlay is checked first because it is the only route guaranteed to honor a 
     - Remove entries that no longer reflect current truth; git history retains the prior state.
     - Never append a `## Issue #N — changes` section, and never carry forward stale entries.
 
-### Phase 8: Commit and Report
+### Phase 8: Review, Commit, and Report
+
+Phases 4-7 produced artifacts but committed nothing. The orchestrator now reviews them, then commits.
+
+17a. **Review the artifacts against the issue's Requirements** — read `gh issue view <n>` and the artifacts the designer wrote, and judge whether each requirement is carried. Look hardest at what the designer reported as decisions the issue did not settle. Classify each finding as blocking or worth noting.
+
+17b. **Send blocking findings back** — re-dispatch the designer with the findings, and **re-review whatever comes back**. At most **2 returns**: the first review is round 0, and a blocking finding still present after the second re-review is escalated to the user with the finding and what was attempted. Reaching the cap is always reported, never passed over silently.
+
+17c. **Write `docs/design/#{issue_number}/orchestrator-review.md`** — findings, rounds used, and what was revised. This is an audit trail, not an evidence key: the commit below is what records that the review happened.
 
 18. **Stage design artifacts** — Use explicit paths to avoid pulling in unrelated untracked files (e.g. `.vscode/`, local scratchpads, MCP scratch directories):
     ```bash
@@ -135,8 +152,7 @@ The overlay is checked first because it is the only route guaranteed to honor a 
     ```
     If `git status` still shows tracked files modified under `docs/design/`, Phase 7 did not write the snapshot or staging missed a file — investigate before reporting completion.
 
-21. **Report results** - See "Reporting" below.
-22. **Sign-off gate** - Present the design for approval before implementation begins. `/implement` is a separate invocation; when running under `/flow`, this is the approval gate that must clear before the implement stage starts.
+21. **Report results** - See "Reporting" below. There is no separate sign-off step: the review in 17a-17c is the approval, and the commit records it.
 
 ## MCP Tools
 
@@ -327,7 +343,8 @@ docs/design/
     ├── api-spec.md                  # API delta (if applicable)
     ├── workflow.md                  # Implementation steps and plan
     ├── flowchart.md                 # Issue-local control flow (if applicable)
-    └── research.md                  # Issue-specific external research (if applicable)
+    ├── research.md                  # Issue-specific external research (if applicable)
+    └── orchestrator-review.md       # Orchestrator's review of the designer's artifacts (audit trail)
 ```
 
 ## Commit Strategy
@@ -360,7 +377,8 @@ Report, in whatever shape fits the issue:
 - Shared files regenerated in Phase 7, and shared files deliberately left unchanged
 - Whether the migration ran or was skipped
 - Diagrams generated, or a line stating none was needed
-- Whether the advisor was consulted or skipped, and what changed as a result
+- The review outcome: findings raised, rounds used, what the designer revised, and anything escalated
+- Whether authoring was delegated to the designer or run inline because no subagent mechanism was available
 - Commit hash
 - The next command
 
@@ -373,6 +391,7 @@ Report, in whatever shape fits the issue:
 - **Research Promotion**: When research becomes reusable across issues, move it from `#{issue}/research.md` to `shared/research/<library>.md`.
 - **UML Destination**: Class and system-wide sequence diagrams go to `shared/`. Issue-local flowcharts stay in `#{issue}/`.
 - **Single Commit**: Both layers committed together to keep the snapshot atomic with the delta.
+- **Review Before Commit**: Never commit artifacts the review has not cleared — the ordering is what makes the commit meaningful.
 - **Branch Reuse**: The branch created here will be reused by `/implement`.
 
 ## Integration

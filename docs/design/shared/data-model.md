@@ -230,7 +230,9 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `.codex/config.toml` (workspace + template) | `model` bumped `gpt-5.4` → `gpt-5.5`. Repairs the invalid `"gpt-5.5/"` value accidentally committed to the workspace copy in #288 and restores workspace/template parity. | #292 |
 | `.codex/config.toml` (workspace + template) | `model` pinned to `gpt-5.6-sol` and `model_reasoning_effort` raised to `ultra`. `/review` now reads both back and records them in the review artifact header, so a config change is attributable rather than silent. | #308 |
 | `.claude/skills/flow/`, `.tarnished/workflows/flow.md`, `.agents/skills/flow/` | New lifecycle orchestration entrypoint across all three altitudes. `workflows/flow.md` is manifest-tracked, not refresh-managed, so projects scaffolded earlier receive the SKILL without the contract — the SKILL tolerates its absence. | #308 |
-| `.claude/skills/_shared/delegation/SKILL.md`, `.claude/agents/advisor.md` | Role vocabulary and work-routing table; read-only advisory subagent. Both refresh-managed, so they arrive downstream on the next container start. | #308 |
+| `.claude/skills/_shared/delegation/SKILL.md` | Role vocabulary, stage/role matrix, model binding, and the subagent escalation protocol. Refresh-managed, so it arrives downstream on the next container start. #312 replaces the role vocabulary and the routing principle. | #308 / #312 |
+| `.claude/agents/designer.md`, `.claude/agents/executor.md` | Writing subagents for the `design` and `implement` stages, each carrying a pinned model and the blocked-result protocol. Refresh-managed. `advisor.md` is removed in the same change. | #312 |
+| `docs/design/#{issue}/orchestrator-review.md` | Audit trail of the orchestrator's review of the designer's artifacts — findings, rounds used, and what was revised. Committed with the design artifacts. Deliberately **not** an evidence key: because the commit follows the review, the design commit itself records that the review happened. | #312 |
 | `.gitignore` (workspace) | Codex whitelist block (`# Codex CLI (track shared config only)` + `.codex/*` + `!.codex/config.toml`) and Codex agent skills block (`.agents/*` + `!.agents/skills/` + `!.agents/skills/**`) appended to the workspace's own `.gitignore` so local agent/auth files are never committed | #261 / Codex workflow parity |
 | `.claude/settings.json` (workspace) | `permissions.allow` gains `Bash(codex:*)` so `/review` can invoke the Codex CLI without per-call approval | #261 |
 | `modules.json` (downstream monorepo target) | New schema introduced for monorepo support; `version: 1` with a `modules: []` array. Forward-compatible via unknown-key tolerance and a `version` escape hatch. | #263 |
@@ -321,17 +323,35 @@ Flat JSON object. Written by `templates/agent-workflows/plugin.sh` and rendered 
 | `workflow_source` | string | Yes | Path to the agent-neutral workflow contracts, `.tarnished/workflows`. |
 | `roles` | object | No | Role→binding map (#308). Absent on projects scaffolded before #308. |
 
-`roles` recognizes four role keys — `orchestrator`, `executor`, `advisor`, `external-reviewer`:
+`roles` recognizes four role keys — `orchestrator`, `designer`, `executor`, `external-reviewer` (#312 replaced `advisor` with `designer`):
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `roles.<role>.agent` | string | `"primary"` / `"review"` (indirections to the sibling fields), or a concrete agent identifier |
-| `roles.<role>.model` | string \| null | `null` = use that agent's configured default |
-| `roles.external-reviewer.reasoning_effort` | string \| null | `null` = use the reviewer CLI's configured default |
+| `roles.<role>.model` | string \| null | `null` = fall through to the agent definition's `model:` frontmatter, and failing that to `inherit` (the session model). Read only for the delegated subagent roles — `designer` and `executor` |
 
 `roles` values are deliberately **placeholder-free**. `primary_agent` / `review_agent` render to display strings — including `"Claude Code + Codex CLI"` and `"Manual review"` for the `dual` and non-Codex profiles (`setup.sh::derive_agent_names`) — which are not dispatchable identifiers.
 
 **Resolution contract** (identical across every consumer): `roles` absent, or any field still containing an unrendered `{{...}}` token, falls back to binding all roles to the primary agent and `external-reviewer` to `review_agent`. Unknown role keys are ignored rather than treated as errors. Consumers report whether the binding came from the profile or from the fallback.
+
+**Model binding by role** (#312): each role's model comes from exactly one place, chosen by how that role is dispatched. Before #312 every cell resolved to "the session model", because no level of any chain named a model for any role.
+
+| Role | Execution | Channel | Shipped value |
+| --- | --- | --- | --- |
+| `orchestrator` | Inline — it *is* the session | `.claude/settings.json :: model` | `claude-fable-5` |
+| `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
+| `designer` | Delegated subagent | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
+| `external-reviewer` | Separate vendor CLI | `.codex/config.toml` | reviewer-owned (`gpt-5.6-sol` / `ultra`) |
+
+For the two delegated roles the precedence is `roles.<role>.model` when non-null → the agent definition's `model:` frontmatter → `inherit`. Claude Code's subagent frontmatter accepts `sonnet`, `opus`, `haiku`, `fable`, a full model ID, or `inherit`, and defaults to `inherit`. Level 1 is not refresh-managed, so a downstream override survives every container start; level 2 lives in refresh-managed `.claude/agents/`, so a shipped default reaches every project on the next start.
+
+The `orchestrator` is outside that chain entirely: it is the session rather than a subagent, so nothing dispatches it and no frontmatter applies. `.claude/settings.json :: model` is its only channel and is read once at session start. That file is neither parity-checked nor manifest-tracked (`MANIFEST_EXCLUDE_GLOBS` treats it as user-owned), so the workspace and template copies may diverge and the template value is a scaffold-time default that `--upgrade` never revisits.
+
+The `external-reviewer` is also outside it: `roles.external-reviewer` no longer carries `model` or `reasoning_effort` (#312), because the reviewer is executed by a different vendor's CLI that already owns a config file and a second declaration site could only drift. `/review` reads `.codex/config.toml` alone and records the resolved values in the artifact header, so a config change stays attributable. Removing the keys is backward compatible in both directions — absent keys already fell back, and unknown keys are already ignored.
+
+Values are pinned IDs rather than aliases, matching the `.codex/config.toml` convention of pinning exactly and bumping in a tracked commit (#292 exists because a model value changed invisibly). Only `claude-opus-5` carries the `[1m]` suffix. On the Anthropic API, Fable 5, Sonnet 5, and Opus 4.7 and later all default to the 1M window, so the suffix is inert for all three there; it matters only where the window is budgeted at 200K — behind an LLM gateway, or under `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`. Opus differs by **plan**: 1M is included on Max/Team/Enterprise but requires usage credits on Pro, while Sonnet 5 and Fable 5 are unconditional on every plan. So the suffix is insurance on Opus and inert on the others — Sonnet 5 is documented as having no 200K variant and no `[1m]` suffix to select, and no `fable[1m]` alias exists.
+
+**Parity constraint on the workspace copy**: `scripts/verify-mirrors.sh` enforces byte-identity between `.tarnished/agent-profile.json` and `templates/agent-workflows/.tarnished/agent-profile.json`, so the tarnished workspace cannot populate `roles.<role>.model` without failing the parity gate — and its copy still carries unrendered `{{...}}` placeholders, which the resolution contract treats as absent, so the workspace always runs the fallback path. Frontmatter is the only model channel available in-repo. Downstream copies are rendered and manifest-tracked rather than parity-checked, so level 1 works there.
 
 **Forward compatibility**: unknown top-level keys are ignored, so adding roles or per-role fields is non-breaking.
 

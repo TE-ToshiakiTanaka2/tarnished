@@ -454,7 +454,53 @@ Rule 1 precedes rule 4 by necessity, not convention: a rule that only offers the
 
 Contradictory pairs are rejected **before** the precedence table is consulted, because first-match-wins would otherwise short-circuit on rule 1 and never notice the conflicting flag: `--from issue` with `--issue N` (the stage creates the number the flag supplies), and `--from <stage after issue>` with no resolvable number (a later stage cannot run against an issue that does not exist — rule 4 then offers only the existing-issue option).
 
-`/flow` carries two approval gates, honoured inline as the run reaches them (`issue → gate → design → gate → implement → review → triage → pr`) rather than as a review after every stage has run. They have deliberately different resume semantics. The issue→design gate covers the estimation, approach, and task breakdown that `/issue` produces *after* its own requirements-summary approval, and is skipped on resumed runs. The design→implement gate re-runs on resumed runs, because a design commit proves the artifacts were written rather than approved; it is skipped when entering at `review` or `pr`, and when entering at `implement` with no design artifacts, since `/implement` treats design as optional.
+`/flow` carries **no** approval gates (#312). Until #312 it stopped twice — after an issue the run created, and before implementation — and both gates existed because the party that could review an artifact against the requirement was a human, and the alternative (a read-only subagent) could not reach the user. The restructure inverts what is delegated: authoring moves to subagents and the review stays in the session, so the reviewing party is the same one that conducted the requirements dialogue and can escalate whenever it needs to. The stage order is `issue → design → implement → review → triage → pr`.
+
+A `/flow` run stops for the user in exactly four places, and `flow/SKILL.md` states the list so the property is checkable rather than emergent: requirement gathering in `/issue`, an escalation the orchestrator cannot resolve (a subagent blocked-result, or a blocking review finding surviving two rounds), argument resolution (an unresolvable issue number or a contradictory flag pair), and a `/pr` failure.
+
+Gate B's load-bearing property — that a design commit proved artifacts were *written* rather than approved, because `/design` committed before its sign-off step — is resolved by reordering rather than by adding an artifact: the orchestrator reviews first and commits second, so the design commit is itself the record. `/flow`'s Stage 2 evidence derivation is unchanged by #312.
+
+### Stage ownership and delegation (#312)
+
+Each stage's **authoring** has a single owner; the orchestrator reviews rather than co-authors. A delegated subagent still routes its own internal work.
+
+| Stage | Writes | Reviews |
+| --- | --- | --- |
+| `issue` | orchestrator (inline) | the user, through the requirements dialogue |
+| `design` | designer | orchestrator, against the issue's Requirements |
+| `implement` | executor | orchestrator, against the design |
+| `review` | external-reviewer | orchestrator triages; executor applies the fixes |
+| `pr` | executor authors the body, creates the PR, monitors CI | orchestrator checks content and owns the merge decision |
+
+A pull request is outward-facing and a merge is irreversible, which is why neither is delegated to the stage's writing agent.
+
+`/design` runs **write → review → commit**, with the commit performed by the orchestrator after the review clears. Before #312 the commit came first and the sign-off step second, so a design commit proved artifacts were written rather than approved; the new ordering makes the commit itself the record that the review happened, which is why `/flow`'s evidence derivation needs no additional artifact. The review loop is capped at 2 rounds and a blocking finding surviving round 2 escalates to the user. Findings are recorded in `docs/design/#{issue}/orchestrator-review.md` as an audit trail, not as an evidence key.
+
+### Blocked-result contract (#312)
+
+`designer` and `executor` cannot interact with the user. Instead of assuming, either returns a blocked-result whenever an answer is not derivable from the issue, the design artifacts, or the codebase.
+
+| Field | Required | Purpose |
+| --- | --- | --- |
+| Question | Yes | What could not be resolved |
+| Options | Yes | The readings or approaches visible, and what each implies |
+| Evidence checked | Yes | What was already consulted — distinguishes a real block from an unasked question |
+| Partial work | No | What was completed, so it is not redone |
+
+Triggers are concrete: a requirement-level ambiguity producing different interfaces, a conflict between the design and an established codebase convention, or a missing prerequisite artifact. The orchestrator resolves the question, or escalates when the answer is the user's to give.
+
+### Role → model binding (#312)
+
+| Role | Channel | Value |
+| --- | --- | --- |
+| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5` |
+| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
+| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
+| `external-reviewer` | `.codex/config.toml` | `gpt-5.6-sol` / `ultra` |
+
+`roles.<role>.model` stays `null` for every role — the profile answers "which agent", not "which model". Before #312 no level of any chain named a model, so every role inherited the session's. Subagent frontmatter accepts `sonnet` / `opus` / `haiku` / `fable` / a full model ID / `inherit` and defaults to `inherit`; `.claude/settings.json :: model` is read once at session start. The `[1m]` suffix is documented for `/model` and `ANTHROPIC_DEFAULT_*` but not for frontmatter, so `claude-opus-5` is the recorded fallback — a designer subagent's context is bounded by construction, making the suffix insurance rather than a capacity requirement.
+
+`/review` carries two ground truths rather than one (#312): the design document and the issue's Requirements section, with a criterion for each. Criterion 8 asks whether the implementation matches the design; criterion 9 asks whether the branch carries every requirement in the issue. Only the second can catch a requirement dropped upstream of the design — without it, a requirement lost at the `/issue` stage flows through design, implementation, and review with every check returning green.
 
 ### `templates/codex/.codex/config.toml` (#261, #308)
 
@@ -468,6 +514,8 @@ Project-level Codex CLI configuration written verbatim into downstream projects 
 | `sandbox_mode` | `"workspace-write"` |
 
 Validated against the installed Codex CLI with `codex exec --strict-config`, which rejects unrecognized keys and values.
+
+Since #312 this file is the **sole** source for the external reviewer's model and reasoning effort. `roles.external-reviewer` no longer carries `model` or `reasoning_effort`; `/review` Phase 2 reads `.codex/config.toml` alone and records the resolved values in the artifact header, which is what keeps a config change attributable. The reviewer is the one role executed by another vendor's CLI that already owns a config file, so a second declaration site could only drift — and inside this repository the duplication was never even reachable, since both files are parity-checked and neither could be edited to disagree. The drift risk was downstream, which is where the removal lands. `roles.external-reviewer.agent` still selects *which* agent reviews.
 
 The workspace's own `/workspace/.codex/config.toml` MUST stay in sync with this template default so a `/review` run inside the tarnished repo behaves identically to a `/review` run inside any newly bootstrapped downstream project.
 

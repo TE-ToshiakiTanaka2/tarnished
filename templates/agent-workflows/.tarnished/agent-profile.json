@@ -5,8 +5,8 @@
   "workflow_source": ".tarnished/workflows",
   "roles": {
     "orchestrator": { "agent": "primary", "model": null },
+    "designer": { "agent": "primary", "model": null },
     "executor": { "agent": "primary", "model": null },
-    "advisor": { "agent": "primary", "model": null },
-    "external-reviewer": { "agent": "review", "model": null, "reasoning_effort": null }
+    "external-reviewer": { "agent": "review" }
   }
 }

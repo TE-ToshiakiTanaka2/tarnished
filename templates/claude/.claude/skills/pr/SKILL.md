@@ -34,7 +34,24 @@ Examples:
 
 ## Roles
 
-Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and the routing table. Phase 1 mixes judgment (which findings matter, which refactor preserves behavior) with mechanics (formatters, linters, dead-code removal); route within it per unit of work rather than delegating the phase as a block. CI log collection is mechanical; interpreting a CI failure is judgment.
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and stage ownership; where the two disagree with `.tarnished/workflows/pr.md`, the skills are authoritative.
+
+This stage splits at the irreversible operation.
+
+| Work | Owner |
+| --- | --- |
+| Quality pass, PR body **drafting**, `git push`, CI monitoring, failed-log collection, fix commits | `executor` |
+| Checking the drafted body, then running `gh pr create` | `orchestrator` |
+| Interpreting a CI failure | `orchestrator` |
+| The merge decision, including under `--merge` | `orchestrator` |
+
+Creation is the orchestrator's command, not merely its approval. "The executor creates it but the orchestrator checks first" has no executable boundary — by the time the orchestrator sees anything, the pull request exists. The executor therefore **returns the drafted body** and stops; the orchestrator reads it, revises or re-dispatches if it is wrong, and then creates the PR itself.
+
+A pull request is outward-facing and a merge is irreversible, so neither is delegated to the stage's writing agent. The executor never runs `gh pr merge`.
+
+When the executor returns a **blocked-result** — a CI failure whose cause is a design or requirement question rather than a fixable defect, for instance — the orchestrator answers it and re-dispatches, or escalates to the user when the answer is the user's to give. See `_shared/delegation/SKILL.md`.
+
+Where the primary agent has no subagent mechanism, the orchestrator runs the whole stage inline; record in the report that delegation was unavailable.
 
 ## erd Command Invocation
 
@@ -75,32 +92,33 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 ### Phase 3: Pull Request Creation
 
 8. **Collect change history** - Analyze commit history and diff against target branch
-9. **Push to remote** - `git push -u origin <branch>`
-10. **Create PR** - Create PR with `gh pr create` targeting the specified branch, using the "Pull Request Format" below
+9. **Push to remote** - `git push -u origin <branch>` (executor)
+10. **Draft the PR body** - The executor writes the body per the "Pull Request Format" below and **returns it without creating anything**
+11. **Check and create** - The orchestrator reads the drafted body, revises it or re-dispatches the executor if it misstates the change, and then runs `gh pr create` itself targeting the specified branch. A pull request is outward-facing: once created, a correction is visible to everyone who was notified
 
 ### Phase 4: CI Monitoring and Validation
 
-11. **Monitor CI** - Wait on the pull request's **aggregate** check state, not on a single workflow run: `gh pr checks <pr_number> --watch --fail-fast` in the background, or the harness's condition-waiting affordance where one is available. Background completion re-invokes the agent, so no manual re-check step is needed. Never `sleep`-poll — the runtime blocks it.
+12. **Monitor CI** - Wait on the pull request's **aggregate** check state, not on a single workflow run: `gh pr checks <pr_number> --watch --fail-fast` in the background, or the harness's condition-waiting affordance where one is available. Background completion re-invokes the agent, so no manual re-check step is needed. Never `sleep`-poll — the runtime blocks it.
 
     Watching one `gh run watch <run_id>` is not sufficient. A repository can have several workflows and check suites on the same PR, so a single green run says nothing about the others, and merging on it can merge over a pending or failing check.
 
     Set an explicit timeout on the wait — 15 minutes unless the project's CI is known to run longer. The timeout is what owns the "CI status unknown" rule below: nothing else in this procedure measures elapsed time, so a rule without a wait deadline has no actor that can execute it.
-12. **Validate CI results** - Load `/erd:reflect`:
+13. **Validate CI results** - Load `/erd:reflect`:
     - Interpret CI pass/fail, assess coverage adequacy, verify the implementation matches the issue requirements, identify remaining risks
-13. **Fix loop on CI failure**:
+14. **Fix loop on CI failure**:
     - Analyze error content from CI logs (`gh run view <run_id> --log-failed`)
     - Implement fix, commit & push, re-check CI
     - If the repository has a first-pass CI review workflow configured and it left a review comment, address its Critical and Major findings before merging. This workflow is opt-in and is not installed by scaffolding, so treat its absence as normal
-14. **Report completion** - Present PR URL and validation summary
+15. **Report completion** - Present PR URL and validation summary
 
 ### Phase 5: Auto-Merge (if `--merge` flag is specified)
 
-15. **Merge PR** - Squash merge via `gh pr merge <pr_number> --squash --delete-branch`:
+16. **Merge PR** — the orchestrator's decision and the orchestrator's command; the executor never runs it. Squash merge via `gh pr merge <pr_number> --squash --delete-branch`:
     - Re-read `gh pr checks <pr_number>` immediately before merging and require every check to be green. The watch in Phase 4 can predate a check that started later
     - Only proceeds if CI has passed and validation is successful
     - If merge fails (e.g., merge conflict, branch protection), report the error to user
-16. **Update local target branch** - After a successful merge, switch to the target branch and update it with `git pull --ff-only origin <target_branch>`
-17. **Report merge result** - Present merge status and final commit
+17. **Update local target branch** - After a successful merge, switch to the target branch and update it with `git pull --ff-only origin <target_branch>`
+18. **Report merge result** - Present merge status and final commit
 
 ## erd Commands Used
 
@@ -182,6 +200,7 @@ Report, in whatever shape fits the run:
 
 - PR number, title, and URL
 - Source and target branches
+- Whether the mechanical work was delegated to the executor or run inline because no subagent mechanism was available
 - Analysis findings and the improvements and cleanup applied
 - CI status, and the number of fix iterations if any were needed
 - What each fix iteration changed

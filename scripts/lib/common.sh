@@ -552,19 +552,26 @@ merge_claude_settings() {
         return 0
     fi
 
-    # Merge with special handling for permissions and hooks (arrays are concatenated)
+    # Deep-merge every top-level key, then override permissions and hooks with
+    # array unions. Rebuilding the object from only those two keys would discard
+    # everything else settings.json can carry -- `model`, `env`, `statusLine`,
+    # and any user-authored key -- on every re-run and every `setup.sh --upgrade`,
+    # since this function is called whenever a target settings.json already exists.
+    # Hook events other than PreToolUse/PostToolUse survive through the same deep
+    # merge rather than being dropped by an exhaustive rebuild.
     if ! jq -s '
         .[0] as $base | .[1] as $overlay |
-        {
-            permissions: {
-                allow: (($base.permissions.allow // []) + ($overlay.permissions.allow // []) | unique),
-                deny: (($base.permissions.deny // []) + ($overlay.permissions.deny // []) | unique)
-            },
-            hooks: {
-                PreToolUse: (($base.hooks.PreToolUse // []) + ($overlay.hooks.PreToolUse // []) | unique),
-                PostToolUse: (($base.hooks.PostToolUse // []) + ($overlay.hooks.PostToolUse // []) | unique)
-            }
-        }
+        ($base * $overlay)
+        | .permissions = (
+            (($base.permissions // {}) * ($overlay.permissions // {}))
+            | .allow = ((($base.permissions.allow // []) + ($overlay.permissions.allow // [])) | unique)
+            | .deny  = ((($base.permissions.deny  // []) + ($overlay.permissions.deny  // [])) | unique)
+          )
+        | .hooks = (
+            (($base.hooks // {}) * ($overlay.hooks // {}))
+            | .PreToolUse  = ((($base.hooks.PreToolUse  // []) + ($overlay.hooks.PreToolUse  // [])) | unique)
+            | .PostToolUse = ((($base.hooks.PostToolUse // []) + ($overlay.hooks.PostToolUse // [])) | unique)
+          )
     ' "$base_file" "$overlay_file" > "$output_file"; then
         print_error "Failed to merge Claude settings files"
         return 1

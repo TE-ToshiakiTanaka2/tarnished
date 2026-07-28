@@ -207,6 +207,59 @@ JSONC
     [[ ! -e "$output_file" ]]
 }
 
+# settings.json carries top-level keys beyond permissions and hooks -- `model`,
+# and anything the user added. Rebuilding the object from only the two
+# special-cased keys silently dropped them on every re-run and every
+# `setup.sh --upgrade`. Regression guard for that loss.
+@test "merge_claude_settings preserves unrelated top-level keys across repeated merges" {
+    local base_file="$SCRATCH/settings.json"
+    local overlay_file="$SCRATCH/plugin.json"
+    local first_output="$SCRATCH/first.json"
+    local second_output="$SCRATCH/second.json"
+
+    cat > "$base_file" <<'JSON'
+{
+  "userOwnedKey": "keep me",
+  "permissions": { "allow": [], "deny": [] },
+  "hooks": { "PreToolUse": [], "SessionStart": [{ "hooks": [] }] }
+}
+JSON
+
+    cat > "$overlay_file" <<'JSON'
+{
+  "model": "claude-fable-5",
+  "permissions": { "allow": [], "deny": ["Bash(rm -rf /*)"] },
+  "hooks": { "PreToolUse": [] }
+}
+JSON
+
+    run merge_claude_settings "$base_file" "$overlay_file" "$first_output"
+    assert_success
+
+    run jq -r '.model' "$first_output"
+    assert_output "claude-fable-5"
+
+    run jq -r '.userOwnedKey' "$first_output"
+    assert_output "keep me"
+
+    # Hook events the merge does not special-case survive too.
+    run jq '.hooks.SessionStart | length' "$first_output"
+    assert_output "1"
+
+    # The re-merge path (`setup.sh --upgrade`) must not drop them either.
+    run merge_claude_settings "$first_output" "$overlay_file" "$second_output"
+    assert_success
+
+    run jq -r '.model' "$second_output"
+    assert_output "claude-fable-5"
+
+    run jq -r '.userOwnedKey' "$second_output"
+    assert_output "keep me"
+
+    run jq '.hooks.SessionStart | length' "$second_output"
+    assert_output "1"
+}
+
 # A second merge of the same overlay (e.g. `setup.sh --upgrade`'s FR-5 re-run)
 # must not duplicate hooks.PreToolUse entries. Regression guard for the
 # deny-check Bash hook being appended twice.

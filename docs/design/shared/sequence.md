@@ -141,41 +141,60 @@ The `is_claude_authenticated` gate (#273) is identical in the workspace `setup_p
 
 ## Claude Code skill workflow (`/issue` → `/design` → `/implement` → `/review` → `/pr`)
 
+Role ownership per stage follows the #312 restructure: the orchestrator **is** the session, authoring is delegated to `designer` and `executor`, and the orchestrator reviews each delegated artifact before it is committed.
+
 ```mermaid
 sequenceDiagram
     actor Dev
-    participant Issue as /issue
-    participant Design as /design
-    participant Implement as /implement
-    participant Review as /review
-    participant PR as /pr
+    participant O as orchestrator (session)
+    participant Dsg as designer (subagent)
+    participant Exe as executor (subagent)
+    participant XR as external-reviewer
     participant Docs as docs/design/
     participant GH as GitHub
 
-    Dev->>Issue: /issue
-    Issue->>Issue: erd:brainstorm + erd:estimate
-    Issue->>GH: gh issue create + project field set
-    Issue-->>Dev: Issue #N
+    Dev->>O: /issue
+    O->>O: erd:brainstorm + erd:estimate
+    O->>Dev: requirements summary (iterate until approved)
+    O->>GH: gh issue create + project field set
+    O-->>Dev: Issue #N
 
-    Dev->>Design: /design N
-    Design->>Docs: read shared/* (cumulative truth, #257)
-    Design->>Docs: write #N/design.md (delta, self-contained)
-    Design->>Docs: write #N/api-spec.md, #N/workflow.md, #N/flowchart.md as applicable
-    Design->>Docs: regenerate shared/* as snapshot (NFR-1)
-    Design-->>Dev: branch + artifacts
+    Dev->>O: /design N
+    O->>Docs: read shared/* (cumulative truth, #257)
+    O->>Dsg: delegate authoring (issue + shared layer as input)
+    Dsg->>Docs: write #N/design.md, api-spec.md, workflow.md, diagrams
+    Dsg->>Docs: regenerate shared/* as snapshot (NFR-1)
+    Dsg-->>O: artifacts (or a blocked-result, #312)
+    O->>O: review vs issue Requirements (≤2 rounds)
+    O->>Docs: write #N/orchestrator-review.md
+    O->>GH: commit — after the review, so the commit records it (#312)
+    O-->>Dev: branch + artifacts
 
-    Dev->>Implement: /implement N
-    Implement->>Docs: read shared/* AND #N/* (constant cost wrt issue count, #257)
-    Implement->>Implement: erd:index-repo, erd:implement, erd:build, erd:test, erd:analyze, erd:improve
-    Implement-->>Dev: code + commits
+    Dev->>O: /implement N
+    O->>Exe: delegate authoring (design artifacts as input)
+    Exe->>Exe: erd:index-repo, erd:implement, erd:build, erd:test
+    Exe-->>O: code + commits (or a blocked-result)
+    O->>O: review vs design
 
-    Dev->>Review: /review (optional)
-    Review-->>Dev: review notes
+    Dev->>O: /review
+    O->>XR: branch diff + design + issue Requirements (#312)
+    XR-->>O: findings (criteria 8 and 9)
+    O->>O: triage — Critical not deferrable
+    O->>Exe: delegate fix application
+    Exe-->>O: fix commits
 
-    Dev->>PR: /pr
-    PR->>GH: gh pr create
-    PR-->>Dev: PR URL
+    Dev->>O: /pr
+    O->>Exe: delegate quality pass, push, and PR body drafting
+    Exe-->>O: drafted body (nothing created yet)
+    O->>O: content check — revise or re-dispatch
+    O->>GH: gh pr create (the orchestrator's own command)
+    O->>Exe: delegate CI monitoring and fix commits
+    Exe-->>O: CI status
+    O->>O: merge decision (never delegated)
+    O-->>Dev: PR URL
 ```
+
+Under `/flow` the same sequence runs in one pass with **no approval gates** (#312). The two human confirmations that formerly sat before `design` and before `implement` are gone, because the party that reviews each artifact is now the session itself rather than a subagent that cannot reach the user. A run stops for the user in exactly four places: requirement gathering, an escalation the orchestrator cannot resolve (a subagent blocked-result, or a blocking review finding surviving two rounds), argument resolution, and a `/pr` failure.
 
 ## Design-artifact migration (one-shot, #257)
 

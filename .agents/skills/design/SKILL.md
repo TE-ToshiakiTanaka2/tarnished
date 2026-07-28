@@ -23,13 +23,14 @@ Create or update design artifacts before production code changes. This is the Co
 
 6. Load `docs/design/shared/*` and relevant code paths before designing.
 7. Use `.tarnished/workflows/erd/research.md`, `design.md`, and `workflow.md` as needed.
-8. Write per-issue artifacts under `docs/design/#{issue_number}/`.
+8. Write per-issue artifacts under `docs/design/#{issue_number}/`. Where a subagent mechanism is available, delegate this authoring to the `designer` role and treat a returned blocked-result as a question to answer rather than a guess to make; otherwise author inline and say so in the report.
 9. Regenerate affected shared snapshots under `docs/design/shared/`.
-10. Commit design artifacts separately from implementation.
+10. Review the artifacts against the issue's Requirements before committing. Send blocking findings back to their author, capped at two rounds, then escalate. Record the findings in `docs/design/#{issue_number}/orchestrator-review.md`.
+11. Commit design artifacts separately from implementation — after the review, so the commit records that the review happened.
 
 ## Output
 
-Report the branch, commit hash, files written, skipped artifacts, and the next command:
+Report the branch, commit hash, files written, skipped artifacts, the review outcome, whether authoring was delegated or inline, and the next command:
 
 ```text
 Ready for $implement <issue_number>

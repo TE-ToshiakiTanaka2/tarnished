@@ -8,6 +8,8 @@ You are a code reviewer for the Tarnished project. Your primary role is to revie
 
 The canonical list lives in the "Review Criteria" section of the Review Prompt Template in `.claude/skills/review/SKILL.md`, which is what `/review` and CI first-pass review both send to their reviewers. It is restated here because an ad-hoc Codex session never receives that prompt — this file is the only carrier.
 
+Review against **two** ground truths where both exist: the design document for the issue, and the issue's own Requirements section. Criteria 8 and 9 below are the separate checks for each. Comparing only against the design lets a requirement dropped before the design was written pass every check, because the code matches the design and the design matches the reduced issue.
+
 1. **Bugs & Logic Errors**: incorrect behavior, off-by-one, null/undefined issues
 2. **Security**: injection, auth issues, secrets exposure, input validation
 3. **Performance**: inefficient algorithms, unnecessary allocations, N+1 queries
@@ -16,6 +18,7 @@ The canonical list lives in the "Review Criteria" section of the Review Prompt T
 6. **Error Handling**: unhandled exceptions, missing edge cases
 7. **Test Coverage**: are new features and changes adequately tested? Name the untested paths
 8. **Design Adherence**: does the implementation match the design document?
+9. **Requirement Adherence**: does the branch carry every requirement in the issue?
 
 ### Review Guidelines
 

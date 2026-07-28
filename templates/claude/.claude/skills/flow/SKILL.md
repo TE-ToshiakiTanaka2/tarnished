@@ -1,6 +1,6 @@
 ---
 name: flow
-description: Run the issue lifecycle end to end — issue, design, implement, review, pr — for one GitHub Issue, entering at the first incomplete stage. Can start from a raw requirement when no issue exists yet. Threads one base branch through every stage and gates on approval before design and before implementation.
+description: Run the issue lifecycle end to end — issue, design, implement, review, pr — for one GitHub Issue, entering at the first incomplete stage. Can start from a raw requirement when no issue exists yet. Threads one base branch through every stage, delegating each stage's authoring and reviewing the result inline.
 argument-hint: "[--issue N] [--base <branch>] [--from <stage>] [--merge]"
 disable-model-invocation: true
 ---
@@ -31,7 +31,9 @@ This skill is the Claude Code projection of `.tarnished/workflows/flow.md`. Keep
 
 ## Roles
 
-Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary, the routing table, and the advisor's invocation points. Stage boundaries are not delegation boundaries: route each unit of work by its nature, so a stage can be part-inline and part-delegated.
+Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary, stage ownership, and the blocked-result protocol; where it disagrees with `.tarnished/workflows/flow.md`, the skills are authoritative.
+
+`/flow` runs as the **orchestrator**. It holds the requirements dialogue, dispatches the `designer` and the `executor`, reviews what each returns, triages review findings, and owns the merge decision. It is also the only role that can reach the user, which is why this skill carries no approval gates: the party that reviews each artifact is the session itself, and it escalates when it needs to rather than stopping by default.
 
 ## Stage 1: Resolve inputs
 
@@ -79,11 +81,13 @@ The requirement-first entry never reaches this table — Stage 1 already set it 
 | No branch matching `#<n>/`, local or remote, and the issue is open | `design` |
 | Branch exists, no `docs: add design documents for #<n>` commit on it | `design` |
 | Design commit present, no later commit touching anything outside `docs/design/` | `implement` |
-| Implementation commits present, no `docs/review/#<n>/review.md` on the branch, or one with no "Fixes Applied" section | `review` |
+| Implementation commits present, no `docs/review/#<n>/review.md` on the branch, or one with no "Fixes Applied" section | `review` — but **first re-run the implementation review** (see below) |
 | Review artifact complete, no pull request for the branch | `pr` |
 | Open pull request for the branch | Resume at `pr` — CI validation and, with `--merge`, the merge still have to run |
 | Merged pull request for the branch | Nothing to do — report and stop |
 | Closed but unmerged pull request | Report it and stop; reopening or superseding it is the user's call |
+
+A resumed run entering `review` re-runs the orchestrator's implementation review before the external review. The executor commits incrementally, so an interrupted `/implement` leaves commits on the branch that were never reviewed — and "implementation commits exist" cannot distinguish reviewed work from abandoned partial work. Re-running the review is cheap, is idempotent, and needs no extra artifact; the alternative, a durable completion marker, reintroduces exactly the evidence bookkeeping that moving `/design`'s commit after its review removed.
 
 Two evidence rules are deliberately stricter than "the file exists":
 
@@ -98,66 +102,60 @@ Track the stages as tasks so a long run stays observable, and keep the task stat
 
 ## Stage 3: Run the stages
 
-Run from the entry stage through `pr` in this exact order, honouring each gate **as it is reached** — not as a review afterwards:
+Run from the entry stage through `pr` in this exact order:
 
 ```
-issue → Gate A → design → Gate B → implement → review → triage → pr
+issue → design → implement → review → triage → pr
 ```
 
-Both gates are defined in Stage 4. A gate that comes before your entry stage does not apply. Never run a later stage before a gate that precedes it has cleared.
+There are no approval gates between stages. Each delegated stage ends with the orchestrator's own review of what came back, defined by that stage's skill, and a blocking finding is sent back to its author before the run moves on — capped at 2 rounds, then escalated. Never advance past a stage whose review has not cleared.
 
 For each stage, read its skill and follow it.
 
 When the entry stage is `issue`, run `/issue` with no arguments, capture the number it returns, and use that number for every later stage. Stage 1 rules 1 and 4 are the two routes into it.
 
-| Stage | Skill | Arguments passed |
-| --- | --- | --- |
-| `issue` | `.claude/skills/issue/SKILL.md` | — |
-| `design` | `.claude/skills/design/SKILL.md` | issue number, `--base` |
-| `implement` | `.claude/skills/implement/SKILL.md` | issue number, `--base` |
-| `review` | `.claude/skills/review/SKILL.md` | `--base` as the target branch |
-| `pr` | `.claude/skills/pr/SKILL.md` | `--base` as the target branch, `--merge` when given |
+| Stage | Skill | Arguments passed | Authoring |
+| --- | --- | --- | --- |
+| `issue` | `.claude/skills/issue/SKILL.md` | — | orchestrator, inline |
+| `design` | `.claude/skills/design/SKILL.md` | issue number, `--base` | `designer` subagent |
+| `implement` | `.claude/skills/implement/SKILL.md` | issue number, `--base` | `executor` subagent |
+| `review` | `.claude/skills/review/SKILL.md` | `--base` as the target branch | `external-reviewer`; fixes by `executor` |
+| `pr` | `.claude/skills/pr/SKILL.md` | `--base` as the target branch, `--merge` when given | `executor`, except content check and merge |
+
+Where the primary agent has no subagent mechanism, every stage runs inline under it and the report says so. The procedure is unchanged; what is lost is the model separation between roles.
 
 Report each stage's own output as that stage completes, rather than accumulating everything to the end.
 
-## Stage 4: Approval gates
+## Stage 4: Where the run stops for the user
 
-Two gates, with deliberately different resume semantics.
+This skill has no approval gates. Both of the gates it used to carry existed because the party that could check an artifact against the requirement was a human, and the alternative — a read-only subagent — could not reach the user. With authoring delegated and the review kept in the session, the reviewer is the same party that conducted the requirements dialogue and can escalate whenever it needs to.
 
-### Gate A — before `design`, when this run created the issue
+A run therefore stops for the user in exactly four places. The list is stated so the property is checkable rather than emergent:
 
-When the run entered at `issue`, present the created issue for approval before spending a design cycle on it.
+1. **Requirement gathering** in `/issue` — the Socratic dialogue and the requirements-summary approval loop. The user is the irreplaceable input here, and nothing about it is delegated.
+2. **An escalation** — a blocked-result from the `designer` or the `executor` whose answer is the user's to give, or a blocking review finding that survives 2 rounds. Report the finding and what was attempted.
+3. **Argument resolution** — an unresolvable issue number, or a contradictory flag pair (Stage 1).
+4. **A `/pr` failure** — unknown CI status at the wait deadline, a merge conflict, or the fix loop exhausting its limit.
 
-`/issue`'s own approval loop covers the **requirements summary** only. Its estimation, implementation approach, and task breakdown are produced afterwards and never re-presented — and those are what scope every later stage. Without this gate, one run goes from a raw requirement straight into a design cycle that commits artifacts, with nobody having seen the issue as filed.
+Anything else is the orchestrator's to decide. A stop that is not on this list is a bug in the run, not a courtesy.
 
-Present the delta beyond what was already approved inside `/issue`, not the whole issue again, and offer "edit the issue, then proceed" rather than a bare approve/abort. A gate that can only be accepted trains rubber-stamping.
-
-Skip this gate when the run entered at `design` or later. A resumed run arrives via `--issue N`, and re-asking would change behavior for runs that already carry a number. The consequence is accepted: an interrupted requirement-first run, resumed later, proceeds on an issue nobody explicitly approved — by then the issue exists on GitHub and is reviewable out of band.
-
-### Gate B — before `implement`
-
-Present the design for approval and do not proceed until the user approves.
-
-Unlike Gate A, this gate runs on **resumed** runs too. `/design` commits its artifacts in Phase 8 and only then reaches its sign-off gate, so a design commit proves the artifacts were written, not that anyone approved them — an interrupted run would otherwise resume straight into implementation past a gate that never cleared. On a resumed run, present the already-committed design rather than re-deriving it.
-
-Two cases skip it:
-
-- **Entering at `review` or `pr`** — implementation already happened, so a gate before it has nothing left to guard.
-- **Entering at `implement` with no design artifacts** — `/implement` treats design as optional, so there may be nothing to present. Say so in the report rather than blocking; the user asked for that entry explicitly.
-
-The asymmetry between the two is deliberate: Gate B has no way to tell an approved design from an unapproved one, while Gate A's subject is a GitHub issue that remains visible and editable after the run ends.
+Stage skills carry their own interactive prompts for degraded conditions, and under `/flow` those resolve automatically rather than becoming a fifth stop. In particular, `/review` offers a choice when the configured reviewer is missing or unauthenticated: under `/flow`, fall through its resolution ladder to the next available reviewer, mark the artifact as a fallback review, and record which reviewer was used and why. Stop only when **no** reviewer at all can be resolved — that is a stage that cannot complete, which is covered by the rule below rather than by a consent prompt.
 
 ## Stage 5: Review triage
 
-After `review`, decide the disposition of each finding using the severity policy in `review/SKILL.md`: Critical and Major must be fixed before the PR.
+After `review`, decide the disposition of each finding using the severity policy in `review/SKILL.md`.
 
-Critical findings are not deferrable. A Critical finding blocks PR creation until it is fixed; there is no advisor consult and no rationale that clears it.
+Critical findings are not deferrable. A Critical finding blocks PR creation until it is fixed; no rationale clears it.
 
-Major findings may be deferred. When intending to leave one unfixed, consult the `advisor` once — this is the mechanical trigger, not a judgment call about whether you feel uncertain — and record the rationale in the review artifact alongside the finding. Minor findings and suggestions are noted, not gated on.
+Major findings may be deferred, but only with the rationale recorded in the review artifact alongside the finding. Minor findings and suggestions are noted, not gated on.
+
+Triage is the orchestrator's judgment; applying the fixes is the `executor`'s work. Dispatch it with the must-fix list rather than editing inline.
 
 ## Stage 6: Pull request
 
-Run `/pr` inline. When resuming onto an existing open PR, skip creation and continue from its CI validation. Its Phase 1 quality pass mixes judgment (which findings matter, which refactor preserves behavior) with mechanics (formatters, linters, cleanup); route within it per the delegation table rather than delegating the pass as a unit.
+Follow `/pr`. When resuming onto an existing open PR, skip creation and continue from its CI validation.
+
+The stage splits at the irreversible operation: the `executor` runs the quality pass, drafts the PR body, pushes, creates the PR, and monitors CI, while the orchestrator reads the body before creation and owns the merge decision including under `--merge`. The executor never runs `gh pr merge`.
 
 ## Reporting
 
@@ -168,8 +166,9 @@ Report, in whatever shape fits the run:
 - Artifacts each stage wrote
 - Review verdict, and how each Critical and Major finding was resolved or deferred
 - PR URL, CI status, and merge result when merging was requested
-- Which approval gates ran, which were skipped, and why
-- Whether the advisor was consulted or skipped, and why
+- Which stages were delegated and which ran inline, and why
+- Every point where the run stopped for the user, matched against the four in Stage 4
+- Blocked-results received, how each was resolved, and any review loop that reached its 2-round cap
 - Anything left incomplete, and what blocked it
 
 ## Error Handling
@@ -180,10 +179,11 @@ Report, in whatever shape fits the run:
 | Issue number unresolvable, `--from` names a stage after `issue` | Ask for an existing issue number, or cancel. The requirement-first entry is not offered — it would override the `--from` just given |
 | `--from issue` given with `--issue N` | Report the contradiction and ask which was meant. Checked before the precedence rules, so rule 1 cannot short-circuit past it |
 | `/issue` returns no number (aborted) | Stop. Do not proceed to `design` |
-| Gate A declined | Stop, leaving the created issue in place for editing |
+| A blocked-result the orchestrator cannot answer | Escalate to the user with the question, the options, and what the subagent already checked |
+| A blocking review finding survives 2 rounds | Report it with what was attempted, and escalate. Do not advance the stage |
 | `--from <stage>` prerequisites absent | Report the missing prerequisite and stop |
 | A stage cannot complete | Stop at that stage; report which and why. Do not run later stages on a broken prerequisite |
-| Advisor unavailable | Skip the consult and note it. Advice never gates a stage |
+| No subagent mechanism available | Run every stage inline under the primary agent and say so in the report. Never silently skip a stage's review |
 | CI status unknown at the `/pr` timeout | Report and stop. Do not merge |
 
 ## Integration

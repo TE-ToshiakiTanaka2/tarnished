@@ -72,8 +72,12 @@ jobs:
           prompt: |
             Review this pull request as a first-pass reviewer.
 
-            If the PR body links an issue (Closes #N) and docs/design/#N/design.md
-            exists, read it first and review the diff against that design.
+            If the PR body links an issue (Closes #N), read BOTH ground truths
+            before reviewing: docs/design/#N/design.md when it exists, and the
+            issue's own Requirements section via `gh issue view N`. They are
+            distinct — criterion 8 compares the diff against the design, and
+            criterion 9 compares the branch against the issue. Only the second
+            catches a requirement dropped before the design was written.
 
             Review criteria (canonical list: "Review Criteria" in
             .claude/skills/review/SKILL.md's Review Prompt Template):
@@ -85,6 +89,7 @@ jobs:
             6. Error Handling — unhandled exceptions, missing edge cases
             7. Test Coverage — are new features/changes adequately tested?
             8. Design Adherence — does the implementation match the design document?
+            9. Requirement Adherence — does the branch carry every requirement in the issue?
 
             Report gaps and defects, not stylistic nitpicks — code-quality
             findings must materially affect maintainability or violate a
