@@ -47,6 +47,8 @@ This stage splits at the irreversible operation.
 
 A pull request is outward-facing and a merge is irreversible, so neither is delegated to the stage's writing agent. The executor never runs `gh pr merge`.
 
+When the executor returns a **blocked-result** — a CI failure whose cause is a design or requirement question rather than a fixable defect, for instance — the orchestrator answers it and re-dispatches, or escalates to the user when the answer is the user's to give. See `_shared/delegation/SKILL.md`.
+
 Where the primary agent has no subagent mechanism, the orchestrator runs the whole stage inline; record in the report that delegation was unavailable.
 
 ## erd Command Invocation
