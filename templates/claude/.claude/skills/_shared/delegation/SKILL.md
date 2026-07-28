@@ -1,24 +1,65 @@
 ---
 name: _shared/delegation
-description: Internal shared skill defining the role vocabulary and the work-routing table used across the lifecycle skills
+description: Internal shared skill defining the role vocabulary, stage ownership, model binding, and the subagent escalation protocol used across the lifecycle skills
 ---
 
-# Shared Skill: Role Vocabulary and Work Routing
+# Shared Skill: Roles, Stage Ownership, and Escalation
 
 Internal reference that defines who executes what across the lifecycle. Referenced by `/issue`, `/design`, `/implement`, `/review`, `/pr`, and `/flow`.
 
 **This skill is NOT directly invocable by users.** It is a reference document included by other skills.
 
-Skills name **roles**, never models. A model name written into a skill cannot be changed by a downstream project without forking the file; a role can be rebound in one JSON object.
+Skills name **roles**, never models. A model name written into a skill cannot be changed by a downstream project without forking the file; a role can be rebound in one place.
+
+Where this file disagrees with `.tarnished/workflows/*.md`, this file is authoritative. `.claude/skills/` and `.claude/agents/` are refresh-managed while `.tarnished/workflows/` is not, so a project can be running current skills against a stale contract.
 
 ## Roles
 
-| Role | Responsibility | Writes? |
+| Role | Execution | Responsibility | Writes? |
+| --- | --- | --- | --- |
+| `orchestrator` | Inline — it **is** the main session | Requirements dialogue, issue authoring, review of every delegated artifact, review triage, merge decision, escalation to the user | Yes |
+| `designer` | Delegated subagent | Design artifacts, once the specification is settled | Yes |
+| `executor` | Delegated subagent | Implementation, review-fix application, PR authoring and CI monitoring | Yes |
+| `external-reviewer` | Separate vendor CLI or a fresh context | Independent review of the branch diff | No |
+
+The orchestrator is the only role that can interact with the user. Everything that needs an answer from the user reaches them through it.
+
+## Stage ownership
+
+| Stage | Writes | Reviews |
 | --- | --- | --- |
-| `orchestrator` | Judgment: requirement scoping, architecture, interpreting design intent, review triage, refactor selection, merge decision | Yes |
-| `executor` | Mechanical, high-volume work with an objective success condition | Yes |
-| `external-reviewer` | Independent review from a different vendor or a fresh context | No |
-| `advisor` | Read-only second opinion on a decision, before it is committed to | No |
+| `issue` | `orchestrator` | the user, through the requirements dialogue |
+| `design` | `designer` | `orchestrator`, against the issue's Requirements |
+| `implement` | `executor` | `orchestrator`, against the design |
+| `review` | `external-reviewer` | `orchestrator` triages; `executor` applies the fixes |
+| `pr` | `executor` authors the body, creates the PR, monitors CI | `orchestrator` checks the content and owns the merge decision |
+
+**Route by stage authorship, not by the nature of each unit of work.** Each stage's authoring has one owner and the orchestrator reviews rather than co-authors. Within a delegated stage, the subagent routes its own internal work. This replaces the earlier rule that routed work by nature *within* a stage so that a stage could be part-inline and part-delegated; that rule assumed the orchestrator was the only capable writer, and it produced stages with no single accountable author.
+
+A pull request is outward-facing and a merge is irreversible, which is why neither is delegated to the stage's writing agent.
+
+## Model binding
+
+Each role's model comes from exactly one place, chosen by how the role is dispatched.
+
+| Role | Channel | Value |
+| --- | --- | --- |
+| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5` |
+| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
+| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
+| `external-reviewer` | `.codex/config.toml` | reviewer-owned |
+
+The orchestrator is the session rather than a subagent, so no frontmatter channel reaches it; `.claude/settings.json :: model` is its only channel and is read once at session start.
+
+For the two delegated roles the precedence is:
+
+| # | Source | Notes |
+| --- | --- | --- |
+| 1 | `roles.<role>.model` in `.tarnished/agent-profile.json` | Downstream override. Not refresh-managed, so it survives every container start |
+| 2 | `model:` in the agent definition frontmatter | The shipped default. `.claude/agents/` is refresh-managed, so it reaches every project on the next start |
+| 3 | `inherit` — the session's model | What applies when neither above names a model. This was the state of every role before the models were pinned |
+
+`roles.<role>.model` ships as `null` for every role: the profile answers *which agent*, and the model comes from the channel above. Values are pinned model IDs rather than aliases, because an alias silently re-points at a new generation; bumping a pin is a tracked edit to one file.
 
 ## Role Binding
 
@@ -27,14 +68,13 @@ Bindings live in `.tarnished/agent-profile.json`:
 ```json
 "roles": {
   "orchestrator":      { "agent": "primary", "model": null },
+  "designer":          { "agent": "primary", "model": null },
   "executor":          { "agent": "primary", "model": null },
-  "advisor":           { "agent": "primary", "model": null },
-  "external-reviewer": { "agent": "review",  "model": null, "reasoning_effort": null }
+  "external-reviewer": { "agent": "review",  "model": null }
 }
 ```
 
 - `"primary"` and `"review"` are indirections to the sibling `primary_agent` / `review_agent` fields.
-- `model: null` means "use that agent's configured default". A project that wants a specific model per role sets it here.
 - This file is not refresh-managed, so a downstream edit survives every container start.
 
 **Resolution and fallback** — apply this in every consumer:
@@ -47,41 +87,52 @@ Bindings live in `.tarnished/agent-profile.json`:
 
 Report which of the two paths was taken when a stage's output names a role.
 
-## Routing: by nature of work, not by stage
+## Delegation and the blocked-result protocol
 
-Route work **before** attempting it. A stage is not a routing unit — most stages contain both kinds of work, and delegating a whole stage bundles judgment into a mechanical unit.
+`designer` and `executor` cannot interact with the user. Instead of assuming, either **stops and returns a blocked-result** whenever the answer to a question is not derivable from the issue, the design artifacts, or the codebase.
 
-| Nature | Examples | Role | Execution |
-| --- | --- | --- | --- |
-| Judgment | Interpreting design intent; matching existing patterns; deciding what counts as a finding; choosing a behavior-preserving refactor; review triage; merge decision; scoping an issue | `orchestrator` | Inline |
-| Mechanical | Repository survey / indexing; lint, format, and type-check fix loops; boilerplate test authoring; dead-code cleanup; CI log collection; bulk mechanical edits across many files | `executor` | Delegated |
-| Independent verification | Reviewing the branch diff against the design | `external-reviewer` | Separate vendor or fresh context |
-| Second opinion | Challenging an architecture; breaking a triage tie; sanity-checking scope | `advisor` | Read-only, bounded |
-
-Worked examples of stages that split:
-
-- `erd:implement` — interpreting the design and matching existing conventions is judgment and stays inline; a mechanical sweep applying an already-decided change across many files is delegated.
-- `erd:analyze` / `erd:improve` — deciding what counts as a finding and which refactor preserves behavior is judgment; running the analyzers and collecting their output is mechanical.
-- `erd:build` / `erd:test` — the fix loop is mechanical; deciding that a failing test encodes the wrong expectation is judgment.
-
-## Escalation
-
-Route by nature up front rather than delegating first and escalating on failure.
-
-- Retry budgets exist **only** for mechanical steps, and **only** for command-level failure — "the command errored", not "the model misjudged".
-- When a mechanical step exhausts its budget, the orchestrator takes over. The failure is by then no longer mechanical.
-- Judgment work is never retried on the theory that a second attempt lands better. If a judgment turns out wrong, the orchestrator re-decides with the new information.
-
-## Advisor invocation points
-
-Bounded to three points, at most one consult each per run. Each has a mechanical trigger — an unbounded "consult when unsure" becomes consulting on everything.
-
-| Point | Trigger | Question put to the advisor |
+| Field | Required | Purpose |
 | --- | --- | --- |
-| `/design`, before authoring `design.md` | Estimated size is M or larger | Challenge the chosen architecture with an alternative |
-| `/flow`, review triage | The orchestrator intends to **not** fix a Critical or Major finding | Is deferring this defensible? |
-| `/issue`, after the requirements summary | Scope is still ambiguous | Is the scope right-sized? |
+| Question | Yes | What could not be resolved, stated as a question |
+| Options | Yes | The readings or approaches visible, and what each implies |
+| Evidence checked | Yes | Issue, artifacts, and code paths already consulted |
+| Partial work | No | What was completed before the block, so it is not redone |
 
-The advisor is defined in `.claude/agents/advisor.md`. It is read-only and never writes, stages, or commits. Its output is advice; the orchestrator still decides and still owns the outcome.
+"Evidence checked" is required rather than courteous: it is what distinguishes a genuine block from a question the subagent did not try to answer.
 
-Skip the consult, without failing the stage, when the advisor definition is absent or when the primary agent has no read-only subagent mechanism (for example a Codex-primary profile). Note the skip in the stage's report.
+| Trigger | Definition |
+| --- | --- |
+| Requirement-level ambiguity | Two readings of an acceptance criterion that produce different interfaces |
+| Design/convention conflict | The design implies a pattern the codebase consistently does otherwise |
+| Missing prerequisite | A required artifact does not exist |
+
+On receiving a blocked-result the orchestrator answers it and re-dispatches, or escalates to the user when the answer is the user's to give. A subagent that guesses past an ambiguity is the failure this protocol exists to prevent, and it is why delegating the two highest-judgment stages is defensible.
+
+## Review of delegated work
+
+The orchestrator reviews each delegated artifact before it is committed or built on:
+
+- **Design** — against the issue's Requirements. The order is **write → review → commit**, and the orchestrator performs the commit. Because the commit follows the review, the commit itself records that the review happened; no separate approval artifact is needed.
+- **Implementation** — against the design.
+- **Review findings** — triaged by the orchestrator; fixes applied by the executor.
+
+A blocking finding sends the artifact back to its author, capped at **2 rounds**. A blocking finding surviving round 2 is escalated to the user with the finding and what was attempted. Reaching the cap is always reported, never passed over silently.
+
+## Triage policy
+
+| Severity | Policy |
+| --- | --- |
+| **Critical** | Must fix before the PR. Not deferrable — no rationale clears it |
+| **Major** | Must fix before the PR, unless deferred with a rationale recorded in the review artifact |
+| **Minor** | Fix when cheap, otherwise record |
+| **Suggestions** | Discuss; no obligation |
+
+The full taxonomy and the review criteria are defined in `.claude/skills/review/SKILL.md`, which is their canonical source.
+
+## Retries
+
+Retry budgets exist **only** for mechanical steps, and **only** for command-level failure — "the command errored", not "the model misjudged". When a mechanical step exhausts its budget, the orchestrator takes over; the failure is by then no longer mechanical. A judgment is never retried on the theory that a second attempt lands better — if a judgment turns out wrong, the orchestrator re-decides with the new information.
+
+## Capability fallback
+
+Delegation requires a primary agent that can run subagents. Where it cannot — for example a Codex-primary profile — **every stage runs inline under the primary agent**, and the stage report records that delegation was unavailable. The lifecycle stays functional rather than degrading quietly; what is lost is the model separation between roles, not any step of the procedure.
