@@ -1,14 +1,14 @@
 # Project-level Codex CLI configuration
 # See: https://developers.openai.com/codex/config-advanced/
 
-# Review model, pinned rather than always-latest: /review records the
+# Session and review model, pinned rather than always-latest: /review records the
 # resolved model and reasoning effort in the review artifact, so the pair
 # below is what reviews are attributed to. Validate any change with
 # `codex exec --strict-config` before committing it.
-model = "gpt-5.6-sol"
-model_reasoning_effort = "ultra"
+model = "gpt-6-astra"
+model_reasoning_effort = "high"
 
-# Approval policy: require approval for all actions
+# Approval policy: ask when required by the active execution policy
 # Options: "untrusted", "on-request", "on-failure", "never"
 approval_policy = "on-request"
 

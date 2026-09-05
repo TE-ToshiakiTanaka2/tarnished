@@ -24,11 +24,9 @@ This skill is the Claude Code projection of `.tarnished/workflows/implement.md`.
 
 Read `.claude/skills/_shared/delegation/SKILL.md` for the role vocabulary and stage ownership; where the two disagree with `.tarnished/workflows/implement.md`, the skills are authoritative.
 
-Implementation belongs to the **`executor`** subagent (`.claude/agents/executor.md`). The orchestrator prepares the inputs, dispatches the executor, and reviews the result against the design.
+Implementation belongs to the **`executor`** subagent (`.claude/agents/executor.md`). The orchestrator supplies the issue requirements, design, and accepted user decisions, then reviews the result against both the issue and design.
 
-**This reverses the previous position**, which held that this stage was "the one most often mis-delegated" and that interpreting the design and matching existing conventions "stays with the orchestrator". That position rested on two assumptions that no longer hold: that the orchestrator was the only writer capable of the work, and that delegation meant handing off with no way back. The executor is model-pinned for this job, and the blocked-result protocol gives it a mandatory return path. The reversal is recorded here rather than left implicit, because an instruction that contradicts the old text without explaining itself reads as an error.
-
-The carve-out is what makes the delegation safe: the executor **returns rather than decides** whenever interpreting the design or reconciling it with an existing convention requires a judgment the design does not settle. On receiving a blocked-result the orchestrator answers and re-dispatches, or escalates to the user when the answer is the user's to give.
+The executor makes routine implementation choices using repository conventions. Decisions that change requirements, public behavior, design intent, or authority return through the blocked-result protocol. The orchestrator resolves them from existing context or asks the user when a new decision is required.
 
 Where the primary agent has no subagent mechanism, the orchestrator implements inline; record in the report that delegation was unavailable.
 
@@ -51,8 +49,8 @@ Seven steps, executed by the executor. Each carries its own skip condition — a
 | 1 | **Prepare** — read the issue with `gh issue view`; detect or create the branch via `_shared/branch` (Issue mode, with `base`); load both design layers | Never. The branch and the design artifacts are the stage's inputs |
 | 2 | **Survey** — `/erd:index-repo` to map relevant modules, locate files to change, and learn existing patterns | The change is confined to files you have already read and whose conventions are established |
 | 3 | **Implement** — `/erd:implement`, following the design artifacts and the codebase's existing conventions; commit per logical unit | Never |
-| 4 | **Build** — `/erd:build`: linters, formatters, type checkers; fix iteratively | Never |
-| 5 | **Test** — `/erd:test`: run the suite, assess coverage, author tests for changed paths | Never |
+| 4 | **Build** — `/erd:build`: required linters, formatters, type checkers; fix failures | No applicable check for the changed assets, or a valid result already covers unchanged code. Report the evidence |
+| 5 | **Test** — `/erd:test`: verify affected behavior and add meaningful coverage for new paths | Existing checks already cover the change, or no executable behavior changed. Still run required asset/invariant checks and report the scope |
 | 6 | **Analyze and improve** — `/erd:analyze` for findings, `/erd:improve` to apply behavior-preserving fixes, then re-run build and test | No findings worth acting on, or the change is too small to have introduced any. Say so rather than running the loop for form |
 | 7 | **Troubleshoot** — `/erd:troubleshoot` for root-cause analysis | Build and test pass, or a failure was fixed directly. Reach for this when failures persist after direct fixes, or stem from configuration and dependencies rather than code |
 
@@ -133,7 +131,7 @@ Report, in whatever shape fits the change:
 ## Best Practices
 
 - **Design First**: Load and follow design artifacts from `/design` if available; where they are absent, the issue's Requirements take their place as the ground truth for both authoring and review
-- **Return, Do Not Guess**: An unsettled judgment goes back to the orchestrator. A subagent that assumes its way past an ambiguity is the failure the protocol exists to prevent
+- **Escalate Material Decisions**: Resolve routine choices within the accepted scope; return decisions that would change requirements or design intent
 - **Skip Deliberately**: A skipped step is a decision to report, not a step to hide
 - **Incremental Implementation**: Implement and commit in small logical units
 - **Type Safety**: Maximize use of type systems where available

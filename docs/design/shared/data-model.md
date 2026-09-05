@@ -304,8 +304,8 @@ Flat top-level TOML. All keys optional from Codex's perspective; tarnished sets 
 
 | Key | Type | Value (workspace + template) | Purpose |
 | --- | --- | --- | --- |
-| `model` | string | `"gpt-5.6-sol"` | Pinned review model (#308) |
-| `model_reasoning_effort` | string | `"ultra"` | Deepest reasoning tier (paid only when `/review` runs) |
+| `model` | string | `"gpt-6-astra"` | Default Codex session and review model |
+| `model_reasoning_effort` | string | `"high"` | Default effort for Codex sessions, including reviews |
 | `approval_policy` | string | `"on-request"` | Codex prompts before destructive actions |
 | `sandbox_mode` | string | `"workspace-write"` | File writes restricted to workspace |
 
@@ -328,30 +328,30 @@ Flat JSON object. Written by `templates/agent-workflows/plugin.sh` and rendered 
 | Field | Type | Description |
 | --- | --- | --- |
 | `roles.<role>.agent` | string | `"primary"` / `"review"` (indirections to the sibling fields), or a concrete agent identifier |
-| `roles.<role>.model` | string \| null | `null` = fall through to the agent definition's `model:` frontmatter, and failing that to `inherit` (the session model). Read only for the delegated subagent roles — `designer` and `executor` |
+| `roles.<role>.model` | string \| null | Read only for `designer` and `executor`. A non-null value must be supported by the actual dispatcher. `null` uses Claude agent frontmatter then session inheritance for Claude dispatch, or active session model/effort for Codex-native dispatch. Absent on `external-reviewer`. |
 
 `roles` values are deliberately **placeholder-free**. `primary_agent` / `review_agent` render to display strings — including `"Claude Code + Codex CLI"` and `"Manual review"` for the `dual` and non-Codex profiles (`setup.sh::derive_agent_names`) — which are not dispatchable identifiers.
 
-**Resolution contract** (identical across every consumer): `roles` absent, or any field still containing an unrendered `{{...}}` token, falls back to binding all roles to the primary agent and `external-reviewer` to `review_agent`. Unknown role keys are ignored rather than treated as errors. Consumers report whether the binding came from the profile or from the fallback.
+**Resolution contract** (identical across every consumer): resolve each role independently. An absent `roles` map or missing role uses the primary agent, except `external-reviewer`, which uses `review_agent`. Treat an unrendered `{{...}}` field as absent; do not discard valid sibling bindings. Unknown roles are ignored. Consumers report the binding source. The display strings above are not dispatcher IDs: resolve the actual tool before applying a model override.
 
-**Model binding by role** (#312): each role's model comes from exactly one place, chosen by how that role is dispatched. Before #312 every cell resolved to "the session model", because no level of any chain named a model for any role.
+**Model binding by role**: the following table describes Claude-primary dispatch. Codex-native primary roles use the active Codex session (`gpt-6-astra` / `high` by repository default); designer/executor inherit it unless a supported profile override is provided.
 
 | Role | Execution | Channel | Shipped value |
 | --- | --- | --- | --- |
 | `orchestrator` | Inline — it *is* the session | `.claude/settings.json :: model` | `claude-fable-5` |
 | `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
 | `designer` | Delegated subagent | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
-| `external-reviewer` | Separate vendor CLI | `.codex/config.toml` | reviewer-owned (`gpt-5.6-sol` / `ultra`) |
+| `external-reviewer` | Separate vendor CLI or fresh context | Reviewer's own configuration | Codex default: `gpt-6-astra` / `high` |
 
-For the two delegated roles the precedence is `roles.<role>.model` when non-null → the agent definition's `model:` frontmatter → `inherit`. Claude Code's subagent frontmatter accepts `sonnet`, `opus`, `haiku`, `fable`, a full model ID, or `inherit`, and defaults to `inherit`. Level 1 is not refresh-managed, so a downstream override survives every container start; level 2 lives in refresh-managed `.claude/agents/`, so a shipped default reaches every project on the next start.
+For Claude-dispatched designer and executor roles the precedence is `roles.<role>.model` when non-null → agent frontmatter → session inheritance. For Codex-native dispatch it is supported profile override → active Codex session model and reasoning effort. Overrides are vendor-specific; in `dual` mode keep them `null` when the profile is shared by both dispatchers. Reject an incompatible explicit override rather than passing a Claude model ID to Codex or translating it. Profile values are not refresh-managed; Claude agent defaults are refresh-managed.
 
-The `orchestrator` is outside that chain entirely: it is the session rather than a subagent, so nothing dispatches it and no frontmatter applies. `.claude/settings.json :: model` is its only channel and is read once at session start. That file is neither parity-checked nor manifest-tracked (`MANIFEST_EXCLUDE_GLOBS` treats it as user-owned), so the workspace and template copies may diverge and the template value is a scaffold-time default that `--upgrade` never revisits.
+The `orchestrator` is the active session, outside the subagent override chain. Claude session defaults come from `.claude/settings.json`; Codex session defaults come from `.codex/config.toml`. The Claude settings file is neither parity-checked nor manifest-tracked (`MANIFEST_EXCLUDE_GLOBS` treats it as user-owned), so its workspace and template values may diverge and `--upgrade` does not revisit its scaffold-time default.
 
-The `external-reviewer` is also outside it: `roles.external-reviewer` no longer carries `model` or `reasoning_effort` (#312), because the reviewer is executed by a different vendor's CLI that already owns a config file and a second declaration site could only drift. `/review` reads `.codex/config.toml` alone and records the resolved values in the artifact header, so a config change stays attributable. Removing the keys is backward compatible in both directions — absent keys already fell back, and unknown keys are already ignored.
+The `external-reviewer` is outside the subagent override chain: `roles.external-reviewer` carries no `model` or `reasoning_effort`. The selected reviewer owns those settings; for Codex, `/review` reads `.codex/config.toml`. Record runtime-confirmed values when available and label configuration-only values as configured. Unknown legacy model fields are ignored.
 
-Values are pinned IDs rather than aliases, matching the `.codex/config.toml` convention of pinning exactly and bumping in a tracked commit (#292 exists because a model value changed invisibly). Only `claude-opus-5` carries the `[1m]` suffix. On the Anthropic API, Fable 5, Sonnet 5, and Opus 4.7 and later all default to the 1M window, so the suffix is inert for all three there; it matters only where the window is budgeted at 200K — behind an LLM gateway, or under `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`. Opus differs by **plan**: 1M is included on Max/Team/Enterprise but requires usage credits on Pro, while Sonnet 5 and Fable 5 are unconditional on every plan. So the suffix is insurance on Opus and inert on the others — Sonnet 5 is documented as having no 200K variant and no `[1m]` suffix to select, and no `fable[1m]` alias exists.
+The shipped defaults use pinned model IDs. The Claude designer's `[1m]` suffix belongs to its Claude frontmatter configuration and is never passed to Codex. Availability of any configured model or suffix must be checked in the dispatcher runtime; a static configuration snapshot does not establish backend support.
 
-**Parity constraint on the workspace copy**: `scripts/verify-mirrors.sh` enforces byte-identity between `.tarnished/agent-profile.json` and `templates/agent-workflows/.tarnished/agent-profile.json`, so the tarnished workspace cannot populate `roles.<role>.model` without failing the parity gate — and its copy still carries unrendered `{{...}}` placeholders, which the resolution contract treats as absent, so the workspace always runs the fallback path. Frontmatter is the only model channel available in-repo. Downstream copies are rendered and manifest-tracked rather than parity-checked, so level 1 works there.
+**Parity constraint on the workspace copy**: `scripts/verify-mirrors.sh` enforces byte-identity of the workspace profile and `templates/agent-workflows/.tarnished/agent-profile.json`. The shipped primary-role model overrides remain `null`; unresolved display-name placeholders use the per-field fallback above. In-repo defaults come from the actual dispatcher: Claude agent frontmatter for delegated Claude roles and the active Codex session for Codex-native roles. Rendered downstream profiles can set supported vendor-specific overrides without changing refreshed skills.
 
 **Forward compatibility**: unknown top-level keys are ignored, so adding roles or per-role fields is non-breaking.
 

@@ -49,6 +49,8 @@ Examples:
 
 Given an `issue_number`, follow these steps:
 
+Before checkout, pull, merge, or commit, inspect `git status --short` and `git worktree list`. Reuse the current issue worktree when appropriate. Preserve unrelated tracked, staged, and untracked work; never stash, reset, or commit it automatically. When switching would carry edits to another issue or overwrite files, use a separate worktree if possible. If the desired branch is already checked out elsewhere, use that worktree without moving the user's checkout. Ask only if ownership or a real conflict prevents progress. In every commit, stage only owned changes and inspect the staged diff for pre-existing staged content.
+
 ### Step 1: Fetch Issue Metadata
 
 ```bash
@@ -95,30 +97,35 @@ Convert the issue title to kebab-case:
 ### Step 5: Check for Existing Branches
 
 ```bash
-git branch -a | grep -F "#{issue_number}/"
+git for-each-ref --format='%(refname)' refs/heads refs/remotes
 ```
 
-The trailing `/` is a delimiter anchor, not decoration: the branch pattern always places `/` immediately after the issue number, so without it a search for `#12` also matches `#123`, `#124`, … and checks out an unrelated branch.
+Match the exact `/#<issue_number>/` path segment. Deduplicate local branches and their remote-tracking counterparts. Fetch when remote state is needed; a failed fetch is not evidence that no branch exists. If multiple distinct issue branches match, prefer the current matching branch or the branch identified by the issue's open PR; otherwise ask which branch to use. Never pick the first textual match.
 
 ### Step 6: Branch Decision
 
+Use resolved, quoted branch names and validate a generated name with `git check-ref-format --branch`. If title normalization produces an empty slug, use `issue-<number>`. A diverged base must not be merged or reset implicitly: create the new worktree/branch from the fetched remote base, preserving the local base, or report why that is unavailable.
+
 **If a branch for the issue already exists:**
-- Checkout the existing branch: `git checkout <existing_branch_name>`
+- Use the safe worktree selected above; checkout the existing branch only when that preserves the current worktree: `git checkout <existing_branch_name>`
 - If the existing branch is remote-only: `git checkout -b <local_name> origin/<remote_name>`
-- If you need to create a new branch but want to preserve artifacts from the existing one:
-  1. Create the new branch from `{base}`
-  2. Immediately merge the existing branch: `git merge <existing_branch> --no-edit`
+- If the requested work requires a new branch preserving artifacts from the existing one, create it from the fetched remote base using the procedure below, then merge the resolved existing branch into that new branch: `git merge "$EXISTING_BRANCH" --no-edit`. Do not merge into or update the local base.
 
 **If no branch exists:**
+
+Bind `BASE` to the caller's base and `NEW_BRANCH` to the validated generated name. Fetch the explicit remote base; stop on fetch failure. Create directly from its commit, leaving the local base untouched:
+
 ```bash
-git checkout {base}
-git pull origin {base}
-git checkout -b {label}/{assignee}/#{issue_number}/{title}
+git fetch origin "refs/heads/${BASE}"
+BASE_COMMIT="$(git rev-parse --verify 'FETCH_HEAD^{commit}')"
+git check-ref-format --branch "$NEW_BRANCH"
 ```
+
+After inspecting status and worktrees as above, choose one creation path. In a safe current worktree, run `git switch --no-track -c "$NEW_BRANCH" "$BASE_COMMIT"`. When preserving the current checkout or its changes requires a separate worktree, resolve an unused `ISSUE_WORKTREE` path and run `git worktree add -b "$NEW_BRANCH" "$ISSUE_WORKTREE" "$BASE_COMMIT"`; continue the stage there. Do not run both paths.
 
 ## Base Branch
 
-`base` defaults to `develop`. Every step that names a base — checkout, pull, and the artifact-preserving merge path — uses the parameter, so a caller passing `--base main` gets a branch cut from `main` rather than one cut from `develop` while every later stage targets `main`.
+`base` defaults to `develop`. Every new-branch path uses the fetched remote commit of that parameter, including the artifact-preserving path. A caller passing `--base main` therefore branches from the remote `main` and uses `main` for later review and PR targeting without changing a local base branch.
 
 ## Error Handling
 

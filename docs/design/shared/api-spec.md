@@ -437,9 +437,9 @@ Each skill directory also carries `agents/openai.yaml` declaring `interface.disp
 | `/pr` | `[target_branch] [--merge]` |
 | `/flow` | `[--issue N] [--base <branch>] [--from <stage>] [--merge]` |
 
-`--base` defaults to `develop` and is threaded to `_shared/branch` Issue mode, which uses it for both `git checkout <base>` and `git pull origin <base>`. Before #308 the parameter did not exist and branch creation was hardcoded to `develop` while later stages honored the requested base.
+`--base` defaults to `develop` and is threaded to `_shared/branch` Issue mode. New branches are created directly from the freshly fetched remote base commit, in a separate worktree when needed; the local base is never pulled, merged, or reset implicitly. The same target is used for review and PR creation.
 
-`/flow` derives its entry stage from repository evidence — the issue's own state via `gh issue view <n> --json state,stateReason,closedByPullRequestsReferences`, then an anchored `#<n>/` branch match, the `docs: add design documents for #<n>` commit, later commits, `docs/review/#<n>/review.md`, and `gh pr list --head <branch> --state all` — rather than from a persisted state file. The issue check precedes the branch evidence because `/pr --merge` deletes the source branch, so a completed issue leaves no branch and "no branch" would otherwise read as "not started". `--from <stage>` overrides the derivation and fails closed when that stage's prerequisites are absent. The `issue` stage is the one exception: it has no prerequisites, because it creates them.
+`/flow` derives its entry stage from repository evidence rather than a persisted state file. Check issue state and linked merged PRs first, then discover existing branches using the exact `/#<n>/` segment without creating one. Inspect the resolved issue branch/worktree, committed design and its review, actual implementation and required checks, and PRs across all states for the intended head/base. An open PR is reused only after incomplete earlier stages finish. Review reuse follows `.claude/skills/review/references/completion.md`: status, verified code, freshly fetched target commit, and issue-body digest must match; a filename or `Fixes Applied` heading alone is insufficient. Failed lookups mean unknown state. An explicit `--from <stage>` stops on missing prerequisites without repairing an earlier stage; `issue` is exempt because it creates them.
 
 `/flow` resolves its issue number by a fixed precedence, first match wins (#310):
 
@@ -456,9 +456,9 @@ Contradictory pairs are rejected **before** the precedence table is consulted, b
 
 `/flow` carries **no** approval gates (#312). Until #312 it stopped twice — after an issue the run created, and before implementation — and both gates existed because the party that could review an artifact against the requirement was a human, and the alternative (a read-only subagent) could not reach the user. The restructure inverts what is delegated: authoring moves to subagents and the review stays in the session, so the reviewing party is the same one that conducted the requirements dialogue and can escalate whenever it needs to. The stage order is `issue → design → implement → review → triage → pr`.
 
-A `/flow` run stops for the user in exactly four places, and `flow/SKILL.md` states the list so the property is checkable rather than emergent: requirement gathering in `/issue`, an escalation the orchestrator cannot resolve (a subagent blocked-result, or a blocking review finding surviving two rounds), argument resolution (an unresolvable issue number or a contradictory flag pair), and a `/pr` failure.
+A `/flow` run stops for the user in exactly four places, and `flow/SKILL.md` states the list so the property is checkable rather than emergent: requirement gathering in `/issue`, an escalation the orchestrator cannot resolve (a subagent blocked-result, or a blocking review finding surviving two rounds), argument resolution (an unresolvable issue number, contradictory flags, or unmet prerequisites for an explicit `--from` stage), and a `/pr` failure.
 
-Gate B's load-bearing property — that a design commit proved artifacts were *written* rather than approved, because `/design` committed before its sign-off step — is resolved by reordering rather than by adding an artifact: the orchestrator reviews first and commits second, so the design commit is itself the record. `/flow`'s Stage 2 evidence derivation is unchanged by #312.
+The orchestrator reviews design artifacts before committing them. On resumption, inspect the committed artifacts and their review rather than treating a commit subject alone as proof of completion.
 
 ### Stage ownership and delegation (#312)
 
@@ -468,9 +468,9 @@ Each stage's **authoring** has a single owner; the orchestrator reviews rather t
 | --- | --- | --- |
 | `issue` | orchestrator (inline) | the user, through the requirements dialogue |
 | `design` | designer | orchestrator, against the issue's Requirements |
-| `implement` | executor | orchestrator, against the design |
+| `implement` | executor | orchestrator, against both the design and issue Requirements |
 | `review` | external-reviewer | orchestrator triages; executor applies the fixes |
-| `pr` | executor authors the body, creates the PR, monitors CI | orchestrator checks content and owns the merge decision |
+| `pr` | executor drafts the body and monitors CI; orchestrator creates the PR | orchestrator checks content and owns the merge decision |
 
 A pull request is outward-facing and a merge is irreversible, which is why neither is delegated to the stage's writing agent.
 
@@ -478,7 +478,7 @@ A pull request is outward-facing and a merge is irreversible, which is why neith
 
 ### Blocked-result contract (#312)
 
-`designer` and `executor` cannot interact with the user. Instead of assuming, either returns a blocked-result whenever an answer is not derivable from the issue, the design artifacts, or the codebase.
+`designer` and `executor` route user decisions through the orchestrator. They resolve routine reversible choices using the issue, design, codebase, and accepted decisions; a blocked-result is required when a missing answer changes requirements, public behavior, design intent, or authority, or a required prerequisite cannot be recovered within scope. Complete independent authorized work before returning partial results.
 
 | Field | Required | Purpose |
 | --- | --- | --- |
@@ -487,7 +487,7 @@ A pull request is outward-facing and a merge is irreversible, which is why neith
 | Evidence checked | Yes | What was already consulted — distinguishes a real block from an unasked question |
 | Partial work | No | What was completed, so it is not redone |
 
-Triggers are concrete: a requirement-level ambiguity producing different interfaces, a conflict between the design and an established codebase convention, or a missing prerequisite artifact. The orchestrator resolves the question, or escalates when the answer is the user's to give.
+Triggers include a requirement-level ambiguity producing different public interfaces, a design/convention conflict whose resolution would violate required behavior, or a required prerequisite that cannot be recovered within scope. Routine choices and recoverable inputs do not trigger escalation. The orchestrator resolves the question, or escalates when the answer is the user's to give.
 
 ### Role → model binding (#312)
 
@@ -496,9 +496,9 @@ Triggers are concrete: a requirement-level ambiguity producing different interfa
 | `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5` |
 | `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
 | `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
-| `external-reviewer` | `.codex/config.toml` | `gpt-5.6-sol` / `ultra` |
+| `external-reviewer` | Reviewer's own CLI configuration | Codex default: `gpt-6-astra` / `high` |
 
-`roles.<role>.model` stays `null` for every role — the profile answers "which agent", not "which model". Before #312 no level of any chain named a model, so every role inherited the session's. Subagent frontmatter accepts `sonnet` / `opus` / `haiku` / `fable` / a full model ID / `inherit` and defaults to `inherit`; `.claude/settings.json :: model` is read once at session start. The `[1m]` suffix is documented for `/model` and `ANTHROPIC_DEFAULT_*` but not for frontmatter, so `claude-opus-5` is the recorded fallback — a designer subagent's context is bounded by construction, making the suffix insurance rather than a capacity requirement.
+The table describes Claude dispatch. Codex-native `designer` and `executor` inherit the active Codex session model and reasoning effort unless a supported explicit override is set; Claude frontmatter IDs do not apply to Codex. `roles.<role>.model` defaults to `null` for the three primary roles; `external-reviewer` has no model key. A non-null override is vendor-specific to the actual dispatcher, including in `dual` mode. Keep it `null` for a profile shared across vendors, and report incompatible overrides rather than translating them. Claude dispatch precedence is profile override → agent frontmatter → session inheritance; Codex precedence is supported profile override → active Codex session.
 
 `/review` carries two ground truths rather than one (#312): the design document and the issue's Requirements section, with a criterion for each. Criterion 8 asks whether the implementation matches the design; criterion 9 asks whether the branch carries every requirement in the issue. Only the second can catch a requirement dropped upstream of the design — without it, a requirement lost at the `/issue` stage flows through design, implementation, and review with every check returning green.
 
@@ -508,14 +508,14 @@ Project-level Codex CLI configuration written verbatim into downstream projects 
 
 | Key | Default value |
 | --- | --- |
-| `model` | `"gpt-5.6-sol"` (bumped from `"gpt-5.3-codex"` in #261, `"gpt-5.4"` in #292, `"gpt-5.5"` in #308) |
-| `model_reasoning_effort` | `"ultra"` (added as `"high"` in #261, raised in #308) |
+| `model` | `"gpt-6-astra"` |
+| `model_reasoning_effort` | `"high"` |
 | `approval_policy` | `"on-request"` |
 | `sandbox_mode` | `"workspace-write"` |
 
-Validated against the installed Codex CLI with `codex exec --strict-config`, which rejects unrecognized keys and values.
+Validate configuration with `codex exec --strict-config` and a minimal runtime check for model and effort availability. Schema acceptance alone does not prove the backend accepts the configured model.
 
-Since #312 this file is the **sole** source for the external reviewer's model and reasoning effort. `roles.external-reviewer` no longer carries `model` or `reasoning_effort`; `/review` Phase 2 reads `.codex/config.toml` alone and records the resolved values in the artifact header, which is what keeps a config change attributable. The reviewer is the one role executed by another vendor's CLI that already owns a config file, so a second declaration site could only drift — and inside this repository the duplication was never even reachable, since both files are parity-checked and neither could be edited to disagree. The drift risk was downstream, which is where the removal lands. `roles.external-reviewer.agent` still selects *which* agent reviews.
+When Codex is the external reviewer, this file supplies its default model and reasoning effort; the same defaults also apply to Codex-primary sessions. `roles.external-reviewer` has no `model` or `reasoning_effort` fields: the selected reviewer owns its configuration. `/review` records the actual runtime model and effort when available, labeling values read only from configuration as configured rather than resolved. `roles.external-reviewer.agent` selects which reviewer runs.
 
 The workspace's own `/workspace/.codex/config.toml` MUST stay in sync with this template default so a `/review` run inside the tarnished repo behaves identically to a `/review` run inside any newly bootstrapped downstream project.
 

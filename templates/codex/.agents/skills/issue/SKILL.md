@@ -9,6 +9,8 @@ description: Create a GitHub Issue from requirements using the Tarnished lifecyc
 
 Create a GitHub Issue from a rough requirement while preserving the same behavior as Claude Code's `/issue` skill.
 
+Read `.agents/skills/flow/references/execution.md` for scope, Codex tool and model routing, delegation, and verification rules.
+
 ## Procedure
 
 1. Read `.tarnished/workflows/issue.md`.
