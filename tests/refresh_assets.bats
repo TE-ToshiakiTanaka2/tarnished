@@ -785,3 +785,96 @@ MOCK
     assert_equal "$(git -C "$CLONE_DIR" rev-parse HEAD)" "$before"
     assert_equal "$(cat "$CLONE_DIR/work.txt")" committed-work
 }
+
+@test "leading-hyphen branches are rejected before fetch is invoked" {
+    "$SUT" >/dev/null
+    mkdir "$SCRATCH/bin"
+    cat > "$SCRATCH/bin/git" <<'MOCK'
+#!/bin/bash
+for argument in "$@"; do
+    if [[ "$argument" == fetch ]]; then
+        printf 'fetch invoked\n' > "$SCRATCH/fetch-called"
+        exit 1
+    fi
+done
+exec /usr/bin/git "$@"
+MOCK
+    chmod +x "$SCRATCH/bin/git"
+    jq '.upstream.branch = "--upload-pack=unexpected-command"' "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    run env PATH="$SCRATCH/bin:$PATH" "$SUT" --config "$SCRATCH/config"
+    assert_success
+    assert_output --partial 'invalid upstream URL/branch'
+    assert [ ! -e "$SCRATCH/fetch-called" ]
+    run env PATH="$SCRATCH/bin:$PATH" DEVCONTAINER_BRANCH=--upload-pack=unexpected-command "$SUT"
+    assert_success
+    assert_output --partial 'invalid upstream URL/branch'
+    assert [ ! -e "$SCRATCH/fetch-called" ]
+}
+
+@test "shipped default refresh works as nonroot using validated historical home cache" {
+    [[ "$EUID" -ne 0 ]] || skip 'requires actual nonroot container user'
+    [[ ! -w /opt && ! -e /opt/tarnished && ! -L /opt/tarnished ]] || skip 'requires unprovisioned shipped /opt default'
+    local fixture_home="$SCRATCH/fixture-home"
+    mkdir "$fixture_home"
+    cp "$TEMPLATE_REFRESH_JSON" "$PROJECT/.tarnished/refresh.json"
+    cp "$PROJECT/.tarnished/refresh.json" "$SCRATCH/config-before"
+    # HOME is supplied only to the isolated child process to exercise its home lookup.
+    run env HOME="$fixture_home" DEVCONTAINER_REPO_URL="$UPSTREAM_BARE" DEVCONTAINER_BRANCH=develop "$SUT"
+    assert_success
+    assert_output --partial 'default cache unavailable; using home cache'
+    assert [ -d "$fixture_home/.cache/tarnished/.git" ]
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v1-skill
+    cmp "$SCRATCH/config-before" "$PROJECT/.tarnished/refresh.json"
+    echo v2-skill > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
+    commit_upstream
+    run env HOME="$fixture_home" DEVCONTAINER_REPO_URL="$UPSTREAM_BARE" DEVCONTAINER_BRANCH=develop "$SUT"
+    assert_success
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v2-skill
+    # Legacy snapshots omit default-catalog opt-in but must reuse the same home cache.
+    jq 'del(.use_default_managed_paths)' "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    run env HOME="$fixture_home" DEVCONTAINER_REPO_URL="$UPSTREAM_BARE" DEVCONTAINER_BRANCH=develop "$SUT" --config "$SCRATCH/config"
+    assert_success
+    assert_output --partial 'default cache unavailable; using home cache'
+}
+
+@test "unavailable shipped default dry-run makes no home cache directories" {
+    [[ "$EUID" -ne 0 ]] || skip 'requires actual nonroot container user'
+    [[ ! -w /opt && ! -e /opt/tarnished && ! -L /opt/tarnished ]] || skip 'requires unprovisioned shipped /opt default'
+    local fixture_home="$SCRATCH/fixture-home"
+    mkdir "$fixture_home"
+    cp "$TEMPLATE_REFRESH_JSON" "$PROJECT/.tarnished/refresh.json"
+    run env HOME="$fixture_home" DEVCONTAINER_REPO_URL="$UPSTREAM_BARE" DEVCONTAINER_BRANCH=develop "$SUT" --dry-run
+    assert_success
+    assert_output --partial 'upstream comparison unavailable'
+    assert [ ! -e "$fixture_home/.cache" ]
+    assert [ ! -e "$PROJECT/.claude" ]
+}
+
+@test "home fallback rejects symlink overlapping untrusted and dirty caches without bypass" {
+    [[ "$EUID" -ne 0 ]] || skip 'requires actual nonroot container user'
+    [[ ! -w /opt && ! -e /opt/tarnished && ! -L /opt/tarnished ]] || skip 'requires unprovisioned shipped /opt default'
+    local fixture_home="$SCRATCH/fixture-home"
+    mkdir -p "$fixture_home/.cache"
+    cp "$TEMPLATE_REFRESH_JSON" "$PROJECT/.tarnished/refresh.json"
+    ln -s "$SCRATCH/outside" "$fixture_home/.cache/tarnished"
+    run env HOME="$fixture_home" DEVCONTAINER_REPO_URL="$UPSTREAM_BARE" "$SUT"
+    assert_output --partial 'unsafe cache path'
+    assert [ ! -e "$SCRATCH/outside" ]
+    rm "$fixture_home/.cache/tarnished"
+    mkdir "$fixture_home/.cache/tarnished"
+    echo developer > "$fixture_home/.cache/tarnished/work"
+    run env HOME="$fixture_home" DEVCONTAINER_REPO_URL="$UPSTREAM_BARE" "$SUT"
+    assert_output --partial 'is not a git repo'
+    assert_equal "$(cat "$fixture_home/.cache/tarnished/work")" developer
+    rm "$fixture_home/.cache/tarnished/work"
+    rmdir "$fixture_home/.cache/tarnished"
+    git clone -q --branch develop "$UPSTREAM_BARE" "$fixture_home/.cache/tarnished"
+    echo developer > "$fixture_home/.cache/tarnished/work"
+    run env HOME="$fixture_home" DEVCONTAINER_REPO_URL="$UPSTREAM_BARE" "$SUT"
+    assert_output --partial 'dirty cache'
+    assert_equal "$(cat "$fixture_home/.cache/tarnished/work")" developer
+    run env HOME="$PROJECT" DEVCONTAINER_REPO_URL="$UPSTREAM_BARE" "$SUT"
+    assert_output --partial 'cache overlaps project'
+    assert [ ! -e "$PROJECT/.cache" ]
+    assert [ ! -e "$PROJECT/.claude" ]
+}

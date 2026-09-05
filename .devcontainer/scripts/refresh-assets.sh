@@ -134,7 +134,8 @@ load_config() {
     CLONE_DIR=$(jq -r '.clone_dir' "$CONFIG_PATH")
     UPSTREAM_REPO_URL="${DEVCONTAINER_REPO_URL:-$UPSTREAM_REPO_URL}"
     UPSTREAM_BRANCH="${DEVCONTAINER_BRANCH:-$UPSTREAM_BRANCH}"
-    [[ ! "$UPSTREAM_REPO_URL" =~ [[:cntrl:]] && "$UPSTREAM_REPO_URL" != -* ]] &&
+    [[ ! "$UPSTREAM_REPO_URL" =~ [[:cntrl:]] && "$UPSTREAM_REPO_URL" != -* &&
+        "$UPSTREAM_BRANCH" != -* ]] &&
         git check-ref-format "refs/heads/${UPSTREAM_BRANCH}" >/dev/null 2>&1 || {
         warn 'invalid upstream URL/branch; repair config and retry'; return 1;
     }
@@ -172,6 +173,22 @@ validate_cache() {
     fi
 }
 
+# Older defaults used /opt/tarnished without provisioning it for the container user.
+# Select the historical home fallback only for that absent, unwritable default;
+# an invalid existing cache is never bypassed. Validate the fallback identically.
+select_cache() {
+    validate_cache || return 1
+    if [[ "$CLONE_DIR" == /opt/tarnished && ! -e "$CLONE_DIR" && ! -w /opt ]]; then
+        if [[ -z "${HOME:-}" ]] || ! ordinary_path "$HOME" || [[ ! -d "$HOME" ]]; then
+            warn 'default cache unavailable and home directory unsafe; configure a writable cache'
+            return 1
+        fi
+        CLONE_DIR="${HOME%/}/.cache/tarnished"
+        print_info "refresh-assets: default cache unavailable; using home cache $CLONE_DIR"
+        validate_cache || return 1
+    fi
+}
+
 resolve_source() {
     if [[ -n "$SOURCE_DIR" ]]; then
         [[ "$SOURCE_DIR" == /* ]] || SOURCE_DIR="${PWD}/${SOURCE_DIR}"
@@ -185,7 +202,7 @@ resolve_source() {
         COMMIT=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null) || COMMIT="uncommitted"
         return 0
     fi
-    validate_cache || return 1
+    select_cache || return 1
     if [[ ! -e "$CLONE_DIR" ]]; then
         if $DRY_RUN; then
             print_info 'refresh-assets: [dry-run] upstream comparison unavailable; no persistent cache writes'
@@ -209,7 +226,7 @@ resolve_source() {
             warn 'cache installation failed; inspect cache path and retry'; return 1
         fi
     elif ! $DRY_RUN; then
-        if ! git -C "$CLONE_DIR" fetch --quiet origin "$UPSTREAM_BRANCH" 2>/dev/null; then
+        if ! git -C "$CLONE_DIR" fetch --quiet -- origin "$UPSTREAM_BRANCH" 2>/dev/null; then
             warn 'fetch failed; retain project assets and retry when upstream is available'; return 1
         fi
         validate_cache || return 1
