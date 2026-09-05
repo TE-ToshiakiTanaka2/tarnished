@@ -878,3 +878,189 @@ MOCK
     assert [ ! -e "$PROJECT/.cache" ]
     assert [ ! -e "$PROJECT/.claude" ]
 }
+
+@test "escaped filenames install adopt and refresh repeatedly with valid digest state" {
+    local assets="$UPSTREAM_WORK/templates/claude/.claude/skills"
+    local added='new\skill.md' adopted='adopt\skill.md'
+    echo new > "$assets/$added"
+    echo identical > "$assets/$adopted"
+    mkdir -p "$PROJECT/.claude/skills"
+    cp "$assets/$adopted" "$PROJECT/.claude/skills/$adopted"
+    run local_refresh
+    assert_success
+    assert [ -f "$PROJECT/.claude/skills/$added" ]
+    jq -e 'all(.entries[].sha256; test("^[0-9a-f]{64}$"))' "$PROJECT/.tarnished/refresh-state.json"
+    echo updated > "$assets/$added"
+    echo adopted-update > "$assets/$adopted"
+    run local_refresh
+    assert_success
+    assert_equal "$(cat "$PROJECT/.claude/skills/$added")" updated
+    assert_equal "$(cat "$PROJECT/.claude/skills/$adopted")" adopted-update
+    run local_refresh
+    assert_success
+    assert_output --partial '0 failures'
+}
+
+@test "invalid checksum output cannot install or poison state" {
+    mkdir "$SCRATCH/bin"
+    printf '#!/bin/bash\nprintf "invalid-digest  -\\n"\n' > "$SCRATCH/bin/sha256sum"
+    chmod +x "$SCRATCH/bin/sha256sum"
+    run env PATH="$SCRATCH/bin:$PATH" "$SUT" --source-dir "$UPSTREAM_WORK"
+    assert_success
+    assert_output --partial 'cannot hash'
+    assert [ ! -e "$PROJECT/.claude/skills/issue.md" ]
+    assert [ ! -e "$PROJECT/.tarnished/refresh-state.json" ]
+}
+
+@test "symlinked host ancestors work for physical project source cache and config roots" {
+    ln -s "$SCRATCH" "$SCRATCH/host-prefix"
+    run "$SUT" --project-root "$SCRATCH/host-prefix/project" --source-dir "$SCRATCH/host-prefix/upstream-work" --config "$SCRATCH/host-prefix/project/.tarnished/refresh.json"
+    assert_success
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v1-skill
+    jq --arg cache "$SCRATCH/host-prefix/new-parent/cache" '.clone_dir = $cache' "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    run "$SUT" --project-root "$SCRATCH/host-prefix/project" --config "$SCRATCH/host-prefix/config"
+    assert_success
+    assert [ -d "$SCRATCH/new-parent/cache/.git" ]
+    assert_output --partial '0 failures'
+}
+
+@test "symlinked host prefix does not permit root leaf or internal config source target links" {
+    ln -s "$SCRATCH" "$SCRATCH/host-prefix"
+    ln -s "$PROJECT" "$SCRATCH/project-link"
+    run "$SUT" --project-root "$SCRATCH/host-prefix/project-link/" --source-dir "$UPSTREAM_WORK"
+    assert_output --partial 'unsafe/unavailable project root'
+    ln -s "$UPSTREAM_WORK" "$SCRATCH/source-link"
+    run "$SUT" --project-root "$SCRATCH/host-prefix/project" --source-dir "$SCRATCH/source-link/"
+    assert_output --partial 'unsafe source path'
+    mv "$PROJECT/.tarnished" "$SCRATCH/config-target"
+    ln -s "$SCRATCH/config-target" "$PROJECT/.tarnished"
+    run "$SUT" --project-root "$SCRATCH/host-prefix/project" --source-dir "$UPSTREAM_WORK" --config "$SCRATCH/host-prefix/project/.tarnished/refresh.json"
+    assert_output --partial 'refresh.json missing or unsafe'
+    assert [ ! -e "$PROJECT/.claude" ]
+}
+
+@test "portable refresh uses shasum and ordinary mv without GNU-only flags" {
+    local portable_bin="$SCRATCH/portable-bin" dependency
+    mkdir "$portable_bin"
+    for dependency in jq git find cp mkdir mktemp rm dirname shasum; do
+        ln -s "$(command -v "$dependency")" "$portable_bin/$dependency"
+    done
+    cat > "$portable_bin/mv" <<'MOCK'
+#!/bin/bash
+for argument in "$@"; do
+    if [[ "$argument" == -T || "$argument" == -fT ]]; then
+        printf 'GNU-only mv flag\n' >&2
+        exit 1
+    fi
+done
+exec /usr/bin/mv "$@"
+MOCK
+    cat > "$portable_bin/realpath" <<'MOCK'
+#!/bin/bash
+printf 'GNU realpath requested\n' > "$SCRATCH/realpath-called"
+exit 1
+MOCK
+    chmod +x "$portable_bin/mv" "$portable_bin/realpath"
+    run env PATH="$portable_bin" "$SUT"
+    assert_success
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v1-skill
+    echo updated > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
+    commit_upstream
+    run env PATH="$portable_bin" "$SUT"
+    assert_success
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" updated
+    assert [ ! -e "$SCRATCH/realpath-called" ]
+    jq -e 'all(.entries[].sha256; test("^[0-9a-f]{64}$"))' "$PROJECT/.tarnished/refresh-state.json"
+}
+
+@test "published overlay recovery adopts effective bytes with existing baseline" {
+    local_refresh >/dev/null
+    echo upstream-b > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
+    echo project-c > "$PROJECT/.claude/skills/issue.md"
+    mkdir "$PROJECT/.claude/skills.local"
+    cp "$PROJECT/.claude/skills/issue.md" "$PROJECT/.claude/skills.local/issue.md"
+    cp "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md" "$PROJECT/.claude/skills/issue.md"
+    run local_refresh
+    assert_output --partial 'explicitly copy effective overlay'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" upstream-b
+    cp "$PROJECT/.claude/skills.local/issue.md" "$PROJECT/.claude/skills/issue.md"
+    run local_refresh
+    assert_success
+    assert_output --partial '1 adopted'
+    assert_output --partial '0 conflicts'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" project-c
+    run local_refresh
+    assert_output --partial '0 conflicts'
+    rm "$PROJECT/.claude/skills.local/issue.md"
+    cp "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md" "$PROJECT/.claude/skills/issue.md"
+    run local_refresh
+    assert_output --partial '1 adopted'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" upstream-b
+}
+
+@test "dry-run preserves existing cache index bytes and metadata after cached file mtime changes" {
+    "$SUT" >/dev/null
+    touch -m -d '2030-01-01' "$CLONE_DIR/templates/claude/.claude/skills/issue.md"
+    local index_before metadata_before
+    index_before=$(sha256sum < "$CLONE_DIR/.git/index")
+    metadata_before=$(stat -c '%s:%y:%z' "$CLONE_DIR/.git/index")
+    run "$SUT" --dry-run
+    assert_success
+    assert_equal "$(sha256sum < "$CLONE_DIR/.git/index")" "$index_before"
+    assert_equal "$(stat -c '%s:%y:%z' "$CLONE_DIR/.git/index")" "$metadata_before"
+}
+
+@test "summary distinguishes unchanged adopted preserved conflicts unknown unsafe and failures" {
+    local_refresh >/dev/null
+    local assets="$UPSTREAM_WORK/templates/claude/.claude/skills"
+    echo collision > "$assets/unknown.md"
+    echo developer > "$PROJECT/.claude/skills/unknown.md"
+    echo desired > "$assets/adopted.md"
+    cp "$assets/adopted.md" "$PROJECT/.claude/skills/adopted.md"
+    echo changed > "$assets/issue.md"
+    echo edited > "$PROJECT/.claude/skills/issue.md"
+    echo unsafe > "$assets/unsafe.md"
+    ln -s "$SCRATCH/outside" "$PROJECT/.claude/skills/unsafe.md"
+    echo fails > "$assets/fails.md"
+    mkdir "$SCRATCH/bin"
+    printf '#!/bin/bash\nexit 1\n' > "$SCRATCH/bin/cp"
+    chmod +x "$SCRATCH/bin/cp"
+    run env PATH="$SCRATCH/bin:$PATH" "$SUT" --source-dir "$UPSTREAM_WORK"
+    assert_success
+    assert_output --partial '0 installed, 0 removed, 2 unchanged, 1 adopted, 2 preserved: 1 conflicts, 1 unknown; 1 unsafe, 1 failures'
+}
+
+@test "portable rename directory race never advances installed baseline" {
+    local_refresh >/dev/null
+    cp "$PROJECT/.tarnished/refresh-state.json" "$SCRATCH/state-before"
+    echo upstream-changed > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
+    mkdir "$SCRATCH/bin"
+    cat > "$SCRATCH/bin/mv" <<'MOCK'
+#!/bin/bash
+target="${@: -1}"
+if [[ "$target" == */.claude/skills/issue.md ]]; then
+    /usr/bin/rm -- "$target"
+    /usr/bin/mkdir -- "$target"
+fi
+exec /usr/bin/mv "$@"
+MOCK
+    chmod +x "$SCRATCH/bin/mv"
+    run env PATH="$SCRATCH/bin:$PATH" "$SUT" --source-dir "$UPSTREAM_WORK"
+    assert_success
+    assert_output --partial 'copy failed'
+    assert_output --partial '1 failures'
+    assert [ -d "$PROJECT/.claude/skills/issue.md" ]
+    cmp "$SCRATCH/state-before" "$PROJECT/.tarnished/refresh-state.json"
+}
+
+@test "alternate project spelling cannot bypass internal symlink config validation" {
+    ln -s "$SCRATCH" "$SCRATCH/host-prefix"
+    mkdir -p "$SCRATCH/external-config/nested"
+    cp "$PROJECT/.tarnished/refresh.json" "$SCRATCH/external-config/nested/refresh.json"
+    mv "$PROJECT/.tarnished" "$SCRATCH/original-config"
+    ln -s "$SCRATCH/external-config" "$PROJECT/.tarnished"
+    run "$SUT" --project-root "$PROJECT" --source-dir "$UPSTREAM_WORK" --config "$SCRATCH/host-prefix/project/.tarnished/nested/refresh.json"
+    assert_success
+    assert_output --partial 'refresh.json missing or unsafe'
+    assert [ ! -e "$PROJECT/.claude" ]
+}
