@@ -22,7 +22,7 @@ setup() {
         "$DIST/templates/agent-workflows/.tarnished/refresh.json"
     local source
     while IFS= read -r source; do
-        if [[ "$source" == *.md ]]; then
+        if [[ "$source" == *.md || "$source" == *.json || "$source" == *.toml ]]; then
             mkdir -p "$DIST/$(dirname "$source")"
             printf 'distributed %s\n' "$source" > "$DIST/$source"
         else
@@ -55,7 +55,6 @@ set_profile() {
 
 project_owned_snapshot() {
     sha256sum "$PROJECT/src/work.py" "$PROJECT/tests/work.py" "$PROJECT/docs/work.md" \
-        "$PROJECT/.claude/settings.json" "$PROJECT/.codex/config.toml" \
         "$PROJECT/.devcontainer/devcontainer.json" "$PROJECT/.devcontainer/scripts/post.sh" \
         "$PROJECT/.tarnished/agent-profile.json"
 }
@@ -65,7 +64,7 @@ full_snapshot() {
     find "$PROJECT" -type f -exec sha256sum {} + | LC_ALL=C sort
 }
 
-@test "bare existing-project rerun updates AI assets and preserves application settings and custom skills" {
+@test "bare existing-project rerun updates AI assets and preserves application files and custom skills" {
     mkdir -p "$PROJECT/.claude/skills/custom"
     echo custom > "$PROJECT/.claude/skills/custom/SKILL.md"
     local before
@@ -76,7 +75,7 @@ full_snapshot() {
     [[ "$(cat "$PROJECT/.claude/skills/custom/SKILL.md")" == custom ]]
     [[ -f "$PROJECT/.claude/skills/sample/SKILL.md" ]]
     [[ -f "$PROJECT/.tarnished/workflows/flow.md" ]]
-    [[ ! -e "$PROJECT/.agents/skills" ]]
+    [[ -f "$PROJECT/.agents/skills/sample/SKILL.md" ]]
     [[ "$(jq -r '.manifest_version' "$PROJECT/.tarnished-manifest.json")" == 2 ]]
 }
 
@@ -141,7 +140,7 @@ full_snapshot() {
     [[ "$(full_snapshot)" == "$before" ]]
 }
 
-@test "codex-main and dual refresh selected capabilities while preserving profile and model choices" {
+@test "codex-main and dual refresh selected capabilities while preserving profile role choices" {
     local profile before
     for profile in codex-main dual; do
         set_profile "$profile"
@@ -460,4 +459,117 @@ MOCK
     assert_success
     jq -e --arg helper "$helper" '.files | keys | map(select(contains("\\"))) == [$helper]' "$PROJECT/.tarnished-manifest.json"
     cmp "$PROJECT/$helper" "$DIST/templates/core/$helper"
+}
+
+@test "settings use complete shipped bytes with exact backups and preserve native local files" {
+    echo '{"local":"claude"}' > "$PROJECT/.claude/settings.local.json"
+    echo '# local codex' > "$PROJECT/.codex/config.local.toml"
+    cp "$PROJECT/.claude/settings.json" "$SCRATCH/claude-before"
+    cp "$PROJECT/.codex/config.toml" "$SCRATCH/codex-before"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    cmp "$PROJECT/.claude/settings.json" "$DIST/templates/claude/.claude/settings.json"
+    cmp "$PROJECT/.codex/config.toml" "$DIST/templates/codex/.codex/config.toml"
+    cmp "$(find "$PROJECT/.tarnished/backups" -path '*/.claude/settings.json')" "$SCRATCH/claude-before"
+    cmp "$(find "$PROJECT/.tarnished/backups" -path '*/.codex/config.toml')" "$SCRATCH/codex-before"
+    assert_equal "$(cat "$PROJECT/.claude/settings.local.json")" '{"local":"claude"}'
+    assert_equal "$(cat "$PROJECT/.codex/config.local.toml")" '# local codex'
+    local before
+    before=$(full_snapshot)
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    assert_equal "$(full_snapshot)" "$before"
+}
+
+@test "claude-only without installed Codex capability does not add Codex settings or skills" {
+    rm "$PROJECT/.codex/config.toml"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    [[ ! -e "$PROJECT/.codex/config.toml" && ! -e "$PROJECT/.agents/skills" ]]
+    cmp "$PROJECT/.claude/settings.json" "$DIST/templates/claude/.claude/settings.json"
+}
+
+@test "root upgrade without manifest refreshes AI and returns unsuccessful helper outcome" {
+    run bash "$DIST/setup.sh" --upgrade -y --prune
+    assert_failure
+    assert_output --partial 'Runtime helpers skipped'
+    cmp "$PROJECT/.codex/config.toml" "$DIST/templates/codex/.codex/config.toml"
+    [[ -f "$PROJECT/.claude/skills/sample/SKILL.md" ]]
+    assert_equal "$(cat "$PROJECT/src/work.py")" 'software in progress'
+}
+
+@test "dirty root upgrade still replaces AI while preserving application edits and reports failure" {
+    bash "$DIST/setup.sh" --refresh -y >/dev/null
+    git init -q "$PROJECT"
+    git -C "$PROJECT" config user.name test
+    git -C "$PROJECT" config user.email test@example.com
+    git -C "$PROJECT" add -A
+    git -C "$PROJECT" commit -qm baseline
+    echo 'dirty application' > "$PROJECT/src/work.py"
+    echo 'dirty skill' > "$PROJECT/.claude/skills/sample/SKILL.md"
+    run bash "$DIST/setup.sh" --upgrade -y --prune
+    assert_failure
+    assert_output --partial 'Runtime helpers skipped'
+    cmp "$PROJECT/.claude/skills/sample/SKILL.md" "$DIST/templates/claude/.claude/skills/sample/SKILL.md"
+    assert_equal "$(cat "$PROJECT/src/work.py")" 'dirty application'
+    assert_equal "$(cat "$(find "$PROJECT/.tarnished/backups" -path '*/.claude/skills/sample/SKILL.md')")" 'dirty skill'
+}
+
+@test "invalid module and module-only blocked upgrades never mutate root AI assets" {
+    printf '{"version":1,"modules":[{"name":"backend","language":"python"}]}' > "$PROJECT/modules.json"
+    mkdir "$PROJECT/backend"
+    local before
+    before=$(full_snapshot)
+    run bash "$DIST/setup.sh" --upgrade --module missing -y
+    assert_failure
+    assert_output --partial "module 'missing' not found"
+    assert_equal "$(full_snapshot)" "$before"
+    run bash "$DIST/setup.sh" --upgrade --module backend -y
+    assert_failure
+    assert_equal "$(full_snapshot)" "$before"
+    run bash "$DIST/setup.sh" --upgrade --shared-only -y
+    assert_failure
+    assert_output --partial 'Runtime helpers skipped'
+    cmp "$PROJECT/.codex/config.toml" "$DIST/templates/codex/.codex/config.toml"
+}
+
+@test "root upgrade dry-run with missing manifest leaves all project bytes and paths unchanged" {
+    local before
+    before=$(full_snapshot)
+    run bash "$DIST/setup.sh" --upgrade -y --prune --dry-run
+    assert_failure
+    assert_output --partial '[dry-run] backup'
+    assert_equal "$(full_snapshot)" "$before"
+    [[ ! -e "$SCRATCH/cache" ]]
+}
+
+@test "pinned pre-settings distribution installs pinned settings using current replacement updater" {
+    # This actual preceding release has settings files but no settings catalog entries.
+    local ref=f136b29
+    git -C "$REPO_ROOT" cat-file -e "$ref^{commit}" || skip 'historical distribution unavailable in shallow checkout'
+    run bash "$REPO_ROOT/setup.sh" --upgrade --target-version "$ref" -y --prune
+    assert_failure # missing helper manifest must remain a reported failure
+    assert_output --partial 'Runtime helpers skipped'
+    git -C "$REPO_ROOT" show "$ref:templates/codex/.codex/config.toml" > "$SCRATCH/pinned-codex"
+    git -C "$REPO_ROOT" show "$ref:templates/claude/.claude/settings.json" > "$SCRATCH/pinned-claude"
+    cmp "$PROJECT/.codex/config.toml" "$SCRATCH/pinned-codex"
+    cmp "$PROJECT/.claude/settings.json" "$SCRATCH/pinned-claude"
+    cmp "$PROJECT/.devcontainer/scripts/refresh-assets.sh" "$REPO_ROOT/templates/core/.devcontainer/scripts/refresh-assets.sh"
+    [[ -f "$(find "$PROJECT/.tarnished/backups" -path '*/.codex/config.toml')" ]]
+}
+
+@test "explicit whole settings overlay remains effective without consuming native local settings" {
+    echo '{"desired":"custom whole settings"}' > "$PROJECT/.claude/full-settings.local.json"
+    echo '{"native":"local fragment"}' > "$PROJECT/.claude/settings.local.json"
+    jq '.use_default_managed_paths = false | .managed_paths = [{src:"templates/claude/.claude/settings.json",dst:".claude/settings.json",overlay:".claude/full-settings.local.json"}]' \
+        "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    mv "$SCRATCH/config" "$PROJECT/.tarnished/refresh.json"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    cmp "$PROJECT/.claude/settings.json" "$PROJECT/.claude/full-settings.local.json"
+    assert_equal "$(cat "$PROJECT/.claude/settings.local.json")" '{"native":"local fragment"}'
+    echo '{"desired":"next"}' > "$PROJECT/.claude/full-settings.local.json"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    cmp "$PROJECT/.claude/settings.json" "$PROJECT/.claude/full-settings.local.json"
 }
