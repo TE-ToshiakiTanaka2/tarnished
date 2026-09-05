@@ -372,3 +372,20 @@ teardown() {
     [[ "$status" -eq 0 ]]
     [[ "$(printf '%s' "$output" | jq -r .manifest_version)" == 1 ]]
 }
+
+@test "manifest rejects malicious plugin paths unknown profiles and nonboolean flags" {
+    local options
+    for options in '{"languages":["../../../../tmp/evil"]}' \
+        '{"services":["../../custom"]}' '{"languages":["unknown"]}' \
+        '{"ai_profile":"injected"}' '{"monorepo":"false"}' \
+        '{"codex_enabled":null}' '{"services":null}'; do
+        jq -n --argjson options "$options" '{manifest_version:1,
+            tarnished_version:"v1",tarnished_commit:"abc",created_at:"2026-01-01",
+            scaffold_options:$options,files:{}}' > "$SCRATCH/.tarnished-manifest.json"
+        run manifest_read "$SCRATCH"
+        [[ "$status" -ne 0 ]]
+        [[ "$output" == *'Invalid manifest scaffold options'* ]]
+    done
+    manifest_options_valid '{}'
+    manifest_options_valid '{"languages":["go","rust"],"services":["redis"],"ai_profile":"dual","codex_enabled":true}'
+}

@@ -58,6 +58,27 @@ manifest_exists() {
 # Read / write
 # =============================================================================
 
+# Validate every option that selects a plugin before it can become a source path.
+# Historical manifests may omit keys, but present values must have known types.
+manifest_options_valid() {
+    printf '%s' "$1" | jq -e '
+        type == "object" and
+        ((has("languages") | not) or
+            (.languages | type == "array" and all(.[];
+                . == "rust" or . == "python" or . == "node" or
+                . == "deno" or . == "latex" or . == "go"))) and
+        ((has("services") | not) or
+            (.services | type == "array" and all(.[];
+                . == "celery" or . == "mysql" or . == "postgresql" or . == "redis"))) and
+        ((has("ai_profile") | not) or
+            (.ai_profile == "claude-main" or .ai_profile == "codex-main" or
+                .ai_profile == "dual")) and
+        (. as $options | ["github_actions_enabled", "auto_tag_enabled",
+            "codex_enabled", "monorepo"] | all(.[]; . as $key |
+                ($options | has($key) | not) or ($options[$key] | type == "boolean")))
+    ' >/dev/null 2>&1
+}
+
 # Read and validate the manifest at <scope_root>. Streams the parsed JSON to
 # stdout. Rejects unknown major manifest_version values.
 # Usage: manifest_read <scope_root>
@@ -95,6 +116,10 @@ manifest_read() {
         print_error "Invalid manifest schema/version/hash: $file"
         return 1
     fi
+    if ! manifest_options_valid "$(jq -c '.scaffold_options' "$file")"; then
+        print_error "Invalid manifest scaffold options: $file"
+        return 1
+    fi
     local version rel
     version=$(jq -r '.manifest_version' "$file")
     while IFS= read -r rel; do
@@ -128,6 +153,10 @@ manifest_write() {
         return 1
     fi
 
+    if ! manifest_options_valid "$scaffold_options_json"; then
+        print_error "manifest_write: invalid scaffold options"
+        return 1
+    fi
     local file tmp
     file="$(manifest_path "$scope_root")"
     if ! manifest_safe_path "$scope_root" "$MANIFEST_FILENAME"; then
