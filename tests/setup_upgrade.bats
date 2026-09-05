@@ -43,6 +43,7 @@ seed_scaffold() {
     cp "${SCRIPT_DIR}/templates/claude/.claude/commands/erd/build.md" \
         .claude/commands/erd/build.md
     cp "${SCRIPT_DIR}/templates/core/docker/Dockerfile.dev" docker/Dockerfile.dev
+    cp "${SCRIPT_DIR}/templates/core/.devcontainer/scripts/refresh-assets.sh" .devcontainer/scripts/refresh-assets.sh
     echo '{}' > .devcontainer/devcontainer.json
     echo "version: '3'" > docker-compose.yml
     echo '{}' > .claude/settings.json
@@ -52,7 +53,7 @@ seed_scaffold() {
 
 # Bootstrap manifest, commit so the tree is clean for FR-9.
 bootstrap_and_commit() {
-    bash "$SETUP_SH" --create-manifest --from-version v0.0.74 -y >/dev/null 2>&1
+    bash "$SETUP_SH" --create-manifest -y >/dev/null 2>&1
     git add -A
     git commit -q -m "scaffold + manifest"
 }
@@ -170,14 +171,14 @@ bootstrap_and_commit() {
     # Edit a tracked file post-bootstrap. We use Dockerfile.dev because
     # .claude/commands/erd/build.md is now governed by always-latest sync
     # (#279) and excluded from manifest tracking entirely.
-    echo "" >> docker/Dockerfile.dev
-    echo "# user customization line" >> docker/Dockerfile.dev
+    echo "" >> .devcontainer/scripts/refresh-assets.sh
+    echo "# user customization line" >> .devcontainer/scripts/refresh-assets.sh
     git add -A; git commit -q -m "user edit"
 
     run bash "$SETUP_SH" --upgrade --dry-run -y
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"Skipped (edited)"* ]]
-    [[ "$output" == *"docker/Dockerfile.dev"* ]]
+    [[ "$output" == *".devcontainer/scripts/refresh-assets.sh"* ]]
 }
 
 @test "FR-4 row 4: NEW — staging emits files not in old manifest" {
@@ -255,12 +256,12 @@ bootstrap_and_commit() {
 
 @test "#286: --create-manifest does not record .github/* paths" {
     seed_scaffold
-    bash "$SETUP_SH" --create-manifest --from-version v0.0.74 -y >/dev/null 2>&1
+    bash "$SETUP_SH" --create-manifest -y >/dev/null 2>&1
 
     # Manifest must contain core tracked files but not .github/*.
     run jq -r '.files | keys[]' .tarnished-manifest.json
     [[ "$status" -eq 0 ]]
-    echo "$output" | grep -q "^docker/Dockerfile.dev$"
+    echo "$output" | grep -q "^.devcontainer/scripts/refresh-assets.sh$"
     ! echo "$output" | grep -q "^\.github/"
 }
 
@@ -297,15 +298,15 @@ bootstrap_and_commit() {
     local real_hash
     real_hash=$(sha256sum .github/workflows/auto-tag.yml | awk '{print "sha256:"$1}')
     jq --arg h "$real_hash" \
-        '.files[".github/workflows/auto-tag.yml"] = $h' \
+        '.manifest_version = 1 | .files[".github/workflows/auto-tag.yml"] = $h' \
         .tarnished-manifest.json > .tarnished-manifest.json.tmp
     mv .tarnished-manifest.json.tmp .tarnished-manifest.json
     git add -A; git commit -q -m "inject pre-#286 .github entry"
 
     run bash "$SETUP_SH" --upgrade --prune -y
     [[ "$status" -eq 0 ]]
-    # The injected path must NOT be reported as pruned.
-    [[ "$output" != *".github/workflows/auto-tag.yml"* ]]
+    # Legacy ownership is reported and removed without touching the file.
+    [[ "$output" == *"dropping its ownership claim"* ]]
     # File must still be on disk.
     [[ -f .github/workflows/auto-tag.yml ]]
     # New manifest must no longer list it.
@@ -378,9 +379,8 @@ seed_tarnished_scaffold() {
     run bash "$SETUP_SH" --upgrade -y
     [[ "$status" -eq 0 ]]
 
-    # The stale marker is gone, proving UPDATE actually fired on these
-    # files rather than the assertion below passing via a NOOP.
-    ! grep -q "stale marker" .tarnished/workflows/README.md
+    # Shared workflows are AI-refresh assets; helper upgrade leaves them alone.
+    grep -q "stale marker" .tarnished/workflows/README.md
 
     # The whole point: no placeholder token survives the upgrade.
     run grep -rl '{{' .tarnished/
@@ -471,4 +471,91 @@ YML
     # Rejected, so the render falls back to the directory basename.
     ! grep -rq 'evil|w' .tarnished/
     ! grep -rq '{{' .tarnished/
+}
+
+@test "#316 legacy arbitrary work and unknown obsolete helper survive prune" {
+    seed_scaffold
+    bootstrap_and_commit
+    mkdir -p src tests docs
+    printf 'application\n' > src/work.py
+    printf 'tests\n' > 'tests/test work.py'
+    printf 'docs\n' > docs/notes.md
+    printf 'private helper\n' > .devcontainer/scripts/obsolete.sh
+    local files='{}' path hash
+    for path in src/work.py 'tests/test work.py' docs/notes.md .devcontainer/scripts/obsolete.sh; do
+        hash="sha256:$(sha256sum "$path" | cut -d' ' -f1)"
+        files=$(jq --arg path "$path" --arg hash "$hash" '.[$path] = $hash' <<< "$files")
+    done
+    jq --argjson files "$files" '.manifest_version = 1 | .files += $files' .tarnished-manifest.json > manifest.tmp
+    mv manifest.tmp .tarnished-manifest.json
+    run bash "$SETUP_SH" --upgrade --prune --force -y
+    assert_success
+    [[ "$(cat src/work.py)" == application ]]
+    [[ "$(cat 'tests/test work.py')" == tests ]]
+    [[ "$(cat docs/notes.md)" == docs ]]
+    [[ "$(cat .devcontainer/scripts/obsolete.sh)" == 'private helper' ]]
+    run jq -e '.manifest_version == 2 and (.files | has("src/work.py") or has(".devcontainer/scripts/obsolete.sh") | not)' .tarnished-manifest.json
+    assert_success
+}
+
+@test "#316 trusted helper updates while project settings and seeds remain byte identical" {
+    seed_scaffold
+    bootstrap_and_commit
+    printf 'older shipped helper\n' > .devcontainer/scripts/refresh-assets.sh
+    local hash before
+    hash="sha256:$(sha256sum .devcontainer/scripts/refresh-assets.sh | cut -d' ' -f1)"
+    jq --arg hash "$hash" '.files[".devcontainer/scripts/refresh-assets.sh"] = $hash' .tarnished-manifest.json > manifest.tmp
+    mv manifest.tmp .tarnished-manifest.json
+    before=$(sha256sum docker/Dockerfile.dev docker-compose.yml .devcontainer/devcontainer.json .claude/settings.json CLAUDE.md README.md)
+    run bash "$SETUP_SH" --upgrade --force -y
+    assert_success
+    cmp .devcontainer/scripts/refresh-assets.sh "$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
+    [[ "$(sha256sum docker/Dockerfile.dev docker-compose.yml .devcontainer/devcontainer.json .claude/settings.json CLAUDE.md README.md)" == "$before" ]]
+}
+
+@test "#316 conflict and removed helper baselines survive until successful prune" {
+    seed_scaffold
+    bootstrap_and_commit
+    local old hash
+    old=$(jq -r '.files[".devcontainer/scripts/refresh-assets.sh"]' .tarnished-manifest.json)
+    printf '\n# local edit\n' >> .devcontainer/scripts/refresh-assets.sh
+    printf 'obsolete distributed helper\n' > .devcontainer/scripts/obsolete.sh
+    hash="sha256:$(sha256sum .devcontainer/scripts/obsolete.sh | cut -d' ' -f1)"
+    jq --arg hash "$hash" '.files[".devcontainer/scripts/obsolete.sh"] = $hash' .tarnished-manifest.json > manifest.tmp
+    mv manifest.tmp .tarnished-manifest.json
+    run bash "$SETUP_SH" --upgrade --force -y
+    assert_success
+    [[ "$(jq -r '.files[".devcontainer/scripts/refresh-assets.sh"]' .tarnished-manifest.json)" == "$old" ]]
+    [[ "$(jq -r '.files[".devcontainer/scripts/obsolete.sh"]' .tarnished-manifest.json)" == "$hash" ]]
+    run bash "$SETUP_SH" --upgrade --prune --force -y
+    assert_success
+    [[ ! -e .devcontainer/scripts/obsolete.sh ]]
+    [[ "$(jq -r '.files[".devcontainer/scripts/refresh-assets.sh"]' .tarnished-manifest.json)" == "$old" ]]
+}
+
+@test "#316 failed staging cannot authorize pruning prior helpers" {
+    seed_scaffold
+    bootstrap_and_commit
+    printf 'old delivered helper\n' > .devcontainer/scripts/obsolete.sh
+    local hash before real_cp
+    hash="sha256:$(sha256sum .devcontainer/scripts/obsolete.sh | cut -d' ' -f1)"
+    jq --arg hash "$hash" '.files[".devcontainer/scripts/obsolete.sh"] = $hash' .tarnished-manifest.json > manifest.tmp
+    mv manifest.tmp .tarnished-manifest.json
+    before=$(sha256sum .tarnished-manifest.json .devcontainer/scripts/obsolete.sh)
+    mkdir mock-bin
+    real_cp=$(command -v cp)
+    cat > mock-bin/cp <<MOCK
+#!/bin/bash
+for arg in "\$@"; do
+    if [[ "\$arg" == */templates/core/.devcontainer/scripts/refresh-assets.sh ]]; then
+        exit 1
+    fi
+done
+exec "$real_cp" "\$@"
+MOCK
+    chmod +x mock-bin/cp
+    run env PATH="$SCRATCH/mock-bin:$PATH" bash "$SETUP_SH" --upgrade --prune --force -y
+    assert_failure
+    [[ "$output" == *"Staging failed"* ]]
+    [[ "$(sha256sum .tarnished-manifest.json .devcontainer/scripts/obsolete.sh)" == "$before" ]]
 }

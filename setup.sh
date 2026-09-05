@@ -139,6 +139,7 @@ declare -a MODULES=()
 # scaffold modes (single / monorepo init / add-module).
 CREATE_MANIFEST_MODE=false
 UPGRADE_MODE=false
+REFRESH_MODE=false
 FROM_VERSION=""
 TARGET_VERSION=""
 FORCE=false
@@ -186,17 +187,15 @@ Options:
     --celery            Include Celery task queue (auto-enables Redis, requires Python)
     --github-actions    Include GitHub Project integration (requires erd CLI)
     --overwrite         Overwrite existing files without confirmation
-    --create-manifest   Bootstrap a .tarnished-manifest.json from the current
-                        state of files in this directory. Required as a one-shot
-                        for legacy projects before their first --upgrade. (#265)
+    --refresh           Maintain AI skills and workflows, preserving project edits.
+                        A bare rerun in an existing Tarnished project does this.
+    --create-manifest   Adopt exact delivered runtime-helper matches into a v2
+                        provenance manifest. Project source/settings are not owned.
     --from-version <ref>
-                        Recorded as `tarnished_version` in the new manifest
-                        (defaults to "unknown"). Use this to pin the originating
-                        tarnished version for projects scaffolded before the
-                        manifest format existed. Only valid with --create-manifest. (#265)
-    --upgrade           Refresh tracked files of an existing scaffolded project
-                        to the latest (or --target-version-pinned) tarnished
-                        version. User-edited files are skipped automatically. (#265)
+                        Compare actual distribution bytes at this reference.
+                        Default: the invoked checkout. Only with --create-manifest.
+    --upgrade           Upgrade proven runtime helpers, excluding post.sh.
+                        Preserves project seeds, settings and local changes.
     --target-version <ref>
                         Target git ref (tag, branch, or commit) of upstream
                         tarnished for --upgrade. When omitted: under remote
@@ -209,9 +208,8 @@ Options:
     --prune             Delete tracked files removed upstream and unedited
                         locally. Without this flag, such files are left in
                         place and reported as a warning. (#265)
-    --force             Bypass --upgrade's clean-tree precondition. Use with
-                        care — uncommitted edits to unedited files may be
-                        overwritten. (#265)
+    --force             Bypass only --upgrade's clean-tree precondition;
+                        ownership and local-edit protection still apply.
 
 Arguments:
     PROJECT_NAME        Name for your project (optional, will prompt if not provided)
@@ -258,7 +256,7 @@ Examples:
 
     # Bootstrap a manifest for an existing project (#265)
     ./setup.sh --create-manifest --from-version v0.0.74 -y
-    ./setup.sh --create-manifest -y         # tarnished_version recorded as "unknown"
+    ./setup.sh --create-manifest -y         # compares against the invoked checkout
 
     # Upgrade an existing scaffolded project (#265)
     ./setup.sh --upgrade -y                 # Latest develop
@@ -598,6 +596,7 @@ load_selected_plugins() {
             print_success "Loaded plugin: $name - $(plugin_description)"
         else
             print_error "Failed to load: $plugin_path"
+            return 1
         fi
     done
 }
@@ -901,7 +900,7 @@ parse_arguments() {
                 shift
                 ;;
             --lang)
-                if [[ -n "$2" ]]; then
+                if [[ -n "${2:-}" ]]; then
                     SELECTED_LANGUAGES+=("$2")
                     shift 2
                 else
@@ -997,6 +996,10 @@ parse_arguments() {
                 FROM_VERSION="$2"
                 shift 2
                 ;;
+            --refresh)
+                REFRESH_MODE=true
+                shift
+                ;;
             --upgrade)
                 UPGRADE_MODE=true
                 shift
@@ -1052,6 +1055,20 @@ validate_argument_combinations() {
             exit 1
             ;;
     esac
+
+    if [[ "$REFRESH_MODE" == true ]]; then
+        if [[ "$CREATE_MANIFEST_MODE" == true || "$UPGRADE_MODE" == true || "$IS_ADD_MODULE_MODE" == true ]] || scaffold_flags_supplied ||
+            [[ -n "$FROM_VERSION" || -n "$TARGET_VERSION" || "$SHARED_ONLY" == true || "$PRUNE_ENABLED" == true || "$FORCE" == true || ${#UPGRADE_MODULES[@]} -gt 0 ]]; then
+            print_error "--refresh accepts only --dry-run and --yes; scaffold and upgrade options are separate modes"
+            exit 1
+        fi
+        return 0
+    fi
+
+    if [[ "$CREATE_MANIFEST_MODE" == true || "$UPGRADE_MODE" == true ]] && [[ "$OVERWRITE_ALL" == true || -n "$PROJECT_NAME" ]]; then
+        print_error "Maintenance operates on the current directory; --overwrite and PROJECT_NAME are scaffold-only"
+        exit 1
+    fi
 
     # Manifest modes (#265) are mutually exclusive with each other.
     if [[ "$CREATE_MANIFEST_MODE" == true ]] && [[ "$UPGRADE_MODE" == true ]]; then
@@ -1673,112 +1690,215 @@ infer_scaffold_options() {
         }'
 }
 
-# Walk a directory and load its current contents into MANIFEST_TRACKED so
-# manifest_write can persist them. Used by --create-manifest.
-#
-# Usage: load_manifest_from_walk <root> [<additional_skip_prefix>...]
-load_manifest_from_walk() {
-    local root="$1"
-    shift
-    manifest_recording_start "$root"
-    local rel hash
-    while IFS=$'\t' read -r rel hash; do
-        [[ -z "$rel" ]] && continue
-        MANIFEST_TRACKED["$rel"]="$hash"
-    done < <(manifest_walk_directory "$root" "$@")
-    manifest_recording_stop
+# Explicit initial-scaffold selections cannot be used to re-scaffold a project.
+scaffold_flags_supplied() {
+    [[ -n "$PROJECT_NAME" || "$MONOREPO_MODE" == true || ${#MODULES[@]} -gt 0 ||
+        ${#SELECTED_LANGUAGES[@]} -gt 0 || ${#SELECTED_SERVICES[@]} -gt 0 ||
+        "$CODEX_ENABLED" == true || "$AI_PROFILE_SET" == true ||
+        "$GITHUB_ACTIONS_ENABLED" == true || "$AUTO_TAG_ENABLED" == true || "$OVERWRITE_ALL" == true ]]
 }
 
-# Bootstrap a manifest for an existing project. Detects single vs monorepo
-# by the presence of modules.json. In monorepo mode, writes a root manifest
-# (covering shared assets) and one manifest per registered module.
-#
-# Usage: run_create_manifest <target_dir>
-# Returns: 0 on success.
+existing_tarnished_project() {
+    local root="$1" marker
+    for marker in .tarnished-manifest.json .tarnished/refresh.json .tarnished/agent-profile.json modules.json; do
+        [[ -e "$root/$marker" || -L "$root/$marker" ]] && return 0
+    done
+    return 1
+}
+
+validate_maintenance_target() {
+    local root="$1" marker
+    for marker in .tarnished-manifest.json .tarnished/refresh.json .tarnished/agent-profile.json modules.json; do
+        if ! manifest_safe_path "$root" "$marker"; then
+            print_error "Unsafe project marker: $root/$marker; replace symlink or directory with an ordinary project file before maintenance"
+            return 1
+        fi
+        if [[ -f "$root/$marker" ]] && ! jq -e 'type == "object"' "$root/$marker" >/dev/null 2>&1; then
+            print_error "Malformed project marker: $root/$marker; repair it before maintenance"
+            return 1
+        fi
+    done
+    if [[ -f "$root/modules.json" ]]; then
+        if ! jq -e '.version == 1 and (.modules | type == "array") and all(.modules[]; (.name | type == "string") and (.language | type == "string"))' "$root/modules.json" >/dev/null; then
+            print_error "Invalid modules.json; repair the module registry before maintenance"
+            return 1
+        fi
+        local module lang
+        while IFS=$'\t' read -r module lang; do
+            if ! validate_module_name "$module" || ! validate_language "$lang" ||
+                ! manifest_safe_path "$root" "$module/.tarnished-manifest.json"; then
+                print_error "Unsafe module scope: $module"
+                return 1
+            fi
+        done < <(jq -r '.modules[] | [.name, .language] | @tsv' "$root/modules.json")
+    fi
+}
+
+# Use this checkout's safe updater, even when the installed helper is legacy.
+run_refresh() {
+    local root="$1"
+    validate_maintenance_target "$root" || return 1
+    local old_manifest='{}'
+    if manifest_exists "$root"; then
+        old_manifest=$(manifest_read "$root") || return 1
+    fi
+    local defaults="$SCRIPT_DIR/templates/agent-workflows/.tarnished/refresh.json"
+    local legacy="$SCRIPT_DIR/scripts/lib/refresh-legacy.json"
+    local config="$root/.tarnished/refresh.json" candidate temp_config=""
+    local updater="$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
+    if [[ ! -f "$config" ]]; then
+        candidate=$(cat "$defaults")
+        print_info "Install default refresh configuration: $config"
+    elif jq -e --slurpfile legacy "$legacy" \
+        '(.use_default_managed_paths // false) == false and (.managed_paths as $paths | any($legacy[0].managed_path_catalogs[]; . == $paths))' "$config" >/dev/null; then
+        candidate=$(jq --slurpfile defaults "$defaults" \
+            '.use_default_managed_paths = true | .managed_paths = $defaults[0].managed_paths' "$config")
+        print_info "Adopt current default AI catalog; preserve project upstream/cache choices: $config"
+    else
+        candidate=""
+        if ! jq -e '.use_default_managed_paths == true' "$config" >/dev/null; then
+            print_info "Preserving custom managed_paths in $config; add mappings from $defaults or explicitly set use_default_managed_paths to true to adopt future defaults"
+        fi
+    fi
+    if [[ -n "$candidate" ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+            temp_config=$(mktemp)
+            printf '%s\n' "$candidate" > "$temp_config"
+            config="$temp_config"
+        else
+            manifest_safe_path "$root" .tarnished/refresh.json || return 1
+            mkdir -p "$root/.tarnished" || return 1
+            temp_config=$(mktemp "$root/.tarnished/.refresh-config.XXXXXX") || return 1
+            if ! printf '%s\n' "$candidate" > "$temp_config" || ! manifest_safe_path "$root" .tarnished/refresh.json || ! mv -fT "$temp_config" "$config"; then
+                rm -f "$temp_config"
+                return 1
+            fi
+            temp_config=""
+        fi
+    fi
+    local -a args=(--project-root "$root" --source-dir "$SCRIPT_DIR" --config "$config")
+    [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
+    local rc=0
+    bash "$updater" "${args[@]}" || rc=$?
+    [[ -n "$temp_config" ]] && rm -f "$temp_config"
+    [[ "$rc" == 0 ]] || return "$rc"
+
+    # Shipped hashes are provenance evidence; an old manifest hash is not.
+    local rel=".devcontainer/scripts/refresh-assets.sh" installed_hash desired_hash temp_helper trusted_hash="" helper_proven=false
+    if ! manifest_safe_path "$root" "$rel"; then
+        print_warning "Container-start updater remains unsafe: $root/$rel; review and copy $updater to that exact path before restarting the container"
+        return 0
+    fi
+    if [[ "$(jq -r '.manifest_version // 0' <<< "$old_manifest")" == 2 ]]; then
+        trusted_hash=$(jq -r --arg rel "$rel" '.files[$rel] // empty' <<< "$old_manifest")
+    fi
+    desired_hash=$(sha256_file "$updater")
+    installed_hash=""
+    [[ -f "$root/$rel" ]] && installed_hash=$(sha256_file "$root/$rel")
+    if [[ "$installed_hash" == "$desired_hash" ]]; then
+        print_info "Container-start updater is current: $root/$rel"
+        helper_proven=true
+    elif [[ -z "$installed_hash" && -z "$trusted_hash" ]] || [[ -n "$trusted_hash" && "$installed_hash" == "$trusted_hash" ]] || jq -e --arg hash "$installed_hash" 'any(.helper_hashes[]; .sha256 == $hash)' "$legacy" >/dev/null; then
+        helper_proven=true
+        print_info "Install safe container-start updater: $updater -> $root/$rel"
+        if [[ "$DRY_RUN" != true ]]; then
+            manifest_safe_path "$root" "$rel" || return 1
+            mkdir -p "$root/.devcontainer/scripts" || return 1
+            temp_helper=$(mktemp "$root/.devcontainer/scripts/.refresh-updater.XXXXXX") || return 1
+            local current_hash=""
+            [[ ! -f "$root/$rel" ]] || current_hash=$(sha256_file "$root/$rel")
+            if ! cp -p "$updater" "$temp_helper" || [[ "$(sha256_file "$temp_helper")" != "$desired_hash" ]] ||
+                ! manifest_safe_path "$root" "$rel" || [[ "$current_hash" != "$installed_hash" ]] ||
+                ! mv -fT "$temp_helper" "$root/$rel"; then
+                rm -f "$temp_helper"
+                print_warning "Cannot install safe updater; manually compare and copy $updater to $root/$rel before restarting the container"
+                return 1
+            fi
+        fi
+    else
+        print_warning "Container-start updater remains old or locally edited: $root/$rel. Compare it with $updater and explicitly copy the chosen safe updater before restarting the container; custom hooks/settings were preserved"
+    fi
+    if [[ "$helper_proven" == true && "$DRY_RUN" != true ]]; then
+        # Maintain durable proof for the next safe updater release, not only
+        # the legacy migration. Version-1 claims remain untrusted.
+        manifest_recording_start "$root" || return 1
+        manifest_recording_stop
+        local key hash opts version commit
+        if [[ "$(jq -r '.manifest_version // 0' <<< "$old_manifest")" == 2 ]]; then
+            while IFS=$'\t' read -r key hash; do
+                [[ -n "$key" ]] && MANIFEST_TRACKED["$key"]="$hash"
+            done < <(jq -r '.files | to_entries[] | [.key,.value] | @tsv' <<< "$old_manifest")
+        elif [[ "$(jq -r '.manifest_version // 0' <<< "$old_manifest")" == 1 ]]; then
+            print_warning "Legacy manifest ownership claims are untrusted and dropped; other helpers can be adopted with --create-manifest after exact distribution comparison"
+        fi
+        MANIFEST_TRACKED["$rel"]="$desired_hash"
+        opts=$(jq -c '.scaffold_options // empty' <<< "$old_manifest")
+        [[ -n "$opts" ]] || opts=$(infer_scaffold_options "$root" "$(if detect_existing_monorepo "$root"; then echo true; else echo false; fi)")
+        version=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo local)
+        commit=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        manifest_write "$root" "$version" "$commit" "$opts" || return 1
+    fi
+}
+
+# Adopt only staged distribution matches; preserve previous trusted baselines.
+bootstrap_manifest_scope() {
+    local root="$1" opts="$2" stage="$3" module="${4:-}" lang="${5:-}"
+    local old='{}'
+    if manifest_exists "$root"; then
+        old=$(manifest_read "$root") || return 1
+        opts=$(jq -c '.scaffold_options' <<< "$old")
+    fi
+    manifest_options_valid "$opts" || { print_error "Invalid inferred scaffold options; repair project profile or registry"; return 1; }
+    local selected
+    selected=$(jq -n --argjson opts "$opts" '{scaffold_options:$opts}')
+    populate_setup_state_from_manifest "$selected" "$(jq -r '.monorepo' <<< "$opts")" "$lang" "$module"
+    if [[ -n "$module" ]]; then
+        stage_plugin_run_for_module "$UPSTREAM_DIR" "$stage" "$lang" "$module" || return 1
+    else
+        stage_plugin_run "$UPSTREAM_DIR" "$stage" || return 1
+    fi
+    manifest_adopt_distribution "$root" "$stage" "$old" || return 1
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "would write $root/.tarnished-manifest.json with ${#MANIFEST_TRACKED[@]} proven helper entries"
+    else
+        manifest_write "$root" "$UPSTREAM_VERSION" "$UPSTREAM_COMMIT" "$opts" || return 1
+        print_success "wrote $root/.tarnished-manifest.json"
+    fi
+}
+
 run_create_manifest() {
     local target_dir="$1"
-
-    if [[ ! -d "$target_dir" ]]; then
-        print_error "create-manifest: target directory not found: $target_dir"
+    validate_maintenance_target "$target_dir" || return 1
+    UPGRADE_TARGET_DIR="$target_dir"
+    local saved_target_version="$TARGET_VERSION"
+    TARGET_VERSION="$FROM_VERSION"
+    resolve_target_version || return 1
+    TARGET_VERSION="$saved_target_version"
+    local stage_root opts is_monorepo=false
+    stage_root=$(mktemp -d) || return 1
+    detect_existing_monorepo "$target_dir" && is_monorepo=true
+    opts=$(infer_scaffold_options "$target_dir" "$is_monorepo")
+    print_section "Creating Provenance Manifest"
+    if ! bootstrap_manifest_scope "$target_dir" "$opts" "$stage_root/shared"; then
+        rm -rf "$stage_root"
+        cleanup_upstream_dir
         return 1
     fi
-
-    local from_version="${FROM_VERSION:-unknown}"
-    local commit=""
-
-    print_section "Creating Manifest"
-    print_info "target: $target_dir"
-    print_info "tarnished_version: $from_version"
-
-    if [[ "$DRY_RUN" == true ]]; then
-        print_info "(dry-run: no manifest will be written)"
-    fi
-
-    if detect_existing_monorepo "$target_dir"; then
-        print_info "monorepo target detected (modules.json present)"
-
-        # Collect module names so we can both skip them in the root walk and
-        # iterate them for per-module manifests.
-        local modules=()
-        local m
-        while IFS= read -r m; do
-            [[ -n "$m" ]] && modules+=("$m")
-        done < <(list_module_names "$target_dir")
-
-        # Root manifest: walk root, skipping every module subtree.
-        local opts
-        opts="$(infer_scaffold_options "$target_dir" true)"
-        load_manifest_from_walk "$target_dir" "${modules[@]}"
-        if [[ "$DRY_RUN" != true ]]; then
-            if ! manifest_write "$target_dir" "$from_version" "$commit" "$opts"; then
-                print_error "failed to write manifest: $(manifest_path "$target_dir")"
+    if [[ "$is_monorepo" == true ]]; then
+        local module lang
+        while IFS=$'\t' read -r module lang; do
+            [[ -d "$target_dir/$module" ]] || continue
+            opts=$(infer_scaffold_options "$target_dir/$module" false "$lang")
+            mkdir -p "$stage_root/$module"
+            if ! bootstrap_manifest_scope "$target_dir/$module" "$opts" "$stage_root/$module" "$module" "$lang"; then
+                rm -rf "$stage_root"
+                cleanup_upstream_dir
                 return 1
             fi
-            print_success "wrote $(manifest_path "$target_dir")"
-        else
-            print_info "would write root manifest with ${#MANIFEST_TRACKED[@]} file entries"
-        fi
-
-        # Per-module manifests.
-        local module
-        for module in "${modules[@]}"; do
-            local module_dir="$target_dir/$module"
-            if [[ ! -d "$module_dir" ]]; then
-                print_warning "module '$module' has no directory at $module_dir; skipping"
-                continue
-            fi
-            local lang
-            lang=$(jq -r --arg n "$module" '.modules[] | select(.name == $n) | .language' "$target_dir/modules.json" 2>/dev/null)
-            local module_opts
-            module_opts="$(infer_scaffold_options "$module_dir" false "$lang")"
-            load_manifest_from_walk "$module_dir"
-            if [[ "$DRY_RUN" != true ]]; then
-                if ! manifest_write "$module_dir" "$from_version" "$commit" "$module_opts"; then
-                    print_error "failed to write manifest: $(manifest_path "$module_dir")"
-                    return 1
-                fi
-                print_success "wrote $(manifest_path "$module_dir")"
-            else
-                print_info "would write $module manifest with ${#MANIFEST_TRACKED[@]} file entries"
-            fi
-        done
-    else
-        print_info "single-mode target detected"
-        local opts
-        opts="$(infer_scaffold_options "$target_dir" false)"
-        load_manifest_from_walk "$target_dir"
-        if [[ "$DRY_RUN" != true ]]; then
-            if ! manifest_write "$target_dir" "$from_version" "$commit" "$opts"; then
-                print_error "failed to write manifest: $(manifest_path "$target_dir")"
-                return 1
-            fi
-            print_success "wrote $(manifest_path "$target_dir")"
-        else
-            print_info "would write manifest with ${#MANIFEST_TRACKED[@]} file entries"
-        fi
+        done < <(jq -r '.modules[] | [.name, .language] | @tsv' "$target_dir/modules.json")
     fi
-
-    return 0
+    rm -rf "$stage_root"
+    cleanup_upstream_dir
 }
 
 # =============================================================================
@@ -1829,6 +1949,21 @@ resolve_target_version() {
         UPSTREAM_DIR="$SCRIPT_DIR"
         UPSTREAM_VERSION=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo "${REMOTE_BRANCH:-develop}")
         UPSTREAM_COMMIT=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        return 0
+    fi
+
+    # Prefer an available local ref: --from-version must compare its actual
+    # distribution bytes, and deterministic/offline adoption needs no clone.
+    local resolved
+    if resolved=$(git -C "$SCRIPT_DIR" rev-parse --verify "${TARGET_VERSION}^{commit}" 2>/dev/null); then
+        UPSTREAM_DIR=$(mktemp -d)/upstream
+        mkdir -p "$UPSTREAM_DIR"
+        if ! git -C "$SCRIPT_DIR" archive "$resolved" | tar -x -C "$UPSTREAM_DIR"; then
+            cleanup_upstream_dir
+            return 1
+        fi
+        UPSTREAM_VERSION="$TARGET_VERSION"
+        UPSTREAM_COMMIT="$resolved"
         return 0
     fi
 
@@ -1964,13 +2099,58 @@ _is_safe_placeholder_value() {
     return 0
 }
 
+# Launch staging in a fresh Bash process. A caller's `if ! stage...` must
+# not disable errexit inside sourced plugins and conceal a partial inventory.
+stage_distribution() {
+    local mode="$1" upstream="$2" stage="$3" lang="${4:-}" module="${5:-}"
+    local scratch inventory state rel hash
+    scratch=$(mktemp -d) || return 1
+    inventory="$scratch/inventory"
+    state="$scratch/options.sh"
+    if ! declare -p SELECTED_LANGUAGES SELECTED_SERVICES MONOREPO_MODE IS_ADD_MODULE_MODE MODULES \
+        ADD_MODULE_NAME ADD_MODULE_LANG CODEX_ENABLED AI_PROFILE AI_PRIMARY_AGENT AI_REVIEW_AGENT \
+        GITHUB_ACTIONS_ENABLED AUTO_TAG_ENABLED POSTGRESQL_ENABLED MYSQL_ENABLED REDIS_ENABLED \
+        CELERY_ENABLED UPGRADE_TARGET_DIR UPGRADE_MODE PROJECT_NAME > "$state"; then
+        rm -rf "$scratch"
+        return 1
+    fi
+    if ! bash -e -o pipefail -c '
+        source "$1"
+        source "$2"
+        source "$SCRIPT_DIR/scripts/lib/manifest.sh"
+        SKIP_CONFIRM=true
+        skip_confirm=true
+        OVERWRITE_ALL=true
+        [[ -f "$4/templates/core/plugin.sh" ]] || { print_error "Incomplete distribution: core plugin missing"; exit 1; }
+        if [[ "$3" == module ]]; then
+            _stage_plugin_run_for_module "$4" "$5" "$6" "$7"
+        else
+            _stage_plugin_run "$4" "$5"
+        fi
+        manifest_walk_directory "$5" > "$8"
+    ' bash "$SCRIPT_DIR/setup.sh" "$state" "$mode" "$upstream" "$stage" "$lang" "$module" "$inventory"; then
+        print_error "Staging failed; no maintenance ownership decisions were applied"
+        rm -rf "$scratch"
+        return 1
+    fi
+    unset MANIFEST_TRACKED
+    declare -gA MANIFEST_TRACKED
+    while IFS=$'\t' read -r rel hash; do
+        [[ -n "$rel" ]] && MANIFEST_TRACKED["$rel"]="$hash"
+    done < "$inventory"
+    rm -rf "$scratch"
+}
+
+stage_plugin_run() { stage_distribution root "$1" "$2"; }
+stage_plugin_run_for_module() { stage_distribution module "$1" "$2" "$3" "$4"; }
+
 # Run the loaded plugin pipeline (copies + dockerfile + post-copy) against a
 # scratch staging directory. The recording wrapper in copy_with_confirm
 # populates MANIFEST_TRACKED with each emitted file. When this returns,
 # MANIFEST_TRACKED holds the new-version hashes for the active scope.
 #
 # Usage: stage_plugin_run <upstream_dir> <staging_dir>
-stage_plugin_run() {
+_stage_plugin_run() {
     local upstream_dir="$1"
     local staging_dir="$2"
 
@@ -2003,27 +2183,7 @@ stage_plugin_run() {
     # files that would actually land in the target.
     stage_render_placeholders "$staging_dir" "$UPGRADE_TARGET_DIR"
 
-    # Rebuild MANIFEST_TRACKED from the staging tree alone, so NEW_HASHES
-    # describes exactly the files that exist after the full pipeline.
-    #
-    # The walk supersedes the recording wrapper rather than filling gaps in
-    # it, for three reasons: it covers plugins that emit via `sed > target`,
-    # `cat > target`, or `touch target` instead of copy_with_confirm; it
-    # reflects the placeholder render above, which rewrote files the
-    # recorder had already hashed; and it drops recorder entries for files
-    # a later plugin_post_copy deleted. That last case is why the reset
-    # matters — several service plugins copy a docker-compose overlay and
-    # then remove it once merged (see templates/services/*/plugin.sh), and
-    # a surviving recorder entry would put a nonexistent staging path into
-    # NEW_HASHES, where manifest_apply's NEW/UPDATE branch would `cp` it
-    # and abort the upgrade mid-apply.
-    unset MANIFEST_TRACKED
-    declare -gA MANIFEST_TRACKED
-    local rel hash
-    while IFS=$'\t' read -r rel hash; do
-        [[ -z "$rel" ]] && continue
-        MANIFEST_TRACKED["$rel"]="$hash"
-    done < <(manifest_walk_directory "$staging_dir")
+
 }
 
 # Per-module variant of stage_plugin_run. Bypasses the monorepo dispatch
@@ -2035,7 +2195,7 @@ stage_plugin_run() {
 # keys.
 #
 # Usage: stage_plugin_run_for_module <upstream_dir> <staging_dir> <lang> <module_name>
-stage_plugin_run_for_module() {
+_stage_plugin_run_for_module() {
     local upstream_dir="$1"
     local staging_dir="$2"
     local lang="$3"
@@ -2073,35 +2233,7 @@ stage_plugin_run_for_module() {
     # target root rather than from the module staging directory.
     stage_render_placeholders "$staging_dir" "$UPGRADE_TARGET_DIR"
 
-    # Authoritative rebuild — see stage_plugin_run for the rationale.
-    unset MANIFEST_TRACKED
-    declare -gA MANIFEST_TRACKED
-    local rel hash
-    while IFS=$'\t' read -r rel hash; do
-        [[ -z "$rel" ]] && continue
-        MANIFEST_TRACKED["$rel"]="$hash"
-    done < <(manifest_walk_directory "$staging_dir")
-}
 
-# Re-run plugin_post_copy hooks against the user's real target tree (not
-# the staging area). FR-5: merge logic is idempotent and reapplying it
-# absorbs any new whitelist blocks / merge entries from the upgraded
-# templates. Verbatim files have already been resolved by the lifecycle
-# loop; this pass only mutates merge/append targets.
-#
-# Usage: rerun_post_copy_on_target <upstream_dir> <target_dir>
-rerun_post_copy_on_target() {
-    local upstream_dir="$1"
-    local target_dir="$2"
-
-    local saved_templates="$TEMPLATES_DIR"
-    TEMPLATES_DIR="${upstream_dir}/templates"
-    # Reload plugin functions from upstream so PLUGIN_DIR is correct.
-    load_selected_plugins
-    # Recording is OFF here — we don't want plugin_post_copy's mutations
-    # entering the manifest.
-    execute_plugin_post_copies "$target_dir"
-    TEMPLATES_DIR="$saved_templates"
 }
 
 # Drive a single upgrade scope. Reads the existing manifest, stages plugins
@@ -2125,19 +2257,18 @@ apply_decisions_for_scope() {
         return 1
     fi
 
-    # Snapshot old hashes into a local map. Skip paths that are now in
-    # MANIFEST_EXCLUDE_GLOBS so pre-#286 manifests still listing those paths
-    # (e.g. .github/*) cannot enter the lifecycle loop — otherwise
-    # `--upgrade --prune` would delete user-owned files via the
-    # LEAVE_REMOVED/PRUNE branch during the one-shot migration upgrade.
+    # Version 1 recorded arbitrary project bytes and is never ownership proof.
     declare -A OLD_HASHES=()
+    local path hash legacy=false
+    [[ "$(jq -r '.manifest_version' <<< "$old_json")" == 1 ]] && legacy=true
     while IFS=$'\t' read -r path hash; do
         [[ -z "$path" ]] && continue
-        if _manifest_path_excluded "$path"; then
+        if ! _manifest_path_eligible "$path" || [[ "$legacy" == true ]]; then
+            print_warning "Preserving unproven legacy/project entry and dropping its ownership claim: $scope_root/$path; compare with $staging_dir/$path before explicit adoption"
             continue
         fi
         OLD_HASHES["$path"]="$hash"
-    done < <(echo "$old_json" | jq -r '.files | to_entries[] | "\(.key)\t\(.value)"')
+    done < <(jq -r '.files | to_entries[] | [.key,.value] | @tsv' <<< "$old_json")
 
     # Snapshot new hashes from the staged run that just populated
     # MANIFEST_TRACKED. Copy now because subsequent operations may clear
@@ -2162,23 +2293,36 @@ apply_decisions_for_scope() {
 
     local rel old current new staging_path target_path decision
     local apply_failures=0
+    declare -A INSTALLED_HASHES=()
+    for k in "${!OLD_HASHES[@]}"; do INSTALLED_HASHES["$k"]="${OLD_HASHES[$k]}"; done
     for rel in "${!ALL_PATHS[@]}"; do
         old="${OLD_HASHES[$rel]:-}"
         new="${NEW_HASHES[$rel]:-}"
         target_path="${scope_root}/${rel}"
         staging_path="${staging_dir}/${rel}"
+        if ! manifest_safe_path "$scope_root" "$rel" || ! manifest_safe_path "$staging_dir" "$rel"; then
+            print_warning "Unsafe maintenance path preserved: $target_path; review symlink/directory collision against $staging_path"
+            continue
+        fi
         if [[ -f "$target_path" ]]; then
             current=$(sha256_file "$target_path")
         else
             current=""
         fi
         decision=$(manifest_decide "$old" "$current" "$new")
+        if [[ "$legacy" == true && -z "$current" ]] && jq -e --arg rel "$rel" '.files | has($rel)' <<< "$old_json" >/dev/null; then
+            decision=SKIP_USER_DELETED
+        fi
         # Per review.md Critical #4: do NOT swallow manifest_apply
         # failures — a partial cp/rm corrupts the lifecycle invariant.
         # Count failures and abort before the manifest is rewritten.
         if ! manifest_apply "$decision" "$rel" "$staging_path" "$target_path"; then
             print_error "manifest_apply failed for: $rel (decision=$decision)"
             ((apply_failures++)) || true
+        elif [[ "$decision" == NEW || "$decision" == UPDATE || ( "$decision" == NOOP && -n "$new" ) ]]; then
+            INSTALLED_HASHES["$rel"]="$new"
+        elif [[ "$decision" == PRUNE ]]; then
+            unset 'INSTALLED_HASHES[$rel]'
         fi
     done
 
@@ -2188,31 +2332,13 @@ apply_decisions_for_scope() {
         return 1
     fi
 
-    # Re-run plugin_post_copy on the real target so merge logic / new
-    # whitelist blocks land (FR-5). Recording is OFF.
-    if [[ "${DRY_RUN:-false}" != true ]]; then
-        rerun_post_copy_on_target "$UPSTREAM_DIR" "$scope_root"
-    fi
-
     # Write the new manifest. NEW_HASHES holds the new hashes from the
     # staged run; transfer to MANIFEST_TRACKED and write.
     if [[ "${DRY_RUN:-false}" != true ]]; then
-        # Reset MANIFEST_TRACKED to the new-hashes set (drop NEW_HASHES
-        # entries that the user has rejected with SKIP_NEW_CONFLICT —
-        # they belong to the user, not the manifest).
         unset MANIFEST_TRACKED
         declare -gA MANIFEST_TRACKED
-        for k in "${!NEW_HASHES[@]}"; do
-            local skipped=false
-            local sk
-            for sk in "${SKIPPED_NEW_CONFLICT_FILES[@]}"; do
-                if [[ "$sk" == "$k" ]]; then
-                    skipped=true
-                    break
-                fi
-            done
-            [[ "$skipped" == true ]] && continue
-            MANIFEST_TRACKED["$k"]="${NEW_HASHES[$k]}"
+        for k in "${!INSTALLED_HASHES[@]}"; do
+            MANIFEST_TRACKED["$k"]="${INSTALLED_HASHES[$k]}"
         done
 
         # Per review.md Suggestion #2: preserve scaffold_options from the
@@ -2250,6 +2376,7 @@ run_upgrade() {
     # called from several scopes, so the target is carried as a global
     # rather than threaded through every signature.
     UPGRADE_TARGET_DIR="$target_dir"
+    validate_maintenance_target "$target_dir" || return 1
 
     if ! manifest_exists "$target_dir"; then
         print_error "no .tarnished-manifest.json at $target_dir"
@@ -2521,6 +2648,18 @@ main() {
         exit $?
     fi
 
+    # Setup's target has always been the working directory; PROJECT_NAME
+    # renders scaffold placeholders and does not select another directory.
+    if [[ "$IS_ADD_MODULE_MODE" != true ]] && { [[ "$REFRESH_MODE" == true ]] || existing_tarnished_project "$(pwd)"; }; then
+        if scaffold_flags_supplied; then
+            print_error "Existing Tarnished project: use --refresh for AI assets or --add-module <name> --lang <language>; scaffold flags (including --overwrite) are not maintenance permission"
+            exit 1
+        fi
+        source "${SCRIPT_DIR}/scripts/lib/manifest.sh"
+        run_refresh "$(pwd)"
+        exit $?
+    fi
+
     # Get project name
     if [[ -z "$PROJECT_NAME" ]]; then
         local default_name
@@ -2669,6 +2808,9 @@ main() {
     print_section "Loading Plugins"
     load_selected_plugins
 
+    source "${SCRIPT_DIR}/scripts/lib/manifest.sh"
+    manifest_recording_start "$TARGET_DIR"
+
     # Execute plugin copies
     print_section "Copying Template Files"
     execute_plugin_copies "$TARGET_DIR"
@@ -2700,38 +2842,41 @@ main() {
     # Update .gitignore
     update_gitignore "$TARGET_DIR"
 
-    # Per review.md Critical #5: write a manifest at the end of every
-    # successful scaffold so newly-created projects can use --upgrade
-    # without first running --create-manifest. Skipped for --dry-run
-    # (no files were written) and for add-module (which only adds to an
-    # existing project; the existing manifest still applies).
-    if [[ "$DRY_RUN" != true ]] && [[ "$IS_ADD_MODULE_MODE" != true ]]; then
-        # shellcheck disable=SC1091
-        source "${SCRIPT_DIR}/scripts/lib/manifest.sh"
-        local scaffold_version=""
+    manifest_recording_stop
+    manifest_recording_rehash
+    if [[ "$IS_ADD_MODULE_MODE" != true ]]; then
+        local scaffold_version scaffold_commit scaffold_opts
         scaffold_version=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo "${REMOTE_BRANCH:-develop}")
-        local scaffold_commit=""
         scaffold_commit=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
-        FROM_VERSION="$scaffold_version"
-        # Use the same logic as --create-manifest: detect monorepo,
-        # write root manifest (and per-module manifests), inferring
-        # scaffold_options from filesystem evidence (#265).
-        # Non-fatal: a failure here does not abort the scaffold.
-        if ! run_create_manifest "$TARGET_DIR" 2>&1 | sed 's/^/  /'; then
-            print_warning "Failed to write .tarnished-manifest.json (scaffold otherwise succeeded)"
-        fi
-        # Override the version we just wrote with the actual git ref +
-        # commit so legacy "unknown" only applies to bootstrap of
-        # pre-existing projects.
-        if manifest_exists "$TARGET_DIR"; then
-            local tmp_manifest="${TARGET_DIR}/.tarnished-manifest.json.tmp"
-            if jq --arg v "$scaffold_version" --arg c "$scaffold_commit" \
-                '.tarnished_version = $v | .tarnished_commit = $c' \
-                "${TARGET_DIR}/.tarnished-manifest.json" > "$tmp_manifest"; then
-                mv "$tmp_manifest" "${TARGET_DIR}/.tarnished-manifest.json"
-            else
-                rm -f "$tmp_manifest"
+        scaffold_opts=$(infer_scaffold_options "$TARGET_DIR" "$MONOREPO_MODE")
+        declare -A scaffold_files=()
+        local copied_path module_spec
+        for copied_path in "${!MANIFEST_TRACKED[@]}"; do
+            scaffold_files["$copied_path"]="${MANIFEST_TRACKED[$copied_path]}"
+            if [[ "$MONOREPO_MODE" == true ]]; then
+                for module_spec in "${MODULES[@]}"; do
+                    [[ "$copied_path" != "${module_spec%%:*}/"* ]] || unset 'MANIFEST_TRACKED[$copied_path]'
+                done
             fi
+        done
+        if ! manifest_write "$TARGET_DIR" "$scaffold_version" "$scaffold_commit" "$scaffold_opts"; then
+            print_warning "Failed to write scaffold provenance; run --create-manifest to adopt exact distribution matches"
+        fi
+        if [[ "$MONOREPO_MODE" == true ]]; then
+            local module module_opts
+            for module in "${MODULES[@]}"; do
+                module_opts=$(infer_scaffold_options "$TARGET_DIR/${module%%:*}" false "${module#*:}")
+                # Keep each successful module helper in its own scope; seeds
+                # never entered the finite copied-helper inventory.
+                (manifest_recording_start "$TARGET_DIR/${module%%:*}"
+                 manifest_recording_stop
+                 for copied_path in "${!scaffold_files[@]}"; do
+                     if [[ "$copied_path" == "${module%%:*}/"* ]]; then
+                         MANIFEST_TRACKED["${copied_path#"${module%%:*}/"}"]="${scaffold_files[$copied_path]}"
+                     fi
+                 done
+                 manifest_write "$TARGET_DIR/${module%%:*}" "$scaffold_version" "$scaffold_commit" "$module_opts")
+            done
         fi
     fi
 
@@ -2770,5 +2915,7 @@ main() {
     echo "Codex workflow:  \$issue → \$design → \$implement → \$review → \$pr"
 }
 
-# Run main function
-main "$@"
+# Sourcing exposes helpers to private staging workers and focused tests.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

@@ -1,0 +1,90 @@
+{
+  "helper_hashes": [
+    {
+      "commit": "73744d6a47269b590f2954e915bfe41d596798ca",
+      "sha256": "sha256:8db4b0c7df1fdc80e9a415f11403f1d7cfcca63f3eb23649cbc2e0f17999c110"
+    },
+    {
+      "commit": "46f7be72002a3237b197d7d76aedfaf9aa7d2669",
+      "sha256": "sha256:90fcf43dadb9cf573199a85114746a6ae0830b8d527209a92f43394eafea5664"
+    }
+  ],
+  "managed_path_catalogs": [
+    [
+      {
+        "src": "templates/claude/.claude/commands",
+        "dst": ".claude/commands",
+        "overlay": ".claude/commands.local"
+      },
+      {
+        "src": "templates/claude/.claude/skills",
+        "dst": ".claude/skills",
+        "overlay": ".claude/skills.local"
+      },
+      {
+        "src": "templates/claude/.claude/scripts",
+        "dst": ".claude/scripts",
+        "overlay": ".claude/scripts.local"
+      },
+      {
+        "src": "templates/claude/.claude/rules/shell.md",
+        "dst": ".claude/rules/shell.md",
+        "overlay": ".claude/rules.local/shell.md"
+      },
+      {
+        "src": "templates/claude/.claude/agents",
+        "dst": ".claude/agents",
+        "overlay": ".claude/agents.local"
+      },
+      {
+        "src": "templates/claude/.claude/commands/erd",
+        "dst": ".tarnished/workflows/erd",
+        "overlay": ".tarnished/workflows/erd.local"
+      }
+    ],
+    [
+      {
+        "src": "templates/claude/.claude/commands",
+        "dst": ".claude/commands",
+        "overlay": ".claude/commands.local"
+      },
+      {
+        "src": "templates/claude/.claude/skills",
+        "dst": ".claude/skills",
+        "overlay": ".claude/skills.local"
+      },
+      {
+        "src": "templates/claude/.claude/scripts",
+        "dst": ".claude/scripts",
+        "overlay": ".claude/scripts.local"
+      },
+      {
+        "src": "templates/claude/.claude/rules/shell.md",
+        "dst": ".claude/rules/shell.md",
+        "overlay": ".claude/rules.local/shell.md"
+      }
+    ],
+    [
+      {
+        "src": ".claude/commands",
+        "dst": ".claude/commands",
+        "overlay": ".claude/commands.local"
+      },
+      {
+        "src": ".claude/skills",
+        "dst": ".claude/skills",
+        "overlay": ".claude/skills.local"
+      },
+      {
+        "src": ".claude/scripts",
+        "dst": ".claude/scripts",
+        "overlay": ".claude/scripts.local"
+      },
+      {
+        "src": ".claude/rules",
+        "dst": ".claude/rules",
+        "overlay": ".claude/rules.local"
+      }
+    ]
+  ]
+}
