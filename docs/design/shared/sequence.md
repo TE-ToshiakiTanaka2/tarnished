@@ -492,7 +492,7 @@ sequenceDiagram
     Setup-->>User: print_success "Project configuration collected"
 ```
 
-## Safe continuous AI asset refresh
+## Continuous AI asset refresh with backups
 
 ```mermaid
 sequenceDiagram
@@ -508,10 +508,14 @@ sequenceDiagram
     loop Active mappings and owned entries
         Refresh->>Source: Enumerate regular source/overlay candidate
         Refresh->>Project: Validate boundaries and compare current hash
-        alt Safe new/update/proven unchanged upstream removal
-            Refresh->>Project: Apply one file atomically
+        alt Currently distributed candidate
+            Refresh->>Project: Verify private backup if live bytes differ
+            Refresh->>Project: Recheck and install atomically (restore deleted targets)
             Refresh->>State: Advance only successful installed baseline
-        else Unknown/edited/deleted/unsafe
+        else Proven unchanged upstream removal
+            Refresh->>Project: Remove only this proven unchanged file
+            Refresh->>State: Advance only successful installed baseline
+        else Unknown sibling, edited obsolete file, unsafe path or failed backup
             Refresh-->>Caller: Warn and preserve with recovery hint
         end
     end

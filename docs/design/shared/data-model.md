@@ -122,7 +122,7 @@ Version-1 entries are untrusted. Bootstrap compares eligible staged distribution
 
 ### `.tarnished/refresh-state.json` schema
 
-Versioned local metadata: `{schema_version: 1, entries: {destination: entry}}`. Each entry records nested `mapping: {repo, src, dst, overlay}`, `sha256` (64 lowercase hexadecimal characters without a prefix), `origin` (`upstream` or `overlay`), and diagnostic source `commit`. `overlay` is a relative path or `null`. It binds a successful installation or exact match to the complete mapping. Mapping changes preserve old destinations rather than granting deletion authority. Advance entries only after success; retain old baselines on conflicts/failures/deletions. Overlay-origin content is never automatically pruned. Malformed or symlink state cannot authorize updates. State is excluded from distribution and manifests.
+Versioned local metadata: `{schema_version: 1, entries: {destination: entry}}`. Each entry records nested `mapping: {repo, src, dst, overlay}`, `sha256` (64 lowercase hexadecimal characters without a prefix), `origin` (`upstream` or `overlay`), and diagnostic source `commit`. `overlay` is a relative path or `null`. It binds a successful installation or exact match to the complete mapping. Mapping changes preserve old destinations rather than granting deletion authority. Advance entries only after success; retain old baselines on failed installation or mapping conflicts. Currently distributed deleted files are restored; differing existing bytes are backed up before replacement. Overlay-origin content is never automatically pruned. Malformed or symlink state cannot authorize updates. State is excluded from distribution and manifests.
 
 Example with a syntactically valid illustrative digest (actual entries contain the installed content hash):
 
@@ -144,6 +144,10 @@ Example with a syntactically valid illustrative digest (actual entries contain t
   }
 }
 ```
+
+### AI replacement backups
+
+`.tarnished/backups/<unique-run>/<original-relative-path>` stores verified exact pre-replacement bytes in a private directory. Allocate lazily, never overwrite earlier run backups, never enroll this reserved tree in refresh or manifest ownership, and never prune it automatically. No state schema change is needed: state continues to describe successfully installed effective bytes.
 
 ## Relationships
 
