@@ -83,9 +83,11 @@ sha256_file() {
 
     local hex
     if command -v sha256sum &> /dev/null; then
-        hex=$(sha256sum "$path" | cut -d' ' -f1)
+        hex=$(sha256sum < "$path") || return 1
+        hex="${hex%% *}"
     elif command -v shasum &> /dev/null; then
-        hex=$(shasum -a 256 "$path" | cut -d' ' -f1)
+        hex=$(shasum -a 256 < "$path") || return 1
+        hex="${hex%% *}"
     else
         print_error "sha256_file: neither sha256sum nor shasum is available"
         return 1
@@ -112,9 +114,12 @@ sha256_file() {
 MANIFEST_RECORDING="${MANIFEST_RECORDING:-false}"
 # Absolute path used to compute the relative key inside MANIFEST_TRACKED.
 MANIFEST_RECORDING_ROOT="${MANIFEST_RECORDING_ROOT:-}"
+MANIFEST_RECORDING_INPUT_ROOT="${MANIFEST_RECORDING_INPUT_ROOT:-}"
 # Map: <repo-relative-path> → "sha256:<hex>". Declared lazily by
 # manifest_recording_start to avoid `declare -gA` errors on older bash.
 declare -gA MANIFEST_TRACKED 2>/dev/null || true
+# Deletion intent is separate from installed-content ownership.
+declare -gA MANIFEST_DELETED 2>/dev/null || true
 
 # Globs (relative to MANIFEST_RECORDING_ROOT) that must NOT be tracked. Per
 # FR-3 of #265: merge files, dynamic files, and user-owned files are excluded
@@ -157,6 +162,32 @@ if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
         # .tarnished/workflows/erd in downstream projects (#304).
         ".tarnished/workflows/erd"
         ".tarnished/workflows/erd/*"
+        ".agents/skills"
+        ".agents/skills/*"
+        ".agents/skills.local"
+        ".agents/skills.local/*"
+        ".tarnished/workflows/issue.md"
+        ".tarnished/workflows/flow.md"
+        ".tarnished/workflows/implement.md"
+        ".tarnished/workflows/pr.md"
+        ".tarnished/workflows/review.md"
+        ".tarnished/workflows/README.md"
+        ".tarnished/workflows/design.md"
+        ".tarnished/workflows"
+        ".tarnished/workflows/*"
+        ".tarnished/workflows.local/issue.md"
+        ".tarnished/workflows.local/flow.md"
+        ".tarnished/workflows.local/implement.md"
+        ".tarnished/workflows.local/pr.md"
+        ".tarnished/workflows.local/review.md"
+        ".tarnished/workflows.local/README.md"
+        ".tarnished/workflows.local/design.md"
+        ".tarnished/workflows.local"
+        ".tarnished/workflows.local/*"
+        ".tarnished/refresh.json"
+        ".tarnished/refresh-state.json"
+        ".tarnished/agent-profile.json"
+        ".codex/config.toml"
         # User-owned overlay sidecars (#279 FR-4). Files in these
         # directories survive every refresh and MUST never be tracked
         # by the manifest either.
@@ -195,11 +226,14 @@ manifest_recording_start() {
         print_error "manifest_recording_start: root_dir required"
         return 1
     fi
-    MANIFEST_RECORDING_ROOT="$(cd "$root" && pwd)"
+    MANIFEST_RECORDING_INPUT_ROOT="$(_abs_path "${root%/}")"
+    MANIFEST_RECORDING_ROOT=$(manifest_physical_root "$MANIFEST_RECORDING_INPUT_ROOT") || return 1
+    [[ -d "$MANIFEST_RECORDING_ROOT" ]] || return 1
+    manifest_safe_path "$MANIFEST_RECORDING_ROOT" .tarnished-manifest.json || return 1
     MANIFEST_RECORDING=true
     # Clear prior state.
-    unset MANIFEST_TRACKED
-    declare -gA MANIFEST_TRACKED
+    unset MANIFEST_TRACKED MANIFEST_DELETED
+    declare -gA MANIFEST_TRACKED MANIFEST_DELETED
 }
 
 # Stop recording. Does not clear MANIFEST_TRACKED; the snapshot remains
@@ -221,6 +255,113 @@ _manifest_path_excluded() {
     return 1
 }
 
+# Relative inventory keys cannot escape a scope or break line-based serialization.
+_manifest_relative_path_valid() {
+    local rel="$1" part
+    [[ -n "$rel" && "$rel" != /* && "$rel" != */ ]] || return 1
+    [[ ! "$rel" =~ [[:cntrl:]] ]] || return 1
+    local parts=()
+    IFS='/' read -r -a parts <<< "$rel"
+    for part in "${parts[@]}"; do
+        [[ -n "$part" && "$part" != . && "$part" != .. ]] || return 1
+    done
+}
+
+# Maintenance is a positive policy, not everything outside an exclusion list.
+# Prefixes support module scopes; staging determines which helpers were delivered.
+_manifest_path_eligible() {
+    local rel="$1" scoped
+    _manifest_relative_path_valid "$rel" || return 1
+    [[ ! "$rel" =~ (^|/)[^/]*\.local(/|$) ]] || return 1
+    case "$rel" in
+        .devcontainer/scripts/*.sh) scoped="$rel" ;;
+        */.devcontainer/scripts/*.sh) scoped=".devcontainer/${rel#*/.devcontainer/}" ;;
+        *) return 1 ;;
+    esac
+    [[ "${scoped##*/}" != post.sh ]] || return 1
+    ! _manifest_path_excluded "$rel" && ! _manifest_path_excluded "$scoped"
+}
+
+# Establish the physical maintenance boundary. Host filesystem aliases above
+# this root are allowed (for example macOS /var); the selected root leaf cannot
+# itself be a symlink. Missing private descendants use their existing parent's
+# physical spelling without requiring GNU realpath options.
+manifest_physical_root() {
+    local root="$1" ancestor suffix="" physical
+    while [[ "$root" != / && "$root" == */ ]]; do root="${root%/}"; done
+    [[ "$root" == /* && "$root" != / ]] || return 1
+    _manifest_relative_path_valid "${root#/}" || return 1
+    [[ ! -L "$root" ]] || return 1
+    ancestor="$root"
+    while [[ ! -e "$ancestor" && ! -L "$ancestor" ]]; do
+        suffix="/${ancestor##*/}$suffix"
+        ancestor="${ancestor%/*}"
+        [[ -n "$ancestor" ]] || ancestor=/
+    done
+    [[ -d "$ancestor" ]] || return 1
+    physical=$(cd -P "$ancestor" && pwd -P) || return 1
+    printf '%s%s' "${physical%/}" "$suffix"
+}
+
+# Only project-relative components are controlled update paths: reject every
+# symlink and incompatible type below the canonical root, including the leaf.
+manifest_safe_path() {
+    local root="$1" rel="$2" kind="${3:-file}" path part
+    _manifest_relative_path_valid "$rel" || return 1
+    root=$(manifest_physical_root "$root") || return 1
+    path="$root"
+    local parts=()
+    IFS='/' read -r -a parts <<< "$rel"
+    local i
+    for ((i = 0; i < ${#parts[@]}; i++)); do
+        part="${parts[$i]}"
+        path="$path/$part"
+        [[ ! -L "$path" ]] || return 1
+        if [[ -e "$path" ]]; then
+            if [[ "$i" -lt $((${#parts[@]} - 1)) ]]; then
+                [[ -d "$path" ]] || return 1
+            elif [[ "$kind" == directory ]]; then
+                [[ -d "$path" ]] || return 1
+            else
+                [[ -f "$path" ]] || return 1
+            fi
+        fi
+    done
+}
+
+# Resolve only the recorded root prefix, never internal symlink components.
+_manifest_recording_destination() {
+    local dest="$1" abs rel
+    abs=$(_abs_path "$dest")
+    case "$abs" in
+        "$MANIFEST_RECORDING_ROOT") printf '%s' "$MANIFEST_RECORDING_ROOT"; return 0 ;;
+        "$MANIFEST_RECORDING_INPUT_ROOT") printf '%s' "$MANIFEST_RECORDING_ROOT"; return 0 ;;
+        "$MANIFEST_RECORDING_ROOT"/*) rel="${abs#"$MANIFEST_RECORDING_ROOT/"}" ;;
+        "$MANIFEST_RECORDING_INPUT_ROOT"/*) rel="${abs#"$MANIFEST_RECORDING_INPUT_ROOT/"}" ;;
+        *) return 1 ;;
+    esac
+    _manifest_relative_path_valid "$rel" || return 1
+    printf '%s/%s' "$MANIFEST_RECORDING_ROOT" "$rel"
+}
+
+# Rehash only the finite set successfully copied, after plugin transformations.
+manifest_recording_rehash() {
+    local rel hash
+    local -A refreshed=()
+    for rel in "${!MANIFEST_TRACKED[@]}"; do
+        if ! _manifest_path_eligible "$rel" ||
+            ! manifest_safe_path "$MANIFEST_RECORDING_ROOT" "$rel" ||
+            ! hash=$(sha256_file "$MANIFEST_RECORDING_ROOT/$rel"); then
+            print_error "Cannot establish installed baseline: $MANIFEST_RECORDING_ROOT/$rel"
+            return 1
+        fi
+        refreshed["$rel"]="$hash"
+    done
+    for rel in "${!refreshed[@]}"; do
+        MANIFEST_TRACKED["$rel"]="${refreshed[$rel]}"
+    done
+}
+
 # Public: register an already-written file for manifest tracking. Plugins
 # that emit files via `sed`, `awk`, `cat`, or other redirects that bypass
 # copy_with_confirm should call this with the absolute (or relative)
@@ -239,6 +380,7 @@ _record_tracked_copy() {
     [[ "$MANIFEST_RECORDING" != true ]] && return 0
     [[ -z "$MANIFEST_RECORDING_ROOT" ]] && return 0
 
+    abs_dest=$(_manifest_recording_destination "$abs_dest") || return 0
     # Skip destinations outside the recording root (defensive — plugins
     # could write to /tmp for unrelated reasons).
     case "$abs_dest" in
@@ -248,13 +390,15 @@ _record_tracked_copy() {
 
     local rel="${abs_dest#${MANIFEST_RECORDING_ROOT}/}"
 
-    if _manifest_path_excluded "$rel"; then
+    if ! _manifest_path_eligible "$rel" ||
+        ! manifest_safe_path "$MANIFEST_RECORDING_ROOT" "$rel"; then
         return 0
     fi
 
     local hash
     if ! hash=$(sha256_file "$abs_dest"); then
-        return 0
+        print_error "Cannot hash copied helper: $abs_dest"
+        return 1
     fi
     MANIFEST_TRACKED["$rel"]="$hash"
 }
@@ -267,31 +411,54 @@ _record_tracked_copy() {
 OVERWRITE_ALL="${OVERWRITE_ALL:-false}"
 skip_confirm="${skip_confirm:-false}"
 
+# Validate scaffold destinations before any write/mkdir while recording is active.
+_recording_destination_safe() {
+    local dest="$1" kind="${2:-file}" abs rel
+    [[ "$MANIFEST_RECORDING" == true ]] || return 0
+    abs=$(_manifest_recording_destination "$dest") || return 1
+    if [[ "$abs" == "$MANIFEST_RECORDING_ROOT" && "$kind" == directory ]]; then
+        manifest_safe_path "$(dirname "$abs")" "${abs##*/}" directory
+        return
+    fi
+    [[ "$abs" == "$MANIFEST_RECORDING_ROOT/"* ]] || return 1
+    rel="${abs#"$MANIFEST_RECORDING_ROOT/"}"
+    manifest_safe_path "$MANIFEST_RECORDING_ROOT" "$rel" "$kind"
+}
+
 # Copy a single file with overwrite confirmation
 # Usage: copy_with_confirm <source> <destination>
 copy_with_confirm() {
     local src="$1"
     local dest="$2"
 
+    if ! _recording_destination_safe "$dest"; then
+        print_warning "Skipped unsafe copy destination: $dest"
+        return 1
+    fi
+    if [[ "$MANIFEST_RECORDING" == true ]]; then
+        dest=$(_manifest_recording_destination "$dest") || return 1
+    fi
+    if [[ ! -f "$src" || -L "$src" ]]; then
+        print_warning "Skipped non-regular copy source: $src"
+        return 1
+    fi
+
     # If destination doesn't exist, copy directly
     if [[ ! -e "$dest" ]]; then
-        cp "$src" "$dest"
-        _record_tracked_copy "$(_abs_path "$dest")"
+        cp "$src" "$dest" || return 1
+        _record_tracked_copy "$(_abs_path "$dest")" || return 1
         return 0
     fi
 
     # Handle existing file based on flags
     if [[ "$OVERWRITE_ALL" == true ]]; then
-        cp "$src" "$dest"
-        _record_tracked_copy "$(_abs_path "$dest")"
+        cp "$src" "$dest" || return 1
+        _record_tracked_copy "$(_abs_path "$dest")" || return 1
         return 0
     fi
 
     if [[ "$skip_confirm" == true ]]; then
         print_warning "Skipped: $dest (already exists)"
-        # Even when we skipped the write, the existing file still represents
-        # the canonical content for upgrade purposes; record its current hash.
-        _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
@@ -299,7 +466,6 @@ copy_with_confirm() {
     if [[ ! -e /dev/tty ]] || ! : < /dev/tty 2>/dev/null; then
         # Non-interactive environment: skip by default
         print_warning "Skipped: $dest (already exists, non-interactive)"
-        _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
@@ -308,13 +474,12 @@ copy_with_confirm() {
     local response
     IFS='' read -r response < /dev/tty
     if [[ "$response" =~ ^[Yy] ]]; then
-        cp "$src" "$dest"
+        cp "$src" "$dest" || return 1
+        _record_tracked_copy "$(_abs_path "$dest")" || return 1
     else
         print_warning "Skipped: $dest (already exists)"
     fi
-    # Record either way — the destination now exists with some content
-    # (either the freshly copied source or the user's original).
-    _record_tracked_copy "$(_abs_path "$dest")"
+    return 0
 }
 
 # Internal: resolve a (possibly relative) path to absolute. Used by the
@@ -334,21 +499,44 @@ _abs_path() {
 # Usage: copy_dir_with_confirm <source_dir> <destination_dir>
 copy_dir_with_confirm() {
     local src="$1"
-    local dest="$2"
+    local dest="$2" inventory
 
-    # Create destination directory if needed
-    mkdir -p "$dest"
+    if ! _recording_destination_safe "$dest" directory; then
+        print_warning "Skipped unsafe copy directory: $dest"
+        return 1
+    fi
+    if [[ "$MANIFEST_RECORDING" == true ]]; then
+        dest=$(_manifest_recording_destination "$dest") || return 1
+    fi
+    # Capture the complete source set before creating any target directories.
+    inventory=$(mktemp) || return 1
+    if ! find "$src" -type f -print0 > "$inventory"; then
+        rm -f "$inventory"
+        print_error "Cannot enumerate copy source: $src"
+        return 1
+    fi
+    if ! mkdir -p "$dest"; then
+        rm -f "$inventory"
+        return 1
+    fi
 
-    # Iterate through source files
     while IFS= read -r -d '' file; do
         local rel_path="${file#$src/}"
         local dest_file="$dest/$rel_path"
         local dest_dir
         dest_dir="$(dirname "$dest_file")"
 
-        mkdir -p "$dest_dir"
-        copy_with_confirm "$file" "$dest_file"
-    done < <(find "$src" -type f -print0)
+        if ! _recording_destination_safe "$dest_file"; then
+            print_warning "Skipped unsafe copy destination: $dest_file"
+            rm -f "$inventory"
+            return 1
+        fi
+        if ! mkdir -p "$dest_dir" || ! copy_with_confirm "$file" "$dest_file"; then
+            rm -f "$inventory"
+            return 1
+        fi
+    done < "$inventory"
+    rm -f "$inventory"
 }
 
 # =============================================================================

@@ -19,7 +19,7 @@ This is the cumulative project-wide data model. Per-issue deltas may add or modi
 | `IssueLabel` | `src/github/types.rs` | `{name}` from issue labels payload |
 | `ProjectV2` | `src/github/types.rs` | GraphQL project node info |
 | `ModulesRegistry` (logical) | downstream `<project>/modules.json` (#263) | Monorepo module registry — `{ version, modules: [{ name, path, language, services }] }` |
-| `Manifest` (logical) | downstream `<scope>/.tarnished-manifest.json` (#265) | Hash manifest of "verbatim copy" files for one upgrade scope (root or per-module) — `{ manifest_version, tarnished_version, tarnished_commit, created_at, scaffold_options, files: { path: "sha256:<hex>" } }` |
+| `Manifest` (logical) | downstream `<scope>/.tarnished-manifest.json` (#265) | Installed-baseline manifest of eligible runtime helper files for one upgrade scope (root or per-module) — `{ manifest_version, tarnished_version, tarnished_commit, created_at, scaffold_options, files: { path: "sha256:<hex>" } }` |
 | `LifecycleDecision` (internal) | `scripts/lib/manifest.sh` (#265) | Pure enum used by `manifest_decide` to tag each file's upgrade outcome — `NOOP \| UPDATE \| SKIP_EDITED \| NEW \| SKIP_NEW_CONFLICT \| LEAVE_REMOVED \| PRUNE \| SKIP_USER_DELETED` |
 | `RefreshConfig` (logical) | downstream `<project>/.tarnished/refresh.json` (#279) | Always-latest sync whitelist + overlay declaration — `{ schema_version, upstream: { repo_url, branch }, clone_dir, managed_paths: [{ src, dst, overlay }] }` |
 
@@ -114,50 +114,36 @@ JSON file at the root of a monorepo target produced by `setup.sh --monorepo`. Re
 
 **Idempotency**: `add_module_entry <name> ...` returns exit `2` on duplicate `name`, which the caller (interactive add-module flow) translates into the FR-9 overwrite prompt.
 
-### `.tarnished-manifest.json` schema (downstream upgrade manifest, #265)
+### `.tarnished-manifest.json` schema (downstream upgrade provenance)
 
-JSON file at the root of any scope managed by `setup.sh --create-manifest` / `--upgrade`. In single-mode targets there is one root manifest. In monorepo targets there are two tiers: one root manifest covers shared assets (`.devcontainer/`, `.claude/`, `.codex/`, `docker/`, `.github/`) and one per-module manifest under each `<module>/` covers module-specific assets (`pyproject.toml`/`Cargo.toml`/`package.json`, lint configs, `src/`, `tests/`, etc.). All manifests follow the same schema.
+Each root/module scope has `manifest_version: 2`, existing version/commit/timestamp/options metadata, and `files: {relative_path: "sha256:<64 lowercase hex>"}`. Empty maps are valid. Files are eligible copied runtime helpers under `.devcontainer/scripts/`, excluding `post.sh`, sidecars and all project-owned seeds/settings. Hashes describe last successfully installed or exactly distribution-matched bytes. Conflicts, failed writes, user deletions and unpruned removals retain old hashes. Only successful prune drops a removal entry. Equivalent writes preserve timestamps/state bytes.
+
+Version-1 entries are untrusted. Bootstrap compares eligible staged distribution candidates without scanning the downstream repository; only exact matches establish provenance without mutation. A supplied historical ref selects comparison content, not permission to trust legacy observed hashes. Re-bootstrap preserves trusted edited/deleted entries. Missing eligible version-1 paths become optional `deleted_paths` tombstones in version 2, disjoint from `files`. These preserve deletion intent across repeated bootstrap/upgrade/refresh without granting content ownership. Restoring an exact distributed file permits explicit adoption and clears its tombstone. Validate schema, hash format, scope-relative path components and absence of symlinks before all target access.
+
+### `.tarnished/refresh-state.json` schema
+
+Versioned local metadata: `{schema_version: 1, entries: {destination: entry}}`. Each entry records nested `mapping: {repo, src, dst, overlay}`, `sha256` (64 lowercase hexadecimal characters without a prefix), `origin` (`upstream` or `overlay`), and diagnostic source `commit`. `overlay` is a relative path or `null`. It binds a successful installation or exact match to the complete mapping. Mapping changes preserve old destinations rather than granting deletion authority. Advance entries only after success; retain old baselines on conflicts/failures/deletions. Overlay-origin content is never automatically pruned. Malformed or symlink state cannot authorize updates. State is excluded from distribution and manifests.
+
+Example with a syntactically valid illustrative digest (actual entries contain the installed content hash):
 
 ```json
 {
-  "manifest_version": 1,
-  "tarnished_version": "v0.0.76",
-  "tarnished_commit": "<40-char-sha-or-empty>",
-  "created_at": "2026-04-29T12:34:56Z",
-  "scaffold_options": {
-    "languages": ["rust"],
-    "services": ["postgresql"],
-    "github_actions_enabled": true,
-    "auto_tag_enabled": false,
-    "codex_enabled": true,
-    "monorepo": false
-  },
-  "files": {
-    ".devcontainer/devcontainer.json": "sha256:abc...",
-    ".claude/commands/erd/build.md": "sha256:def..."
+  "schema_version": 1,
+  "entries": {
+    ".agents/skills/flow/SKILL.md": {
+      "mapping": {
+        "repo": "https://github.com/TE-ToshiakiTanaka2/tarnished.git",
+        "src": "templates/codex/.agents/skills",
+        "dst": ".agents/skills",
+        "overlay": ".agents/skills.local"
+      },
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "origin": "upstream",
+      "commit": "example-source-commit"
+    }
   }
 }
 ```
-
-| Field | Type | Required | Constraints / notes |
-| --- | --- | --- | --- |
-| `manifest_version` | integer | yes | Currently `1`. Readers MUST reject unknown majors. Stored in `MANIFEST_SUPPORTED_VERSION` constant in `scripts/lib/manifest.sh`. |
-| `tarnished_version` | string | yes | git ref of upstream tarnished — tag (`v0.0.76`), branch (`develop`), or `unknown` for legacy bootstrap. |
-| `tarnished_commit` | string | yes | 40-char SHA. May be `""` when `git describe` was unavailable at bootstrap. |
-| `created_at` | string | yes | ISO-8601 UTC second-precision timestamp. |
-| `scaffold_options.languages` | array of string | yes | Language ids selected at scaffold time. Per-module manifests carry a single-element array; root manifests carry the union. |
-| `scaffold_options.services` | array of string | yes | Service ids selected at scaffold time. |
-| `scaffold_options.github_actions_enabled` | boolean | yes | |
-| `scaffold_options.auto_tag_enabled` | boolean | yes | |
-| `scaffold_options.codex_enabled` | boolean | yes | |
-| `scaffold_options.monorepo` | boolean | yes | true for the root manifest in monorepo targets; false for single-mode targets and per-module manifests. |
-| `files` | object | yes | Map of scope-root-relative path → `"sha256:<lowercase-hex>"`. Empty `{}` is valid. |
-
-**Tracked scope (FR-3)**: `files` only contains "verbatim copy" files — those that flow through `copy_with_confirm` during scaffolding. Merge files (`.gitignore`, `devcontainer.json`, `.claude/settings.json`), dynamically generated files (`docker-compose.yml`, `modules.json`), and user-owned files (`CLAUDE.md`, `AGENTS.md`, `README.md`) are deliberately excluded via `MANIFEST_EXCLUDE_GLOBS` in `scripts/lib/manifest.sh`. The same exclusion list governs both `--create-manifest` (which file paths to hash) and `--upgrade` (which destinations recorded by `copy_with_confirm` to persist).
-
-**Forward compatibility**: Readers ignore unknown keys. The `manifest_version` field is the breaking-change escape hatch — bumping to `2` allows incompatible changes that older `setup.sh` versions correctly reject.
-
-**Idempotency**: `--create-manifest` is idempotent — running it twice on the same target produces equivalent manifest content (only `created_at` differs). `--upgrade`'s lifecycle decisions are deterministic: same three-hash inputs always produce the same decision.
 
 ## Relationships
 
@@ -229,7 +215,7 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `.codex/config.toml` (workspace + template) | Workspace gains the file (new); template bumps `model` from `gpt-5.3-codex` → `gpt-5.4` and adds `model_reasoning_effort = "high"`. Workspace and template kept in sync. | #261 |
 | `.codex/config.toml` (workspace + template) | `model` bumped `gpt-5.4` → `gpt-5.5`. Repairs the invalid `"gpt-5.5/"` value accidentally committed to the workspace copy in #288 and restores workspace/template parity. | #292 |
 | `.codex/config.toml` (workspace + template) | `model` pinned to `gpt-5.6-sol` and `model_reasoning_effort` raised to `ultra`. `/review` now reads both back and records them in the review artifact header, so a config change is attributable rather than silent. | #308 |
-| `.claude/skills/flow/`, `.tarnished/workflows/flow.md`, `.agents/skills/flow/` | New lifecycle orchestration entrypoint across all three altitudes. `workflows/flow.md` is manifest-tracked, not refresh-managed, so projects scaffolded earlier receive the SKILL without the contract — the SKILL tolerates its absence. | #308 |
+| `.claude/skills/flow/`, `.tarnished/workflows/flow.md`, `.agents/skills/flow/` | New lifecycle orchestration entrypoint across all three altitudes. `workflows/flow.md` joins the central refresh distribution; old installations may still lack it, so the SKILL tolerates its absence. | #308 |
 | `.claude/skills/_shared/delegation/SKILL.md` | Role vocabulary, stage/role matrix, model binding, and the subagent escalation protocol. Refresh-managed, so it arrives downstream on the next container start. #312 replaces the role vocabulary and the routing principle. | #308 / #312 |
 | `.claude/agents/designer.md`, `.claude/agents/executor.md` | Writing subagents for the `design` and `implement` stages, each carrying a pinned model and the blocked-result protocol. Refresh-managed. `advisor.md` is removed in the same change. | #312 |
 | `docs/design/#{issue}/orchestrator-review.md` | Audit trail of the orchestrator's review of the designer's artifacts — findings, rounds used, and what was revised. Committed with the design artifacts. Deliberately **not** an evidence key: because the commit follows the review, the design commit itself records that the review happened. | #312 |
@@ -254,49 +240,15 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 
 No SQL, no database migrations — config files, the JSON modules registry, and the seeded `.gitignore` are the only schemas.
 
-### `.tarnished/refresh.json` schema (always-latest asset sync, #279)
+### `.tarnished/refresh.json` schema (AI distribution)
 
-JSON file at `<project>/.tarnished/refresh.json`. Read by
-`templates/core/.devcontainer/scripts/refresh-assets.sh` on every
-container start (`postStartCommand`) and on first boot (via `post.sh`).
-Distributed verbatim by `templates/agent-workflows/plugin.sh` along
-with the rest of the `.tarnished/` directory.
+Project-owned schema 1 retains `upstream: {repo_url, branch}`, `clone_dir`, and `managed_paths: [{src, dst, overlay}]`. Paths are relative to the upstream/project roots, contain no traversal or symlink components, and destination mappings do not overlap. Empty explicit mappings are a valid no-op. Optional `use_default_managed_paths` defaults false; shipped defaults set true. True reads the validated default `managed_paths` catalog from the current upstream cache, falling back with a warning to the project snapshot. It never replaces project upstream/cache/profile choices. A custom whitelist remains authoritative unless the developer explicitly opts into defaults.
 
-```json
-{
-  "schema_version": 1,
-  "upstream": {
-    "repo_url": "https://github.com/TE-ToshiakiTanaka2/tarnished.git",
-    "branch": "develop"
-  },
-  "clone_dir": "/opt/tarnished",
-  "managed_paths": [
-    { "src": "templates/claude/.claude/commands",       "dst": ".claude/commands",       "overlay": ".claude/commands.local" },
-    { "src": "templates/claude/.claude/skills",         "dst": ".claude/skills",         "overlay": ".claude/skills.local" },
-    { "src": "templates/claude/.claude/scripts",        "dst": ".claude/scripts",        "overlay": ".claude/scripts.local" },
-    { "src": "templates/claude/.claude/rules/shell.md", "dst": ".claude/rules/shell.md", "overlay": ".claude/rules.local/shell.md" }
-  ]
-}
-```
+The default catalog covers Claude commands/skills/scripts/agents and shared shell rules, applicable Codex `.agents/skills`, shared `.tarnished/workflows/*.md` file mappings, and the separate `.tarnished/workflows/erd` projection. Corresponding `.local` sidecars provide explicit overrides. Profiles and CLI settings are not distributed defaults. Every destination/sidecar is excluded from manifests; directory exclusions include both the root and `root/*` forms.
 
-| Field | Type | Required | Constraints / notes |
-| --- | --- | --- | --- |
-| `schema_version` | integer | yes | Currently `1`. Readers MUST reject unknown majors with `print_warning` + exit 0 (never block container start). |
-| `upstream.repo_url` | string | yes | git URL of upstream tarnished. Default: `https://github.com/TE-ToshiakiTanaka2/tarnished.git` (matches `setup.sh:25`'s `REMOTE_REPO_URL`). Env-overridable via `DEVCONTAINER_REPO_URL`. |
-| `upstream.branch` | string | yes | Branch ref. Default: `develop` (matches `setup.sh:26`'s `REMOTE_BRANCH`). Env-overridable via `DEVCONTAINER_BRANCH`. |
-| `clone_dir` | string | yes | Absolute path of the long-lived upstream cache. Default: `/opt/tarnished`. Falls back to `${HOME}/.cache/tarnished` when the parent is not writable; the script announces the fallback via `print_warning`. |
-| `managed_paths` | array | yes | List of `{src, dst, overlay}` triples. May be empty (script becomes a no-op). |
-| `managed_paths[].src` | string | yes | Path within the upstream clone, relative to `clone_dir`. |
-| `managed_paths[].dst` | string | yes | Path within the project, relative to project root. |
-| `managed_paths[].overlay` | string \| null | yes | Path within the project for the user-owned sidecar. `null` (or omitted) disables overlay for that path. |
+Refresh enumerates source and overlay regular files plus prior state, compares hashes, and preserves unknown/edited/deleted destination files. Existing identical distribution bytes can establish a baseline without mutation. Removal requires a trusted upstream-origin baseline, unchanged current bytes and proven upstream disappearance; overlay-origin content is preserved. Same-SHA invocations still reconcile local state/config/overlays. Dry-run never writes target or persistent cache. Runtime errors warn and exit 0 except unknown CLI flags.
 
-**Override semantics**: Directory-managed paths run `rsync --delete <clone_dir>/<src>/ <project>/<dst>/` so the project mirror exactly tracks upstream. File-managed paths replace only that file, preserving siblings such as language-specific `.claude/rules/*.md` files. Pass 2 overlays `<project>/<overlay>` on top (without `--delete` for directories), so files in `<overlay>/` win. To override `commands/erd/brainstorm.md`, write `.claude/commands.local/erd/brainstorm.md`; to override `rules/shell.md`, write `.claude/rules.local/shell.md`.
-
-**Mutual exclusivity with `.tarnished-manifest.json` tracking**: Every `managed_paths[].dst` (and every `managed_paths[].overlay`) MUST also be listed in `MANIFEST_EXCLUDE_GLOBS` (in `scripts/lib/common.sh`). This is enforced by code review and a unit test (`tests/refresh_assets.bats :: "refresh.json defaults subset of MANIFEST_EXCLUDE_GLOBS"`). Always-latest tracking and manifest-tracked upgrades are disjoint per path.
-
-**Forward compatibility**: Unknown top-level keys ignored. Adding fields like `exclude_globs` or `upstream.pinned_commit` is non-breaking. The `schema_version` field is the breaking-change escape hatch.
-
-**Idempotency**: `refresh-assets.sh` is fully idempotent. Running it twice in a row with no upstream change is a no-op (single `git ls-remote` call returns the same SHA, no `rsync` invoked).
+Existing config is never refresh-overwritten. Current setup can create missing config or migrate an exactly recognized old default mapping list while preserving other fields. Custom/empty lists receive migration guidance. Legacy differing assets require one-time conflict review; no arbitrary baseline inference is allowed.
 
 ### `.codex/config.toml` schema (project-level Codex CLI config, #261)
 
@@ -360,3 +312,7 @@ The shipped defaults use pinned model IDs. The Claude designer's `[1m]` suffix b
 The `.gitignore` produced by `update_gitignore()` and Codex's `plugin_post_copy` is structured as a sequence of **marker-guarded blocks**. The marker (a comment line) is the keyed-on identity of the block; rewriting it without coordination would re-trigger the block-append on existing projects (a benign but visible side effect). The exact marker strings and block contents are defined in [api-spec.md](./api-spec.md) :: "Setup / Plugin Surface".
 
 The same marker-guarded-block pattern (#263) governs the language toolchain blocks appended to `Dockerfile.dev` and `post.sh` by language plugins — see api-spec.md :: "Language plugin contract".
+
+### Host maintenance boundary (#316)
+
+Setup and refresh require Bash 4.4+; BSD-like utilities are supported via portable root resolution/renames and a `shasum -a 256` fallback. Explicit project/source/staging/cache roots may resolve host ancestor aliases once, but symlink root leaves and all symlinks below each physical root are rejected. State/config paths are checked below that root, never individually canonicalized to bypass protection. Compare physical source/target roots before setup refresh writes. Check expected-current hashes immediately before mutation and verify installed ordinary-file bytes before recording success. Dry-run Git checks suppress optional index/lock writes.

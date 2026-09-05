@@ -35,6 +35,47 @@
       "src": "templates/claude/.claude/commands/erd",
       "dst": ".tarnished/workflows/erd",
       "overlay": ".tarnished/workflows/erd.local"
+    },
+    {
+      "src": "templates/codex/.agents/skills",
+      "dst": ".agents/skills",
+      "overlay": ".agents/skills.local"
+    },
+    {
+      "src": "templates/agent-workflows/.tarnished/workflows/README.md",
+      "dst": ".tarnished/workflows/README.md",
+      "overlay": ".tarnished/workflows.local/README.md"
+    },
+    {
+      "src": "templates/agent-workflows/.tarnished/workflows/design.md",
+      "dst": ".tarnished/workflows/design.md",
+      "overlay": ".tarnished/workflows.local/design.md"
+    },
+    {
+      "src": "templates/agent-workflows/.tarnished/workflows/flow.md",
+      "dst": ".tarnished/workflows/flow.md",
+      "overlay": ".tarnished/workflows.local/flow.md"
+    },
+    {
+      "src": "templates/agent-workflows/.tarnished/workflows/implement.md",
+      "dst": ".tarnished/workflows/implement.md",
+      "overlay": ".tarnished/workflows.local/implement.md"
+    },
+    {
+      "src": "templates/agent-workflows/.tarnished/workflows/issue.md",
+      "dst": ".tarnished/workflows/issue.md",
+      "overlay": ".tarnished/workflows.local/issue.md"
+    },
+    {
+      "src": "templates/agent-workflows/.tarnished/workflows/pr.md",
+      "dst": ".tarnished/workflows/pr.md",
+      "overlay": ".tarnished/workflows.local/pr.md"
+    },
+    {
+      "src": "templates/agent-workflows/.tarnished/workflows/review.md",
+      "dst": ".tarnished/workflows/review.md",
+      "overlay": ".tarnished/workflows.local/review.md"
     }
-  ]
+  ],
+  "use_default_managed_paths": true
 }

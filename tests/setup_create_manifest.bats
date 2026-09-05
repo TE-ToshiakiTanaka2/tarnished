@@ -31,6 +31,7 @@ make_single_mode_target() {
     mkdir -p "$SCRATCH/docker"
     mkdir -p "$SCRATCH/.github/workflows"
 
+    cp "$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh" "$SCRATCH/.devcontainer/scripts/refresh-assets.sh"
     echo "FROM debian:trixie" > "$SCRATCH/docker/Dockerfile.dev"
     echo '{}' > "$SCRATCH/.devcontainer/devcontainer.json"
     echo "version: '3'" > "$SCRATCH/docker-compose.yml"
@@ -134,19 +135,19 @@ EOF
     make_single_mode_target
     cd "$SCRATCH"
 
-    run bash "$SETUP_SH" --create-manifest --from-version v0.0.74 -y
+    run bash "$SETUP_SH" --create-manifest --from-version HEAD -y
     [[ "$status" -eq 0 ]]
     [[ -f "$SCRATCH/.tarnished-manifest.json" ]]
 
     local m="$SCRATCH/.tarnished-manifest.json"
 
-    [[ "$(jq -r .manifest_version "$m")" == "1" ]]
-    [[ "$(jq -r .tarnished_version "$m")" == "v0.0.74" ]]
+    [[ "$(jq -r .manifest_version "$m")" == "2" ]]
+    [[ "$(jq -r .tarnished_version "$m")" == "HEAD" ]]
     [[ "$(jq -r '.scaffold_options.monorepo' "$m")" == "false" ]]
 
-    # Tracked verbatim files.
-    [[ "$(jq -r '.files["docker/Dockerfile.dev"] // empty' "$m")" == sha256:* ]]
-    [[ "$(jq -r '.files["Cargo.toml"] // empty' "$m")" == sha256:* ]]
+    # Only exact distribution helper matches are owned.
+    [[ -z "$(jq -r '.files["docker/Dockerfile.dev"] // empty' "$m")" ]]
+    [[ -z "$(jq -r '.files["Cargo.toml"] // empty' "$m")" ]]
 
     # Excluded by MANIFEST_EXCLUDE_GLOBS.
     [[ -z "$(jq -r '.files[".gitignore"] // empty' "$m")" ]]
@@ -162,13 +163,13 @@ EOF
     [[ -z "$(jq -r '.files[".tarnished-manifest.json"] // empty' "$m")" ]]
 }
 
-@test "single-mode: defaults tarnished_version to 'unknown' when --from-version is absent" {
+@test "single-mode: records invoked checkout identity when --from-version is absent" {
     make_single_mode_target
     cd "$SCRATCH"
 
     run bash "$SETUP_SH" --create-manifest -y
     [[ "$status" -eq 0 ]]
-    [[ "$(jq -r .tarnished_version "$SCRATCH/.tarnished-manifest.json")" == "unknown" ]]
+    [[ "$(jq -r .tarnished_commit "$SCRATCH/.tarnished-manifest.json")" == "$(git -C "$SCRIPT_DIR" rev-parse HEAD)" ]]
 }
 
 @test "single-mode: detects rust language from Cargo.toml" {
@@ -220,11 +221,11 @@ EOF
     # #289 the caller printed "[OK] wrote ..." and the run exited 0 regardless
     # of manifest_write's return code; now the failure must surface and the
     # command must exit non-zero, leaving no manifest behind.
-    mkdir -p "$SCRATCH/.tarnished-manifest.json.tmp"
+    mkdir -p "$SCRATCH/.tarnished-manifest.json"
 
     run bash "$SETUP_SH" --create-manifest -y
     [[ "$status" -ne 0 ]]
-    [[ "$output" == *"failed to write manifest"* ]]
+    [[ "$output" == *"Unsafe project marker"* ]]
     [[ "$output" != *"wrote $SCRATCH/.tarnished-manifest.json"* ]]
     [[ ! -f "$SCRATCH/.tarnished-manifest.json" ]]
 }
@@ -237,7 +238,7 @@ EOF
     make_monorepo_target
     cd "$SCRATCH"
 
-    run bash "$SETUP_SH" --create-manifest --from-version v0.0.76 -y
+    run bash "$SETUP_SH" --create-manifest --from-version HEAD -y
     [[ "$status" -eq 0 ]]
 
     # Root manifest exists and is flagged monorepo.
@@ -254,10 +255,10 @@ EOF
     [[ "$(jq -r '.scaffold_options.languages[0]' "$SCRATCH/beta/.tarnished-manifest.json")" == "node" ]]
     [[ "$(jq -r '.scaffold_options.monorepo' "$SCRATCH/alpha/.tarnished-manifest.json")" == "false" ]]
 
-    # Module's CLAUDE.md is excluded; its source files are tracked.
+    # All module scaffold seeds remain developer-owned.
     [[ -z "$(jq -r '.files["CLAUDE.md"] // empty' "$SCRATCH/alpha/.tarnished-manifest.json")" ]]
-    [[ -n "$(jq -r '.files["pyproject.toml"] // empty' "$SCRATCH/alpha/.tarnished-manifest.json")" ]]
-    [[ -n "$(jq -r '.files["src/__init__.py"] // empty' "$SCRATCH/alpha/.tarnished-manifest.json")" ]]
+    [[ -z "$(jq -r '.files["pyproject.toml"] // empty' "$SCRATCH/alpha/.tarnished-manifest.json")" ]]
+    [[ -z "$(jq -r '.files["src/__init__.py"] // empty' "$SCRATCH/alpha/.tarnished-manifest.json")" ]]
 }
 
 @test "monorepo: root manifest does not include module subtrees" {
@@ -274,11 +275,11 @@ EOF
 @test "monorepo: --from-version propagates to every per-module manifest" {
     make_monorepo_target
     cd "$SCRATCH"
-    bash "$SETUP_SH" --create-manifest --from-version v0.0.99 -y >/dev/null
+    bash "$SETUP_SH" --create-manifest --from-version HEAD -y >/dev/null
 
-    [[ "$(jq -r .tarnished_version "$SCRATCH/.tarnished-manifest.json")" == "v0.0.99" ]]
-    [[ "$(jq -r .tarnished_version "$SCRATCH/alpha/.tarnished-manifest.json")" == "v0.0.99" ]]
-    [[ "$(jq -r .tarnished_version "$SCRATCH/beta/.tarnished-manifest.json")" == "v0.0.99" ]]
+    [[ "$(jq -r .tarnished_version "$SCRATCH/.tarnished-manifest.json")" == "HEAD" ]]
+    [[ "$(jq -r .tarnished_version "$SCRATCH/alpha/.tarnished-manifest.json")" == "HEAD" ]]
+    [[ "$(jq -r .tarnished_version "$SCRATCH/beta/.tarnished-manifest.json")" == "HEAD" ]]
 }
 
 @test "monorepo: idempotent" {
@@ -300,4 +301,59 @@ EOF
     [[ "$r1" == "$r2" ]]
     [[ "$a1" == "$a2" ]]
     [[ "$b1" == "$b2" ]]
+}
+
+@test "#316 bootstrap owns exact helpers only and preserves arbitrary project work" {
+    make_single_mode_target
+    mkdir -p "$SCRATCH/src" "$SCRATCH/tests" "$SCRATCH/docs"
+    printf 'developer source\n' > "$SCRATCH/src/work.py"
+    printf 'developer tests\n' > "$SCRATCH/tests/test work.py"
+    printf 'developer docs\n' > "$SCRATCH/docs/notes.md"
+    printf 'unknown helper\n' > "$SCRATCH/.devcontainer/scripts/custom.sh"
+    cd "$SCRATCH"
+    run bash "$SETUP_SH" --create-manifest -y
+    assert_success
+    run jq -e '.manifest_version == 2 and (.files | keys == [".devcontainer/scripts/refresh-assets.sh"])' .tarnished-manifest.json
+    assert_success
+    [[ "$(cat src/work.py)" == 'developer source' ]]
+    [[ "$(cat 'tests/test work.py')" == 'developer tests' ]]
+}
+
+@test "#316 repeated bootstrap retains installed baselines for edited and deleted helpers" {
+    make_single_mode_target
+    cd "$SCRATCH"
+    bash "$SETUP_SH" --create-manifest -y >/dev/null
+    local old
+    old=$(jq -c .files .tarnished-manifest.json)
+    printf '\n# developer change\n' >> .devcontainer/scripts/refresh-assets.sh
+    bash "$SETUP_SH" --create-manifest -y >/dev/null
+    [[ "$(jq -c .files .tarnished-manifest.json)" == "$old" ]]
+    rm .devcontainer/scripts/refresh-assets.sh
+    bash "$SETUP_SH" --create-manifest -y >/dev/null
+    [[ "$(jq -c .files .tarnished-manifest.json)" == "$old" ]]
+    [[ ! -e .devcontainer/scripts/refresh-assets.sh ]]
+}
+
+@test "#316 explicit historical ref cannot certify arbitrary current helper bytes" {
+    make_single_mode_target
+    printf 'project-owned helper\n' > "$SCRATCH/.devcontainer/scripts/refresh-assets.sh"
+    cd "$SCRATCH"
+    run bash "$SETUP_SH" --create-manifest --from-version HEAD -y
+    assert_success
+    run jq -e '.files | length == 0' .tarnished-manifest.json
+    assert_success
+    [[ "$(cat .devcontainer/scripts/refresh-assets.sh)" == 'project-owned helper' ]]
+}
+
+@test "#316 hostile module scope and symlink marker are rejected before bootstrap" {
+    cd "$SCRATCH"
+    printf '{"version":1,"modules":[{"name":"../outside","language":"python"}]}\n' > modules.json
+    run bash "$SETUP_SH" --create-manifest -y
+    assert_failure
+    [[ ! -e .tarnished-manifest.json ]]
+    rm modules.json
+    ln -s "$SCRATCH/nonexistent" .tarnished-manifest.json
+    run bash "$SETUP_SH" --create-manifest -y
+    assert_failure
+    [[ ! -e "$SCRATCH/nonexistent" ]]
 }

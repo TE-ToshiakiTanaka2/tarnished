@@ -13,7 +13,7 @@ Skills name **roles**, never models. A model name written into a skill cannot be
 
 User instructions and existing authorization take precedence over this procedural guidance, subject to system, developer, and tool restrictions. Do not introduce approval gates for routine choices within the accepted scope. If a skill requires a pause, identify the exact instruction and the missing decision or capability.
 
-Where this file disagrees with `.tarnished/workflows/*.md` or `.agents/skills/*/SKILL.md`, this file is authoritative. `.claude/skills/` and `.claude/agents/` are refresh-managed; `.tarnished/workflows/` and `.agents/` are not. A project can therefore be running current skills against both a stale contract and a stale Codex projection, and the two stale altitudes can disagree with each other as well — resolve every such conflict here.
+Where this file disagrees with `.tarnished/workflows/*.md` or `.agents/skills/*/SKILL.md`, this file is authoritative. Claude skills/agents, shared workflow contracts and applicable Codex skills share the refresh distribution. Older catalogs, unknown provenance or preserved local conflicts can still leave projections stale; resolve every such conflict here.
 
 ## Roles
 
