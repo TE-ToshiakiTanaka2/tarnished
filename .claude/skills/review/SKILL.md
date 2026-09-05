@@ -45,7 +45,7 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 
 Read `references/completion.md` relative to this skill for review evidence and reuse rules. Apply all nine criteria at every change size; size changes inspection depth, not which requirements are checked.
 
-1. **Identify branches** — Parse reviewer flags separately from the optional target branch (default `develop`); reject unknown or conflicting flags. For example, `/review --codex` uses `develop`, not `--codex`, as its target. Resolve and fetch the target ref, then compute the merge base against the current issue head. Record the target commit and reviewed head. Inspect index/working-tree changes and state explicitly what the committed diff excludes; do not silently include unrelated edits or call excluded work reviewed.
+1. **Identify branches** — Parse reviewer flags separately from the optional target branch (default `develop`); reject unknown or conflicting flags. For example, `/review --codex` uses `develop`, not `--codex`, as its target. Resolve the issue worktree as `ISSUE_WORKTREE` and the requested target as `TARGET_BRANCH`; fetch its remote ref and bind `BASE_COMMIT` to that fetched commit, `REVIEWED_HEAD` to the issue branch's full commit SHA, and `MERGE_BASE` to `git -C "$ISSUE_WORKTREE" merge-base "$BASE_COMMIT" "$REVIEWED_HEAD"`. These are the inputs used in Phase 3. Record the target commit and reviewed head. Inspect index/working-tree changes and state explicitly what the committed diff excludes; do not silently include unrelated edits or call excluded work reviewed.
 2. **Determine issue number** — Extract from branch name (e.g., `feature/user/#123/desc` → `123`)
 3. **Load both ground truths** — the design and the issue:
    - `docs/design/#<issue_number>/design.md` and `api-spec.md` if available: architecture decisions, constraints, expected behavior
@@ -64,19 +64,19 @@ Resolve in priority order (stop at the first match):
 3. **Codex CLI** — If `command -v codex` succeeds, use Codex (Phase 3A).
 4. **Claude-native fallback** — Use the `code-reviewer` subagent (Phase 3C). Mark the artifact as a fallback review.
 
-Then **resolve the reviewer's model and reasoning effort** so they can be recorded in Phase 4. For Codex, read `model` and `model_reasoning_effort` from `.codex/config.toml` — the reviewer CLI's own config is the single source for both. Record `default` for any value that is unset or unreadable. A config change must be visible in the artifact rather than silently changing review quality.
+Then **resolve the reviewer's model and reasoning effort** so they can be recorded in Phase 4. Resolve reviewer configuration and any project-relative profile from `ISSUE_WORKTREE`. For Codex, read `model` and `model_reasoning_effort` from that worktree's `.codex/config.toml` — the reviewer CLI's own config is the single source for both. Record `default` for any value that is unset or unreadable. A config change must be visible in the artifact rather than silently changing review quality.
 
 `roles.external-reviewer` carries no `model` or `reasoning_effort`: the reviewer is executed by another vendor's tool that already owns a config file, and a second declaration site could only drift. `roles.external-reviewer.agent` still selects *which* agent reviews.
 
 ### Phase 3A: Review via `codex exec` (Codex default)
 
 1. **Collect implementation changes**:
-   - `git log --oneline ${MERGE_BASE}...HEAD` — commits
-   - `git diff ${MERGE_BASE}...HEAD` — full diff
+   - `git -C "$ISSUE_WORKTREE" log --oneline "$MERGE_BASE..$REVIEWED_HEAD"` — commits
+   - `git -C "$ISSUE_WORKTREE" diff "$MERGE_BASE" "$REVIEWED_HEAD"` — full diff
 2. **Construct review prompt** — Use the Review Prompt Template below with diff, commit history, design constraints, and scope-scaled criteria. Inline the criteria; do not replace them with a path reference, since the reviewer runs in a read-only sandbox against a piped prompt.
 3. **Execute**, passing the model and effort resolved in Phase 2 explicitly so the artifact attributes the review to settings that were actually used:
    ```bash
-   echo "${REVIEW_PROMPT}" | codex exec - --sandbox read-only \
+   echo "${REVIEW_PROMPT}" | codex exec - -C "$ISSUE_WORKTREE" --sandbox read-only \
      -c model="${REVIEW_MODEL}" -c model_reasoning_effort="${REVIEW_EFFORT}"
    ```
    Omit a `-c` flag whose value resolved to `default`, letting `.codex/config.toml` supply it, and record what the config holds. Use `--strict-config` to catch unknown configuration fields. Verify model and reasoning-effort support with a minimal runtime check as well; schema validation alone does not establish backend availability.
@@ -84,7 +84,7 @@ Then **resolve the reviewer's model and reasoning effort** so they can be record
 
 ### Phase 3B: Review via `codex review` (with `--builtin`)
 
-1. **Run** `codex review --base "$TARGET_BRANCH"`, passing the same resolved `-c model` / `-c model_reasoning_effort` overrides, and capture output.
+1. **Run** `codex review --base "$BASE_COMMIT"` from `ISSUE_WORKTREE`, passing the same resolved `-c model` / `-c model_reasoning_effort` overrides, and capture output. Confirm that worktree's `HEAD` is still `REVIEWED_HEAD` before running; the fetched commit pins the target even when the local `TARGET_BRANCH` has diverged.
 
 This path takes no custom prompt, so it receives **neither** ground truth and applies the reviewer's own built-in criteria rather than the list below — no design reference, and no requirement-adherence check. Record that limitation in the artifact so the review is not read as having covered criteria 8 and 9. It is opt-in via `--builtin` and is never selected automatically for this reason.
 
@@ -186,7 +186,7 @@ Organize your review as:
 ### Positive
 - Note any well-written code or good patterns
 
-If there are no issues in a category, omit that section.
+Keep every severity category and state explicitly when it has no findings.
 Provide a final verdict: APPROVE, REQUEST_CHANGES, or COMMENT.
 ```
 

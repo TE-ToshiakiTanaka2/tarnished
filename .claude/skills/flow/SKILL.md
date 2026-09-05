@@ -64,9 +64,9 @@ Use repository evidence and the review completion contract in `.claude/skills/re
 For a requirement-first entry, go straight to `issue`; there is no existing issue state to inspect. Otherwise:
 
 1. Check the issue's state and linked merged PRs **before** resolving or checking out its branch. Completed issues may have no surviving branch; report completion without recreating one.
-2. Resolve the issue branch using `_shared/branch/SKILL.md`, including dirty-worktree and multiple-match handling. Read evidence from that branch, not an unrelated `HEAD`.
+2. Detect existing issue branches using only Step 5 of `_shared/branch/SKILL.md` and its dirty-worktree and multiple-match safeguards. This entry-stage inspection must not create a branch or run Step 6; a successful search with no match selects `design`. Read existing evidence from the resolved branch/ref or its worktree, not an unrelated `HEAD`. The selected authoring stage owns any later branch creation.
 3. Query PRs across all states for the repository, head branch, and intended base. A merged PR means report completion; a closed unmerged PR or ambiguous matches require direction. An open PR is reused after any incomplete earlier stages; it does not override missing review evidence.
-4. Select the earliest incomplete stage using the table below. Evaluate explicit `--from` requests against the same prerequisites; they do not bypass incomplete validation.
+4. When `--from` is absent, select the earliest incomplete stage using the table below. For explicit `--from <stage>`, check that stage's prerequisites first; if any are unmet, report them and stop without entering an earlier stage or creating its artifacts. `--from issue` is exempt because it creates its prerequisites.
 
 | Evidence on the issue branch | Entry stage |
 | --- | --- |
@@ -79,7 +79,7 @@ For a requirement-first entry, go straight to `issue`; there is no existing issu
 
 A design commit uses the documented subject, but recognize equivalent committed artifacts and their orchestrator review when the subject differs. Do not infer completion from a commit subject alone. A design is optional for standalone `implement`; when an existing implementation has no design, assess it against issue requirements rather than inventing a missing-design blocker.
 
-Before entering `review` or `pr`, inspect implementation against the issue, available design, and recorded checks. Commit presence alone can be interrupted partial work. Reuse valid checks; fill missing evidence and finish incomplete implementation first. Exclude commits confined to `docs/design/` or `docs/review/` from the simple implementation-commit heuristic, then inspect the issue's actual deliverable (including documentation-only work).
+Before entering `review` or `pr`, inspect implementation against the issue, available design, and recorded checks. Commit presence alone can be interrupted partial work. Reuse valid checks; for automatic entry, fill missing evidence and finish incomplete implementation first. For explicit `--from`, an unmet prerequisite follows the stop rule above. Exclude commits confined to `docs/design/` or `docs/review/` from the simple implementation-commit heuristic, then inspect the issue's actual deliverable (including documentation-only work).
 
 When resuming a completed review, verify `review_status`, `verified_head`, target commit, issue body digest, and current changes. Review-artifact-only commits preserve freshness; subsequent implementation or design changes require reassessment. An old `Fixes Applied` heading or an open PR does not skip this check.
 
@@ -119,7 +119,7 @@ A run therefore stops for the user in exactly four places. The list is stated so
 
 1. **Requirement gathering** in `/issue` — the Socratic dialogue and the requirements-summary approval loop. The user is the irreplaceable input here, and nothing about it is delegated.
 2. **An escalation** — a blocked-result from the `designer` or the `executor` whose answer is the user's to give, or a blocking review finding that survives 2 rounds. Report the finding and what was attempted.
-3. **Argument resolution** — an unresolvable issue number, or a contradictory flag pair (Stage 1).
+3. **Argument resolution** — an unresolvable issue number, a contradictory flag pair (Stage 1), or unmet prerequisites for an explicit `--from` stage (Stage 2).
 4. **A `/pr` failure** — unknown CI status at the wait deadline, a merge conflict, or the fix loop exhausting its limit.
 
 Anything else is the orchestrator's to decide. A stop that is not on this list is a bug in the run, not a courtesy.

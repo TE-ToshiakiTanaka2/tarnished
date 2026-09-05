@@ -44,6 +44,8 @@ The executor returns the drafted PR body. The orchestrator checks it and runs th
 
 Each role's model comes from its dispatch channel. The table below describes Claude-primary dispatch. For Codex-native designer/executor dispatch, use a supported `roles.<role>.model` override when present; otherwise inherit the active Codex session model and reasoning effort. Claude agent frontmatter pins are not Codex model IDs. The Codex session default lives in `.codex/config.toml`; the external reviewer always uses its own CLI config. Report unsupported explicit overrides rather than silently substituting another model.
 
+A non-null `roles.<role>.model` is specific to the vendor of the actual dispatcher; it is not a portable model alias. In `dual` mode, resolve the active dispatcher before applying it: never send a Claude ID to Codex or a Codex ID to Claude. Keep it `null` when the same profile must work under either dispatcher; use each vendor's existing session/frontmatter configuration for defaults. An incompatible explicit override is a configuration error, not permission to translate or ignore it.
+
 | Role | Channel | Value |
 | --- | --- | --- |
 | `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5` |
