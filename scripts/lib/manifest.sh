@@ -224,9 +224,15 @@ manifest_write() {
         rm -f "$tmp"
         return 0
     fi
-    if ! manifest_safe_path "$scope_root" "$MANIFEST_FILENAME" ||
+    local desired_hash
+    if ! desired_hash=$(sha256_file "$tmp") ||
+        ! manifest_safe_path "$scope_root" "$MANIFEST_FILENAME" ||
         ! mv "$tmp" "$file"; then
         rm -f "$tmp"
+        return 1
+    fi
+    if ! manifest_current_matches "$scope_root" "$MANIFEST_FILENAME" "$desired_hash"; then
+        print_warning "Manifest replacement changed or failed: $file; inspect the destination before retrying" >&2
         return 1
     fi
 }

@@ -621,3 +621,15 @@ apply_fixture() {
     [[ -d "$SCRATCH/project/$rel" && "$TALLY_NEW" -eq 0 ]]
     [[ ${#MANIFEST_TRACKED[@]} -eq 0 ]]
 }
+
+@test "manifest writer rejects portable rename success into a raced directory" {
+    manifest_recording_start "$SCRATCH"
+    mv() {
+        mkdir -p "${@: -1}"
+        command mv "$@"
+    }
+    run manifest_write "$SCRATCH" v1 abc '{}'
+    [[ "$status" -ne 0 ]]
+    [[ "$output" == *'Manifest replacement changed or failed'* ]]
+    [[ -d "$SCRATCH/.tarnished-manifest.json" ]]
+}
