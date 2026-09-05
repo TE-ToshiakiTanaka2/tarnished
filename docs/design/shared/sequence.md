@@ -377,130 +377,30 @@ sequenceDiagram
     Setup-->>User: completion message
 ```
 
-## `setup.sh --create-manifest` — bootstrap a manifest for an existing project (#265)
-
-One-shot mode that scans the current state of an already-scaffolded project and writes `.tarnished-manifest.json` (root + per-module if monorepo). Required before the first `--upgrade` on legacy projects. Idempotent — safe to re-run.
+## Setup ownership bootstrap and runtime-helper upgrade
 
 ```mermaid
 sequenceDiagram
-    actor User
-    participant Setup as setup.sh
-    participant Common as scripts/lib/common.sh
-    participant Manifest as scripts/lib/manifest.sh
-    participant Target as <project>/
-    participant ManFile as <project>/.tarnished-manifest.json
-    participant ModSubDir as <project>/<module>/
-
-    User->>Setup: ./setup.sh --create-manifest --from-version v0.0.74 -y
-    Setup->>Setup: parse_arguments → CREATE_MANIFEST_MODE=true, FROM_VERSION="v0.0.74"
-    Setup->>Common: detect_existing_monorepo(target_dir)
-    alt monorepo target (modules.json present)
-        Common-->>Setup: yes
-        Setup->>Manifest: manifest_walk_directory(target_dir)
-        Note over Manifest,Target: skip MANIFEST_EXCLUDE_GLOBS<br/>skip <module>/ subtrees<br/>hash every other file
-        Manifest-->>Setup: <rel_path, sha> lines (root scope)
-        Setup->>Manifest: manifest_write(target_dir, FROM_VERSION, "", scaffold_options{monorepo: true})
-        Manifest->>ManFile: atomic write (tmp + mv)
-
-        loop each module in modules.json
-            Setup->>Manifest: manifest_walk_directory(target_dir/<module>)
-            Manifest-->>Setup: <rel_path, sha> lines (module scope)
-            Setup->>Manifest: manifest_write(target_dir/<module>, FROM_VERSION, "", scaffold_options{monorepo: false, languages: [<module_lang>]})
-            Manifest->>ModSubDir: <module>/.tarnished-manifest.json
-        end
-    else single-mode target
-        Common-->>Setup: no
-        Setup->>Manifest: manifest_walk_directory(target_dir)
-        Manifest-->>Setup: <rel_path, sha> lines
-        Setup->>Manifest: manifest_write(target_dir, FROM_VERSION, "", scaffold_options{monorepo: false})
-        Manifest->>ManFile: atomic write
+    participant Developer
+    participant Setup
+    participant Stage as Private template staging
+    participant Project
+    participant Manifest
+    Developer->>Setup: create-manifest or upgrade
+    Setup->>Stage: Render selected distribution privately
+    Stage-->>Setup: Eligible runtime-helper candidates
+    Setup->>Manifest: Validate schema, scope and prior ownership
+    Note over Setup,Manifest: Legacy hashes alone provide no authority
+    Setup->>Project: Compare only safe candidate/prior-owned paths
+    alt Exact distribution match without trusted baseline
+        Setup->>Manifest: Adopt without changing project bytes
+    else Trusted baseline and unchanged current file
+        Setup->>Project: Install helper or explicitly prune proven removal
+        Setup->>Manifest: Record successful installed baseline
+    else Unknown, edited, deleted or unsafe
+        Setup-->>Developer: Preserve and report recovery path
     end
-
-    Note over Setup,Manifest: manifest_write streams the files map to jq via stdin,<br/>not --argjson, so large targets cannot hit ARG_MAX (#289)
-    alt all manifest_write calls returned 0
-        Setup-->>User: completion: "Manifest created"
-    else any manifest_write returned non-zero
-        Setup-->>User: error 1 — surfaced, no false "wrote ..." line (#289)
-    end
-```
-
-## `setup.sh --upgrade` — refresh tracked files of an existing project (#265)
-
-The core upgrade flow. Loads the existing manifest, clones upstream tarnished at `--target-version`, runs the same plugin pipeline against a per-scope staging directory with `MANIFEST_RECORDING` enabled, then dispatches the FR-4 lifecycle decision per file. The 8-case `manifest_decide` state machine is detailed in `docs/design/#265/flowchart.md`. Only verbatim-copy files participate in tracking; merge logic (`update_gitignore`, JSON merges) is re-applied directly to the target by re-running `plugin_post_copy` (FR-5).
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Setup as setup.sh
-    participant Common as scripts/lib/common.sh
-    participant Manifest as scripts/lib/manifest.sh
-    participant Git as git
-    participant Tmp as TMP_DIR (cloned tarnished)
-    participant Plugins as plugin pipeline
-    participant Stage as STAGING_DIR
-    participant Target as <project>/
-    participant ManFile as .tarnished-manifest.json
-
-    User->>Setup: ./setup.sh --upgrade --target-version v0.0.76 -y
-    Setup->>Setup: parse_arguments → UPGRADE_MODE=true, TARGET_VERSION="v0.0.76"
-    Setup->>Manifest: manifest_exists(target_dir)
-    alt manifest absent
-        Manifest-->>Setup: no
-        Setup-->>User: error 1 — "run --create-manifest first"
-    else manifest present
-        Manifest-->>Setup: yes
-        Setup->>Setup: check_git_clean(target_dir)
-        alt dirty + no --force
-            Setup-->>User: error 1 — "commit/stash or --force"
-        else clean OR --force
-            Setup->>Manifest: manifest_read(target_dir)
-            Manifest-->>Setup: OLD_MANIFEST {tarnished_version, scaffold_options, files}
-            Setup->>Setup: compute_upgrade_scopes (--shared-only / --module filtering)
-
-            Setup->>Git: clone --depth 1 --branch <ref> upstream/tarnished
-            Git->>Tmp: TMP_DIR populated
-            Tmp-->>Setup: ok
-
-            loop each scope (shared, then per-module)
-                Setup->>Manifest: manifest_recording_start(STAGING_DIR_<scope>)
-                Setup->>Plugins: execute_plugin_copies(STAGING_DIR_<scope>)
-                Setup->>Plugins: execute_plugin_dockerfiles(STAGING_DIR_<scope>)
-                Setup->>Plugins: execute_plugin_post_copies(STAGING_DIR_<scope>)
-                Note over Plugins,Stage: copy_with_confirm intercept records<br/>(rel_path, sha256) into MANIFEST_TRACKED
-                Setup->>Manifest: manifest_recording_stop
-                Note over Setup,Manifest: NEW_HASHES := MANIFEST_TRACKED snapshot
-
-                loop each path in OLD_MANIFEST.files ∪ NEW_HASHES
-                    Setup->>Common: sha256_file(target/path)
-                    Common-->>Setup: current_h (or "" if missing)
-                    Setup->>Manifest: manifest_decide(old_h, current_h, new_h)
-                    Manifest-->>Setup: decision (NOOP/UPDATE/SKIP_EDITED/NEW/...)
-                    Setup->>Manifest: manifest_apply(decision, stage_path, target_path)
-                    alt --dry-run
-                        Note over Manifest,Target: skip mutation; tally only
-                    else live run
-                        Manifest->>Target: cp / rm per decision
-                    end
-                end
-
-                Setup->>Plugins: rerun plugin_post_copy on Target (FR-5: merge logic)
-                Note over Plugins,Target: idempotent re-application of<br/>update_gitignore / merge_devcontainer_json /<br/>merge_claude_settings_hooks
-                Setup->>Manifest: manifest_write(scope_root, TARGET_VERSION, target_commit, scaffold_options)
-                alt --dry-run
-                    Note over Manifest,ManFile: skip write
-                else live run
-                    alt manifest_write returned 0
-                        Manifest->>ManFile: update manifest with new version + hashes (files map via stdin, #289)
-                    else manifest_write returned non-zero
-                        Setup-->>User: abort scope, error 1 — no "Manifest updated" (#289)
-                    end
-                end
-            end
-
-            Setup->>Manifest: manifest_summary_print(old, new)
-            Manifest-->>User: Updated/Skipped/New/Removed/...  summary
-        end
-    end
+    Note over Setup,Project: No real-target post-copy; dry-run writes nothing
 ```
 
 ## `setup.sh` remote bootstrap (`curl | bash`) (#276)
@@ -592,86 +492,35 @@ sequenceDiagram
     Setup-->>User: print_success "Project configuration collected"
 ```
 
-## Always-latest asset refresh — `refresh-assets.sh` (#279)
-
-`refresh-assets.sh` is a complementary distribution mechanism to `setup.sh --upgrade`. The manifest-driven upgrade path (#265) is opt-in and rarely run; for high-update-frequency operational assets (`.claude/commands/`, `.claude/skills/`, `.claude/scripts/`, and file-managed shared rules such as `.claude/rules/shell.md`) the script runs **on every container start** so a project scaffolded a month ago still picks up the latest skill/command/script/shared-rule revisions automatically. Two invocation paths converge on the same entry: (a) on the very first container boot, `post.sh` calls it via the marker-guarded block (`# Tarnished Asset Refresh`); (b) on every subsequent container start, `templates/core/.devcontainer/devcontainer.json`'s `postStartCommand` invokes it directly. The double-call on first boot is benign — the second invocation hits the SHA cache and exits early. The script always returns 0 (FR-5: container start MUST NOT block on it). The full decision tree (15 leaves, 11 of which are non-fatal warning paths) is documented in `docs/design/#279/flowchart.md`.
+## Safe continuous AI asset refresh
 
 ```mermaid
 sequenceDiagram
-    participant Container as devcontainer onStart
-    participant Refresh as refresh-assets.sh
-    participant Cfg as <project>/.tarnished/refresh.json
-    participant Cache as /opt/tarnished (cache)
-    participant Upstream as github.com/.../tarnished
-    participant Project as <project>/
-
-    Container->>Refresh: postStartCommand
-    Refresh->>Cfg: jq parse refresh.json
-    alt missing or malformed or schema_version > 1
-        Cfg-->>Refresh: error
-        Refresh-->>Container: print_warning + exit 0
-    else parse ok
-        Cfg-->>Refresh: {upstream, clone_dir, managed_paths}
-
-        alt clone_dir absent
-            Refresh->>Cache: mkdir -p $(dirname clone_dir)
-            alt parent not writable
-                Cache-->>Refresh: EPERM
-                Refresh->>Refresh: clone_dir := $HOME/.cache/tarnished<br/>(print_warning fallback)
-            end
-            Refresh->>Upstream: git clone --depth 1 --branch <ref> <url> <clone_dir>
-            alt clone fails (network/DNS)
-                Upstream-->>Refresh: error
-                Refresh-->>Container: print_warning + exit 0<br/>(project keeps original scaffolded bytes)
-            else clone ok
-                Upstream-->>Cache: populated
-                Note over Refresh,Cache: skip ls-remote (just cloned)
-            end
-        else clone_dir present
-            alt clone_dir/.git absent (corrupted)
-                Refresh-->>Container: print_error + exit 0<br/>(refuse to silently delete)
-            else .git present
-                alt --force-pull
-                    Note over Refresh: skip ls-remote
-                else default
-                    Refresh->>Upstream: git ls-remote origin <branch>
-                    alt ls-remote fails
-                        Upstream-->>Refresh: error
-                        Refresh-->>Container: print_warning + exit 0<br/>(use cached as-is)
-                    else ls-remote ok
-                        Upstream-->>Refresh: remote_sha
-                        Refresh->>Cache: git rev-parse HEAD
-                        Cache-->>Refresh: local_sha
-                        alt remote_sha == local_sha
-                            Refresh-->>Container: print_info "upstream unchanged" + exit 0
-                        end
-                    end
-                end
-                Refresh->>Cache: git fetch origin <branch>
-                alt fetch fails
-                    Refresh-->>Container: print_warning + exit 0
-                else fetch ok
-                    Refresh->>Cache: git reset --hard origin/<branch><br/>(cache is treated as immutable mirror)
-                end
-            end
+    participant Caller as Container start / current setup
+    participant Refresh
+    participant Source as Validated source/cache
+    participant Project
+    participant State as refresh-state.json
+    Caller->>Refresh: Refresh explicit/discovered project root
+    Refresh->>Project: Read project config/profile without replacing choices
+    Refresh->>Source: Resolve distribution and default/custom catalog
+    Refresh->>State: Validate prior installed provenance
+    loop Active mappings and owned entries
+        Refresh->>Source: Enumerate regular source/overlay candidate
+        Refresh->>Project: Validate boundaries and compare current hash
+        alt Safe new/update/proven unchanged upstream removal
+            Refresh->>Project: Apply one file atomically
+            Refresh->>State: Advance only successful installed baseline
+        else Unknown/edited/deleted/unsafe
+            Refresh-->>Caller: Warn and preserve with recovery hint
         end
-
-        loop each managed_paths entry
-            Refresh->>Project: rsync -a --delete<br/>cache/<src>/ project/<dst>/
-            alt rsync fails
-                Note over Refresh,Project: print_warning per path; continue with siblings
-            end
-            alt project/<overlay>/ exists
-                Refresh->>Project: rsync -a (no --delete)<br/>project/<overlay>/ project/<dst>/
-                Note over Refresh,Project: overlay wins; user customizations<br/>survive across refreshes
-            end
-        end
-
-        Refresh->>Container: print_summary "[OK] N paths synced (...)" + exit 0
     end
+    Note over Refresh,Project: No destination directory mirror deletion
+    Note over Refresh,State: Same SHA still reconciles; dry-run writes nothing
+    Refresh-->>Caller: Nonfatal summary
 ```
 
-The cache `/opt/tarnished` is owned by `vscode` (the default `remoteUser` in `templates/core/.devcontainer/devcontainer.json:37`); the script falls back to `${HOME}/.cache/tarnished` when `/opt` is not writable. Always-latest paths are excluded from `--upgrade`'s manifest tracking via the `MANIFEST_EXCLUDE_GLOBS` extension in `scripts/lib/common.sh:126-138`, so the two mechanisms never fight per path.
+Current setup bypasses an old installed updater. Proven unchanged legacy helpers migrate automatically from shipped-content evidence; unproven/edited helpers receive explicit migration guidance. Explicit add-module remains a scaffold extension, not automatic rerun behavior.
 
 ## `setup.sh --add-module` — incremental add to existing monorepo (#263)
 

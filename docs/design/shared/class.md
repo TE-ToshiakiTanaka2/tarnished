@@ -1,6 +1,6 @@
 # Class Diagram (Project-wide)
 
-Cumulative class/type diagram for the `erd` Rust crate. Snapshot — overwritten on every `/design` (NFR-1).
+Cumulative class/type diagram for the Rust CLI and shell maintenance metadata. Snapshot — overwritten on every `/design` (NFR-1).
 
 ## Configuration types
 
@@ -129,6 +129,38 @@ classDiagram
     IssueCommands --> Config : injected
     GitHubClient --> GetIssueResponse : returns
     GitHubClient --> ProjectV2 : returns
+```
+
+## Foundation ownership metadata
+
+```mermaid
+classDiagram
+    class DownstreamProject
+    class ManifestV2 {
+        +scaffold_options
+        +files: installed helper hashes
+    }
+    class RefreshConfig {
+        +managed_paths
+        +use_default_managed_paths
+    }
+    class RefreshState {
+        +schema_version
+    }
+    class InstalledAsset {
+        +destination
+        +mapping_src
+        +mapping_dst
+        +repo_url
+        +installed_hash
+        +origin
+        +commit
+    }
+    DownstreamProject --> ManifestV2
+    DownstreamProject --> RefreshConfig : owns choices
+    DownstreamProject --> RefreshState
+    RefreshState "1" --> "0..*" InstalledAsset
+    RefreshConfig --> InstalledAsset : constrains active mappings
 ```
 
 ## Notes

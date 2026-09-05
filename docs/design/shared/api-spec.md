@@ -30,15 +30,17 @@ Behavior:
 
 ### `setup.sh` (#246, #263, #265)
 
-Top-level template installer. Five operating modes:
+Top-level scaffold and maintenance entry point.
 
 | Mode | Trigger | Effect |
 | --- | --- | --- |
-| **Single** (default) | no mode flag and no auto-detected `modules.json`/manifest | Today's behavior — generates a flat single-project layout. |
-| **Monorepo init** | `--monorepo`, or `--module <n>:<l>`, or interactive "y" answer to "Monorepo configuration?" | Generates root assets + per-module sub-directories + `modules.json`. |
-| **Add-module** | `--add-module <name>`, or auto-detected when CWD already contains `modules.json` (interactive "y" answer) | Adds one module to an existing monorepo. |
-| **Create-manifest** (#265) | `--create-manifest` | Walks the existing target tree and writes `.tarnished-manifest.json` (root + per-module in monorepo). Required as a one-shot for legacy projects before their first `--upgrade`. |
-| **Upgrade** (#265) | `--upgrade` | Refreshes "verbatim copy" files of an existing scaffolded project to the latest (or `--target-version`-pinned) tarnished version, skipping files the user has edited. |
+| Initial single/monorepo | No Tarnished installation marker; existing scaffold flags | Creates project-owned seeds and foundation assets |
+| Add-module | Explicit `--add-module` | Intended extension of an existing monorepo |
+| Refresh | `--refresh` or bare existing-project rerun | Current updater/source safely refreshes AI assets; preserves application/settings/profile |
+| Create-manifest | `--create-manifest` | Matches eligible staged distribution candidates; never inventories arbitrary project files |
+| Upgrade | `--upgrade` | Updates only trusted runtime helpers; no real-target post-copy or seed/configuration changes |
+
+Explicit scaffold flags against a recognized existing Tarnished target fail with maintenance/add-module guidance. `--refresh` accepts dry-run/yes and rejects scaffold and upgrade-only options. `--force` never bypasses ownership checks.
 
 Flags (additions in #263 / #265 marked):
 
@@ -59,9 +61,9 @@ Flags (additions in #263 / #265 marked):
 --celery                     Include Celery (auto-enables Redis + Python)
 --github-actions             Include GitHub Project integration
 --overwrite                  Overwrite existing files without confirmation (single mode)
---create-manifest            [#265] Bootstrap a manifest from current state of files
---from-version <ref>         [#265] Recorded as `tarnished_version` in the new manifest
-                                    (defaults to "unknown")
+--refresh                   Safely refresh AI skills/harness using the current checkout
+--create-manifest            Establish provenance from eligible distribution matches
+--from-version <ref>         Select source distribution for exact-match baseline comparison
 --upgrade                    [#265] Refresh tracked files of an existing scaffolded project
 --target-version <ref>       [#265] Target git ref of upstream tarnished for --upgrade
                                     (tag, branch, commit; default: ${REMOTE_BRANCH} HEAD)
@@ -100,7 +102,7 @@ Examples:
 
 # Add module (#263)
 ./setup.sh --add-module anisette --lang python -y                       # explicit
-./setup.sh                                                              # implicit if modules.json exists
+./setup.sh                                                              # safe AI refresh on existing target
 
 # Bootstrap a legacy project's manifest (#265)
 ./setup.sh --create-manifest --from-version v0.0.74 -y
@@ -288,7 +290,7 @@ Note the values are human display strings — `"Claude Code"`, `"Codex CLI"`, `"
 
 Signature unchanged: `stage_plugin_run <upstream_dir> <staging_dir>` (and the per-module variant `stage_plugin_run_for_module <upstream_dir> <staging_dir> <lang> <module_name>`). Both now call `replace_placeholders` against `<staging_dir>` after `execute_plugin_post_copies`, using the project name derived from the target directory basename and the `ai_profile` read from the target's `.tarnished/agent-profile.json` (the same source `detect_scaffold_options` uses).
 
-Without this, `--upgrade` staged **unrendered** template copies while the manifest held hashes of **rendered** files, so `manifest_decide` saw `current == old && new != old` and emitted `UPDATE` — writing `{{PROJECT_NAME}}` / `{{AI_PROFILE}}` / `{{AI_PRIMARY_AGENT}}` / `{{AI_REVIEW_AGENT}}` back over correctly rendered downstream files. Most placeholder-bearing files escaped this because they sit in `MANIFEST_EXCLUDE_GLOBS` (`CLAUDE.md`, `AGENTS.md`, `README.md`, `docker-compose.yml`, `.devcontainer/devcontainer.json`); the exposed set was exactly `.tarnished/agent-profile.json` and `.tarnished/workflows/{README,issue,design,implement,review,pr}.md`, which are manifest-tracked and placeholder-bearing. The regression only fired when one of those files changed upstream — which #308 is the first change to do.
+Without this, `--upgrade` staged **unrendered** template copies while the manifest held hashes of **rendered** files, so `manifest_decide` saw `current == old && new != old` and emitted `UPDATE` — writing `{{PROJECT_NAME}}` / `{{AI_PROFILE}}` / `{{AI_PRIMARY_AGENT}}` / `{{AI_REVIEW_AGENT}}` back over correctly rendered downstream files. Most placeholder-bearing files escaped this because they sit in `MANIFEST_EXCLUDE_GLOBS` (`CLAUDE.md`, `AGENTS.md`, `README.md`, `docker-compose.yml`, `.devcontainer/devcontainer.json`); the exposed set was exactly `.tarnished/agent-profile.json` and `.tarnished/workflows/{README,issue,design,implement,review,pr}.md`, which historically were manifest-tracked and placeholder-bearing; the profile is now project-owned and workflow contracts use refresh. The regression only fired when one of those files changed upstream — which #308 is the first change to do.
 
 `replace_placeholders` carries a hard-coded file list (`scripts/lib/common.sh`), so any new placeholder-bearing scaffolded file must be added there. New contract files introduced by #308 (`.tarnished/workflows/flow.md`) are authored placeholder-free instead.
 
@@ -296,18 +298,9 @@ Without this, `--upgrade` staged **unrendered** template copies while the manife
 
 Signature: `sha256_file <path>`. Cross-platform sha256 wrapper. Picks `sha256sum` (Linux/devcontainer default) or `shasum -a 256` (macOS), extracts the leading 64-hex-char digest, and emits `sha256:<lowercase-hex>` on stdout. Returns `1` if neither tool is available or if the file is missing. The `sha256:` prefix reserves space for future algorithm migrations (e.g., `blake3:`) without rewriting old manifests.
 
-### `scripts/lib/common.sh::copy_with_confirm()` manifest extension (#265, extended #279)
+### `scripts/lib/common.sh::copy_with_confirm()` provenance extension
 
-`copy_with_confirm` and `copy_dir_with_confirm` retain their pre-#265 behavior by default. When the global `MANIFEST_RECORDING` is `true`, every successful copy additionally appends `(<rel_path>, "sha256:<hex>")` to the global associative array `MANIFEST_TRACKED`, where `<rel_path>` is computed against the global `MANIFEST_RECORDING_ROOT`. Paths matching `MANIFEST_EXCLUDE_GLOBS` (defined in `scripts/lib/common.sh:126`, re-exported by `scripts/lib/manifest.sh`) and paths outside `MANIFEST_RECORDING_ROOT` are skipped. The plugin contract is unchanged — plugins that already use `copy_with_confirm` (per `.claude/rules/shell.md`) automatically participate in tracking.
-
-`MANIFEST_EXCLUDE_GLOBS` was extended in #279/#281 with the always-latest path whitelist and its `.local/` overlay sidecars, and again in #286 with the directory-managed `.github{,/*}` pair so CI workflow / GitHub-side configuration files are user-owned. Directory-managed paths list both the directory and `dir/*` forms (`.claude/commands{,/*}`, `.claude/skills{,/*}`, `.claude/scripts{,/*}`, `.github{,/*}`, and the corresponding `.local` directories). File-managed paths list the exact file (`.claude/rules/shell.md`), while `.claude/rules.local{,/*}` remains user-owned. Bash glob `*` inside `[[ string == pattern ]]` spans `/`, so a single `dir/*` entry covers arbitrary depth under `dir/`. The build-time exclusion (here) is kept in sync with the runtime always-latest whitelist (`refresh.json :: managed_paths[]`) by code review and a unit test (`tests/refresh_assets.bats :: "refresh.json defaults subset of MANIFEST_EXCLUDE_GLOBS"`). Always-latest tracking and manifest-tracked upgrades are disjoint per path; `.github/` participates in neither — it is fully user-owned.
-
-`apply_decisions_for_scope` (`setup.sh`) gained a defensive filter in #286: when populating `OLD_HASHES` from the persisted manifest, paths matching `MANIFEST_EXCLUDE_GLOBS` are dropped before the lifecycle loop sees them. This makes pre-#286 manifests that still contain `.github/*` entries inert — `--upgrade --prune` cannot delete user-owned files via the LEAVE_REMOVED/PRUNE branch on the migration upgrade.
-
-| Function | Purpose |
-| --- | --- |
-| `manifest_recording_start <root>` | Sets `MANIFEST_RECORDING=true`, `MANIFEST_RECORDING_ROOT=<root>`, clears `MANIFEST_TRACKED`. Idempotent. |
-| `manifest_recording_stop` | Sets `MANIFEST_RECORDING=false`. Does NOT clear `MANIFEST_TRACKED`. |
+Preserve existing copy/confirmation interface. Record only successful eligible writes while recording is enabled; a skipped or declined copy grants no ownership. Rehash the finite recorded paths after transformations. Positive runtime-helper eligibility and exclusions protect project-owned seeds, settings, AI-refresh destinations, sidecars, and local state.
 
 ### `scripts/lib/common.sh::merge_devcontainer_json()`
 
@@ -355,7 +348,7 @@ Loaded by `setup.sh` in `--create-manifest` and `--upgrade` modes. Provides mani
 | Constant | Value | Purpose |
 | --- | --- | --- |
 | `MANIFEST_FILENAME` | `.tarnished-manifest.json` | Per-scope manifest filename |
-| `MANIFEST_SUPPORTED_VERSION` | `1` | Reject `manifest_version > 1` |
+| `MANIFEST_SUPPORTED_VERSION` | `2` | Read v1 only for conservative migration; reject newer unsupported versions |
 | `MANIFEST_EXCLUDE_GLOBS` | array | FR-3 exclusion list. Merge-/dynamic-/user-owned files: `.gitignore`, `.tarnished-manifest.json`, `modules.json`, `docker-compose.yml`, `CLAUDE.md`, `AGENTS.md`, `README.md`, `.claude/settings.json`, `.claude/settings.local.json`, `.devcontainer/devcontainer.json`, `.codex/config.local.toml`. Always-latest directory-managed (#279/#281): `.claude/commands{,/*}`, `.claude/skills{,/*}`, `.claude/scripts{,/*}` and the `.local` sidecars. Always-latest file-managed (#279): `.claude/rules/shell.md`. User-owned CI / GitHub configuration (#286): `.github{,/*}`. |
 
 | Function | Signature | Returns | Side effects |
@@ -364,13 +357,13 @@ Loaded by `setup.sh` in `--create-manifest` and `--upgrade` modes. Provides mani
 | `manifest_exists` | `<scope_root>` | exit `0` if file present | none |
 | `manifest_read` | `<scope_root>` | parsed JSON on stdout (jq) | exits non-zero on missing file, malformed JSON, or `manifest_version > MANIFEST_SUPPORTED_VERSION` |
 | `manifest_write` | `<scope_root> <version> <commit> <scaffold_options_json>` | exit `0` on success | atomic replace via `tmp + mv`; reads `MANIFEST_TRACKED` |
-| `manifest_walk_directory` | `<root>` | `<rel_path>\t<hash>` lines on stdout | none. Honors `MANIFEST_EXCLUDE_GLOBS`. |
+| `manifest_walk_directory` | `<root>` | `<rel_path>\t<hash>` lines on stdout | none. Private staging/source inventory only; never bootstrap ownership by scanning downstream. Honors positive eligibility plus exclusions. |
 | `manifest_decide` | `<old_h_or_-> <current_h_or_-> <new_h_or_->` | one of `NOOP \| UPDATE \| SKIP_EDITED \| NEW \| SKIP_NEW_CONFLICT \| LEAVE_REMOVED \| PRUNE \| SKIP_USER_DELETED` on stdout | none. Pure function. Reads global `PRUNE_ENABLED` for the LEAVE_REMOVED/PRUNE branch. |
 | `manifest_apply` | `<decision> <staging_path> <target_path>` | exit `0` | mutates target tree per decision (write/delete); honors `DRY_RUN`; updates tally globals (`TALLY_*`) and per-decision file-list arrays |
 | `manifest_diff_summary` | `<staging_path> <target_path>` | `(~K +N -M)` line on stdout | none |
 | `manifest_summary_print` | `<old_version> <new_version>` | summary block on stderr | reads tally globals; sectioned by scope in monorepo mode |
 
-The 8-row decision state table is documented in `docs/design/#265/design.md` and visualized in `docs/design/#265/flowchart.md`.
+The original eight outcomes remain useful for trusted baselines. Eligibility and legacy migration run before decisions; only successfully installed/matched bytes advance state. The current ownership decision table is in `docs/design/#316/design.md`.
 
 ### `scripts/lib/common.sh::update_gitignore()` (#259)
 
@@ -567,50 +560,22 @@ The project-integration plugin auto-detects GitHub Projects via the `gh` CLI dur
 
 Control-flow guarantee: `plugin_interactive_setup` always reaches an interactive prompt (auto-selected project list or `prompt_manual_project_config` + `prompt_manual_field_defaults`). Silent default-fallback is forbidden. The decision tree is documented in `docs/design/#276/flowchart.md`.
 
-### `templates/core/.devcontainer/scripts/refresh-assets.sh` and workspace counterpart (#279)
+### `templates/core/.devcontainer/scripts/refresh-assets.sh` and workspace counterpart
 
-Always-latest asset sync script. Distributed verbatim to every scaffolded project and dogfooded in the workspace at `/workspace/.devcontainer/scripts/refresh-assets.sh`. Two invocation paths converge on the same entry point: (a) on the very first container boot, `post.sh` calls it via the marker-guarded block (`# Tarnished Asset Refresh`) appended by `templates/core/plugin.sh::plugin_post_copy`; (b) on every subsequent container start, `templates/core/.devcontainer/devcontainer.json`'s `postStartCommand` invokes it directly. The double-call on first boot is benign — the second invocation hits the SHA cache and exits early.
+Standalone per-file updater invoked at first boot, every container start, or by current setup. Interface:
 
+```text
+refresh-assets.sh [--config PATH] [--project-root PATH] [--source-dir PATH]
+                  [--dry-run] [--force-pull] [--quiet]
 ```
-Usage: refresh-assets.sh [--config <path>] [--dry-run] [--force-pull] [--quiet]
-```
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `--config <path>` | `<repo_root>/.tarnished/refresh.json` | Override the whitelist config location |
-| `--dry-run` | off | Print intended actions; perform no `git pull` or `rsync` |
-| `--force-pull` | off | Skip the `git ls-remote` SHA cache check; always fetch + reset |
-| `--quiet` | off | Suppress per-path "no change" lines; warnings still print |
+Explicit source is read-only and bypasses cache fetching; explicit root avoids targeting the setup checkout. Validate arguments, mappings, source/destination/state symlink boundaries and cache origin/cleanliness/project separation. Enumerate upstream/overlay files plus prior provenance; never mirror-delete destination trees. Unknown/edited/deleted files remain intact. Safe upstream updates/removals use last-installed hashes, and overlay-origin content is never pruned. State persistence is atomic and only successful/exactly matched entries advance. Reconcile even at unchanged SHA.
 
-Contract: always returns `0` for non-fatal paths (success, skipped, warnings, network failure with cache hit). The only `1` exit is for an unknown CLI flag (programmer error). Container start MUST NOT block on this script — same FR-5 invariant as `setup_plugins` and `setup_codex`. The script defines minimal local `print_*` fallbacks so it works whether sourced from `post.sh` (where `scripts/lib/common.sh` is already loaded) or invoked standalone by `postStartCommand` (where it is not).
+Dry-run prints concrete file decisions with no target/persistent-cache writes; unavailable source is an explicitly incomplete preview. Warn with recovery hints on runtime failures and return 0; only unknown CLI flags return 1. Summaries distinguish applied, unchanged, preserved conflicts/unknowns, removals and failures.
 
-| Function | Purpose |
-| --- | --- |
-| `load_config()` | Locate and parse `refresh.json` via `jq`. Warn-and-exit-0 on missing/malformed/unsupported `schema_version`. |
-| `ensure_clone()` | Clone-if-missing into `clone_dir`. On parent-dir-not-writable, fall back to `${HOME}/.cache/tarnished` with a `print_warning`. On clone failure (network, DNS), warn and exit 0; the project keeps its original scaffolded bytes. |
-| `check_upstream()` | `git ls-remote origin <branch>` and compare against `git rev-parse HEAD` of the cache. Returns the new SHA when fetch is needed, empty when no-op. Treats `ls-remote` failure as no-op (cache used as-is). |
-| `fetch_upstream()` | `git fetch origin <branch>` then `git reset --hard origin/<branch>`. The cache is treated as an immutable mirror; users wanting to test a local upstream patch should set `DEVCONTAINER_REPO_URL=file:///path/to/local/clone`. |
-| `sync_paths()` | For each `managed_paths[]` entry: directory sources use `rsync -a --delete <clone_dir>/<src>/ <project>/<dst>/`; file sources use `rsync -a <clone_dir>/<src> <project>/<dst>`. Then, if `<project>/<overlay>` exists, overlay it on top. Directory overlays omit `--delete`, so overlay wins without pruning user sidecars. |
-| `print_summary()` | Emit one structured line: `[OK] refresh-assets: N paths synced (A added, R removed); O overlay files preserved` or `[OK] refresh-assets: upstream unchanged (sha=<short>)`. |
+### `templates/agent-workflows/.tarnished/refresh.json`
 
-Three-state lifecycle of `clone_dir`: **Absent** (first boot or after manual cleanup) → **Cloned** (successful first refresh) → **Updated** (subsequent fetch+reset). The script reaches **Error** only when `<clone_dir>` exists without a `.git/` subdirectory — it refuses to silently delete the directory because it cannot distinguish a corrupted clone from intentional non-tarnished content; `print_error` + exit 0 is the response.
-
-The full decision tree (15 leaves, 11 of which are non-fatal warning paths) is documented in `docs/design/#279/flowchart.md`.
-
-### `templates/agent-workflows/.tarnished/refresh.json` (#279)
-
-JSON file at `<project>/.tarnished/refresh.json`, distributed verbatim by `templates/agent-workflows/plugin.sh` along with the rest of the `.tarnished/` directory. Read by `refresh-assets.sh` on every invocation. Schema documented in `data-model.md :: ".tarnished/refresh.json schema (always-latest asset sync, #279)"`.
-
-Default `managed_paths[]` (Claude assets only — Codex `config.toml` is not in the initial whitelist because downstream projects may legitimately customize it):
-
-| `src` | `dst` | `overlay` |
-| --- | --- | --- |
-| `templates/claude/.claude/commands`       | `.claude/commands`       | `.claude/commands.local`       |
-| `templates/claude/.claude/skills`         | `.claude/skills`         | `.claude/skills.local`         |
-| `templates/claude/.claude/scripts`        | `.claude/scripts`        | `.claude/scripts.local`        |
-| `templates/claude/.claude/rules/shell.md` | `.claude/rules/shell.md` | `.claude/rules.local/shell.md` |
-
-Defaults for `upstream.repo_url` and `upstream.branch` track `setup.sh:25-26`'s `REMOTE_REPO_URL` / `REMOTE_BRANCH` constants. Both are env-overridable via `DEVCONTAINER_REPO_URL` / `DEVCONTAINER_BRANCH` (consistent with `setup.sh`'s curl-bootstrap path).
+Project-owned schema 1, with optional `use_default_managed_paths`. See data-model.md for the full ownership/state contract. Defaults cover Claude assets, applicable Codex skills, shared lifecycle contract files and the erd projection, with nonoverlapping destination mappings and matching `.local` sidecars. The template/workspace copies and manifest exclusion lists remain synchronized. Runtime never rewrites project config/profile. Setup migrates only missing or exactly recognized legacy default catalogs; custom/empty mappings remain explicit project choices.
 
 ### `templates/core/plugin.sh::plugin_post_copy` — refresh-assets wiring (#279)
 
