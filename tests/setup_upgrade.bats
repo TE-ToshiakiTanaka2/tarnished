@@ -375,6 +375,8 @@ seed_tarnished_scaffold() {
 
     # Pre-condition: the seeded tree is fully rendered.
     ! grep -rq '{{' .tarnished/
+    local before
+    before=$(sha256sum .tarnished/workflows/*.md .tarnished/agent-profile.json)
 
     run bash "$SETUP_SH" --upgrade -y
     [[ "$status" -eq 0 ]]
@@ -386,8 +388,8 @@ seed_tarnished_scaffold() {
     run grep -rl '{{' .tarnished/
     [[ "$status" -ne 0 ]]
 
-    # And the rendered values are the ones derived from the target.
-    grep -q "my-proj" .tarnished/workflows/README.md
+    # Helper maintenance preserves shared contracts and project profile bytes.
+    [[ "$(sha256sum .tarnished/workflows/*.md .tarnished/agent-profile.json)" == "$before" ]]
     run jq -r '.ai_profile' .tarnished/agent-profile.json
     [[ "$output" == "claude-main" ]]
 }
@@ -558,4 +560,65 @@ MOCK
     assert_failure
     [[ "$output" == *"Staging failed"* ]]
     [[ "$(sha256sum .tarnished-manifest.json .devcontainer/scripts/obsolete.sh)" == "$before" ]]
+}
+
+@test "#316 legacy helper deletion survives two upgrades without acquiring an ownership hash" {
+    seed_scaffold
+    bootstrap_and_commit
+    local rel='.devcontainer/scripts/refresh-assets.sh'
+    jq '.manifest_version = 1' .tarnished-manifest.json > manifest.tmp
+    mv manifest.tmp .tarnished-manifest.json
+    rm "$rel"
+    local iteration
+    for iteration in 1 2; do
+        run bash "$SETUP_SH" --upgrade --force -y
+        assert_success
+        [[ ! -e "$rel" ]]
+        jq -e --arg rel "$rel" '.manifest_version == 2 and
+            (.files | has($rel) | not) and (.deleted_paths | index($rel) != null)' \
+            .tarnished-manifest.json
+    done
+}
+
+@test "#316 repeated bootstrap preserves legacy deletion until an exact helper is explicitly restored" {
+    seed_scaffold
+    bootstrap_and_commit
+    local rel='.devcontainer/scripts/refresh-assets.sh'
+    jq '.manifest_version = 1' .tarnished-manifest.json > manifest.tmp
+    mv manifest.tmp .tarnished-manifest.json
+    rm "$rel"
+    local iteration
+    for iteration in 1 2; do
+        run bash "$SETUP_SH" --create-manifest -y
+        assert_success
+        [[ ! -e "$rel" ]]
+        jq -e --arg rel "$rel" '(.files | has($rel) | not) and
+            (.deleted_paths | index($rel) != null)' .tarnished-manifest.json
+    done
+    run bash "$SETUP_SH" --upgrade --force -y
+    assert_success
+    [[ ! -e "$rel" ]]
+    cp "$SCRIPT_DIR/templates/core/$rel" "$rel"
+    run bash "$SETUP_SH" --create-manifest -y
+    assert_success
+    jq -e --arg rel "$rel" '(.files | has($rel)) and
+        ((.deleted_paths // []) | index($rel) == null)' .tarnished-manifest.json
+}
+
+@test "#316 setup refresh preserves a missing legacy updater on successive runs" {
+    seed_scaffold
+    bootstrap_and_commit
+    local rel='.devcontainer/scripts/refresh-assets.sh'
+    jq '.manifest_version = 1' .tarnished-manifest.json > manifest.tmp
+    mv manifest.tmp .tarnished-manifest.json
+    rm "$rel"
+    mkdir -p .tarnished
+    jq '.managed_paths = [] | .use_default_managed_paths = false' \
+        "$SCRIPT_DIR/templates/agent-workflows/.tarnished/refresh.json" > .tarnished/refresh.json
+    local iteration
+    for iteration in 1 2; do
+        run bash "$SETUP_SH" --refresh -y
+        assert_success
+        [[ ! -e "$rel" ]]
+    done
 }

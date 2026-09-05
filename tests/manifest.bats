@@ -431,3 +431,56 @@ teardown() {
     fi
     [[ "${MANIFEST_TRACKED[$rel]}" == "$hash" ]]
 }
+
+@test "legacy missing helpers become durable tombstones while arbitrary missing source stays unowned" {
+    mkdir -p "$SCRATCH/project" "$SCRATCH/staging/.devcontainer/scripts"
+    echo upstream > "$SCRATCH/staging/.devcontainer/scripts/deleted.sh"
+    local rel='.devcontainer/scripts/deleted.sh' old
+    old=$(jq -n --arg hash "sha256:$(printf '%064d' 0)" '{manifest_version:1,files:{
+        ".devcontainer/scripts/deleted.sh":$hash,"src/app.py":$hash,
+        ".devcontainer/scripts/obsolete.sh":$hash}}')
+    manifest_adopt_distribution "$SCRATCH/project" "$SCRATCH/staging" "$old"
+    [[ ${#MANIFEST_TRACKED[@]} -eq 0 && ${#MANIFEST_DELETED[@]} -eq 2 ]]
+    manifest_write "$SCRATCH/project" v1 abc '{}'
+    old=$(manifest_read "$SCRATCH/project")
+    manifest_adopt_distribution "$SCRATCH/project" "$SCRATCH/staging" "$old"
+    [[ -n "${MANIFEST_DELETED[$rel]:-}" && ${#MANIFEST_TRACKED[@]} -eq 0 ]]
+    [[ ! -e "$SCRATCH/project/$rel" ]]
+    manifest_write "$SCRATCH/project" v1 abc '{}'
+    [[ "$(cat "$SCRATCH/project/.tarnished-manifest.json")" == "$old" ]]
+}
+
+@test "restoring exact distribution bytes clears a tombstone but differing bytes preserve it" {
+    mkdir -p "$SCRATCH/project/.devcontainer/scripts" "$SCRATCH/staging/.devcontainer/scripts"
+    local rel='.devcontainer/scripts/deleted.sh'
+    local old='{"manifest_version":2,"files":{},"deleted_paths":[".devcontainer/scripts/deleted.sh"]}'
+    echo upstream > "$SCRATCH/staging/$rel"
+    echo local > "$SCRATCH/project/$rel"
+    manifest_adopt_distribution "$SCRATCH/project" "$SCRATCH/staging" "$old"
+    [[ -n "${MANIFEST_DELETED[$rel]:-}" && ${#MANIFEST_TRACKED[@]} -eq 0 ]]
+    cp "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
+    manifest_adopt_distribution "$SCRATCH/project" "$SCRATCH/staging" "$old"
+    [[ -z "${MANIFEST_DELETED[$rel]:-}" && -n "${MANIFEST_TRACKED[$rel]:-}" ]]
+}
+
+@test "manifest rejects malformed unsafe and contradictory deletion intent" {
+    manifest_recording_start "$SCRATCH"
+    manifest_write "$SCRATCH" v1 abc '{}'
+    local deleted
+    cp "$SCRATCH/.tarnished-manifest.json" "$SCRATCH/base"
+    for deleted in 'null' '{}' '["../escape"]' '["src/app.py"]' \
+        '[".devcontainer/scripts/bad\nname.sh"]'; do
+        jq --argjson deleted "$deleted" '.deleted_paths = $deleted' "$SCRATCH/base" \
+            > "$SCRATCH/.tarnished-manifest.json"
+        run manifest_read "$SCRATCH"
+        [[ "$status" -ne 0 ]]
+    done
+    jq --arg hash "sha256:$(printf '%064d' 0)" '.files[".devcontainer/scripts/a.sh"] = $hash |
+        .deleted_paths = [".devcontainer/scripts/a.sh"]' "$SCRATCH/base" \
+        > "$SCRATCH/.tarnished-manifest.json"
+    run manifest_read "$SCRATCH"
+    [[ "$status" -ne 0 ]]
+    MANIFEST_DELETED['.devcontainer/scripts/a.sh']=1
+    manifest_recording_start "$SCRATCH"
+    [[ ${#MANIFEST_DELETED[@]} -eq 0 ]]
+}

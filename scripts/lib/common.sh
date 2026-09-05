@@ -115,6 +115,8 @@ MANIFEST_RECORDING_ROOT="${MANIFEST_RECORDING_ROOT:-}"
 # Map: <repo-relative-path> → "sha256:<hex>". Declared lazily by
 # manifest_recording_start to avoid `declare -gA` errors on older bash.
 declare -gA MANIFEST_TRACKED 2>/dev/null || true
+# Deletion intent is separate from installed-content ownership.
+declare -gA MANIFEST_DELETED 2>/dev/null || true
 
 # Globs (relative to MANIFEST_RECORDING_ROOT) that must NOT be tracked. Per
 # FR-3 of #265: merge files, dynamic files, and user-owned files are excluded
@@ -225,8 +227,8 @@ manifest_recording_start() {
     manifest_safe_path "$MANIFEST_RECORDING_ROOT" .tarnished-manifest.json || return 1
     MANIFEST_RECORDING=true
     # Clear prior state.
-    unset MANIFEST_TRACKED
-    declare -gA MANIFEST_TRACKED
+    unset MANIFEST_TRACKED MANIFEST_DELETED
+    declare -gA MANIFEST_TRACKED MANIFEST_DELETED
 }
 
 # Stop recording. Does not clear MANIFEST_TRACKED; the snapshot remains

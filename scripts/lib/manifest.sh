@@ -108,6 +108,11 @@ manifest_read() {
         (.scaffold_options.languages // [] | type == "array" and all(.[]; type == "string")) and
         (.scaffold_options.services // [] | type == "array" and all(.[]; type == "string")) and
         (.files | type == "object") and
+        ((has("deleted_paths") | not) or
+            (.deleted_paths | type == "array" and all(.[]; type == "string" and
+                (explode | all(.[]; . >= 32 and . != 127))))) and
+        (. as $manifest | all(.deleted_paths[]?; . as $path |
+            ($manifest.files | has($path) | not))) and
         (.files | to_entries | all(.[];
             (.key | length > 0) and
             (.key | explode | all(.[]; . >= 32 and . != 127)) and
@@ -129,11 +134,17 @@ manifest_read() {
             return 1
         fi
     done < <(jq -r '.files | keys[]' "$file")
+    while IFS= read -r rel; do
+        if ! _manifest_path_eligible "$rel"; then
+            print_error "Invalid manifest deletion path: $rel"
+            return 1
+        fi
+    done < <(jq -r '.deleted_paths[]?' "$file")
 
     cat "$file"
 }
 
-# Write a manifest at <scope_root> from the global MANIFEST_TRACKED snapshot.
+# Write a manifest at <scope_root> from MANIFEST_TRACKED and MANIFEST_DELETED.
 # Atomic: writes to a tmp file then mv's it into place so a SIGINT mid-write
 # leaves any prior manifest intact.
 #
@@ -170,8 +181,10 @@ manifest_write() {
 
     # Build the {path: hash, ...} object from MANIFEST_TRACKED. Sort keys
     # for stable diffs.
-    local files_json
-    if ! files_json=$(_manifest_files_to_json); then
+    local files_json deleted_json
+    if ! files_json=$(_manifest_files_to_json) ||
+        ! deleted_json=$(_manifest_deleted_to_json); then
+        rm -f "$tmp"
         print_error "manifest_write: failed to serialize files map"
         return 1
     fi
@@ -182,21 +195,21 @@ manifest_write() {
     # E2BIG ("Argument list too long") and no manifest is written. stdin is not
     # subject to ARG_MAX. The bounded scalars / scaffold_options object stay as
     # --arg/--argjson — they cannot overflow. The files map becomes jq's input
-    # (`.`); sorted-key order from _manifest_files_to_json is preserved. (#289)
-    if ! printf '%s' "$files_json" | jq \
+    # (with deletion intent); sorted keys are preserved. (#289)
+    if ! printf '{"files":%s,"deleted_paths":%s}' "$files_json" "$deleted_json" | jq \
         --argjson manifest_version "$MANIFEST_SUPPORTED_VERSION" \
         --arg tarnished_version "$tarnished_version" \
         --arg tarnished_commit "$tarnished_commit" \
         --arg created_at "$created_at" \
         --argjson scaffold_options "$scaffold_options_json" \
-        '{
+        '.deleted_paths as $deleted | {
             manifest_version: $manifest_version,
             tarnished_version: $tarnished_version,
             tarnished_commit: $tarnished_commit,
             created_at: $created_at,
             scaffold_options: $scaffold_options,
-            files: .
-        }' > "$tmp"; then
+            files: .files
+        } + (if ($deleted | length) > 0 then {deleted_paths:$deleted} else {} end)' > "$tmp"; then
         rm -f "$tmp"
         print_error "manifest_write: jq build failed"
         return 1
@@ -235,6 +248,53 @@ _manifest_files_to_json() {
             ($line | split("\t")) as $entry | .[$entry[0]] = $entry[1])'
 }
 
+# Serialize tombstones without turning them into installed hashes or relying on
+# command-line argument limits. An adopted exact match must clear its tombstone.
+_manifest_deleted_to_json() {
+    local rel
+    for rel in "${!MANIFEST_DELETED[@]}"; do
+        if ! _manifest_path_eligible "$rel" || [[ -n "${MANIFEST_TRACKED[$rel]:-}" ]]; then
+            print_error "Invalid or contradictory manifest deletion path: $rel"
+            return 1
+        fi
+    done
+    {
+        for rel in "${!MANIFEST_DELETED[@]}"; do
+            printf '%s\n' "$rel"
+        done
+    } | LC_ALL=C sort | jq -Rn '[inputs]'
+}
+
+# Load deletion intent from validated state without inferring installed bytes.
+# Legacy missing eligible entries become tombstones, including helpers no longer
+# in today's distribution. Existing v2 tombstones persist until an exact match is
+# explicitly restored. Failure leaves the previous in-memory deletion map intact.
+manifest_load_deleted() {
+    local root="$1" old_json="$2" version rel
+    local -A deleted=()
+    version=$(printf '%s' "$old_json" | jq -r '.manifest_version // 0') || return 1
+    if [[ "$version" == 2 ]]; then
+        while IFS= read -r rel; do
+            [[ -n "$rel" ]] || continue
+            _manifest_path_eligible "$rel" || return 1
+            deleted["$rel"]=1
+        done < <(printf '%s' "$old_json" | jq -r '.deleted_paths[]?')
+    elif [[ "$version" == 1 ]]; then
+        while IFS= read -r rel; do
+            [[ -n "$rel" ]] || continue
+            if _manifest_path_eligible "$rel" && manifest_safe_path "$root" "$rel" &&
+                [[ ! -e "$root/$rel" && ! -L "$root/$rel" ]]; then
+                deleted["$rel"]=1
+            fi
+        done < <(printf '%s' "$old_json" | jq -r '.files | keys[]')
+    fi
+    unset MANIFEST_DELETED
+    declare -gA MANIFEST_DELETED
+    for rel in "${!deleted[@]}"; do
+        MANIFEST_DELETED["$rel"]=1
+    done
+}
+
 # Establish ownership only from a private distribution inventory. Never enumerate
 # the downstream tree. Legacy hashes are intentionally ignored; v2 baselines are
 # retained even when a developer changed or deleted the installed file.
@@ -245,6 +305,7 @@ manifest_adopt_distribution() {
     version=$(printf '%s' "$old_json" | jq -r '.manifest_version // 0') || return 1
     # An incomplete inventory is never evidence of an upstream removal.
     inventory=$(manifest_walk_directory "$staging") || return 1
+    manifest_load_deleted "$root" "$old_json" || return 1
     unset MANIFEST_TRACKED
     declare -gA MANIFEST_TRACKED
     if [[ "$version" == 2 ]]; then
@@ -269,6 +330,7 @@ manifest_adopt_distribution() {
         if [[ -f "$root/$rel" ]] && current=$(sha256_file "$root/$rel") &&
             [[ "$current" == "$hash" ]]; then
             MANIFEST_TRACKED["$rel"]="$hash"
+            unset 'MANIFEST_DELETED[$rel]'
         elif [[ -e "$root/$rel" ]]; then
             print_warning "Unknown or edited file preserved: $root/$rel; compare with $staging/$rel and explicitly adopt the desired file." >&2
         fi
