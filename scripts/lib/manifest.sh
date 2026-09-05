@@ -240,9 +240,11 @@ _manifest_files_to_json() {
 # retained even when a developer changed or deleted the installed file.
 # Usage: manifest_adopt_distribution <root> <staging> <validated-old-json-or-{}>
 manifest_adopt_distribution() {
-    local root="$1" staging="$2" old_json="$3" rel hash current
+    local root="$1" staging="$2" old_json="$3" rel hash current inventory
     local version
     version=$(printf '%s' "$old_json" | jq -r '.manifest_version // 0') || return 1
+    # An incomplete inventory is never evidence of an upstream removal.
+    inventory=$(manifest_walk_directory "$staging") || return 1
     unset MANIFEST_TRACKED
     declare -gA MANIFEST_TRACKED
     if [[ "$version" == 2 ]]; then
@@ -270,7 +272,7 @@ manifest_adopt_distribution() {
         elif [[ -e "$root/$rel" ]]; then
             print_warning "Unknown or edited file preserved: $root/$rel; compare with $staging/$rel and explicitly adopt the desired file." >&2
         fi
-    done < <(manifest_walk_directory "$staging")
+    done <<< "$inventory"
 }
 
 # =============================================================================
@@ -294,8 +296,16 @@ manifest_walk_directory() {
         return 1
     fi
 
-    local abs_root
-    abs_root="$(cd "$root" && pwd)"
+    local abs_root inventory
+    abs_root="$(cd "$root" && pwd)" || return 1
+    inventory=$(mktemp) || return 1
+    if ! find "$abs_root" \
+        \( -type d \( -name .git -o -name .serena -o -name target -o -name node_modules -o -name .venv -o -name dist -o -name __pycache__ \) -prune \) -o \
+        -type f -print0 > "$inventory"; then
+        rm -f "$inventory"
+        print_error "Cannot enumerate complete distribution: $abs_root"
+        return 1
+    fi
 
     while IFS= read -r -d '' path; do
         local rel="${path#${abs_root}/}"
@@ -319,15 +329,17 @@ manifest_walk_directory() {
 
         local hash
         if ! hash=$(sha256_file "$path"); then
-            continue
+            rm -f "$inventory"
+            print_error "Cannot hash distribution candidate: $path"
+            return 1
         fi
         printf '%s\t%s\n' "$rel" "$hash"
         # find -prune below already excludes .git, .serena, target/, node_modules,
         # .venv, and dist — they are user-tooling/build artifacts and never part
         # of the tarnished-managed surface.
-    done < <(find "$abs_root" \
-        \( -type d \( -name .git -o -name .serena -o -name target -o -name node_modules -o -name .venv -o -name dist -o -name __pycache__ \) -prune \) -o \
-        -type f -print0)
+    done < "$inventory"
+    rm -f "$inventory"
+
 }
 
 # =============================================================================

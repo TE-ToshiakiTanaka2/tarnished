@@ -305,14 +305,18 @@ manifest_safe_path() {
 # Rehash only the finite set successfully copied, after plugin transformations.
 manifest_recording_rehash() {
     local rel hash
+    local -A refreshed=()
     for rel in "${!MANIFEST_TRACKED[@]}"; do
-        if _manifest_path_eligible "$rel" &&
-            manifest_safe_path "$MANIFEST_RECORDING_ROOT" "$rel" &&
-            hash=$(sha256_file "$MANIFEST_RECORDING_ROOT/$rel"); then
-            MANIFEST_TRACKED["$rel"]="$hash"
-        else
-            unset 'MANIFEST_TRACKED[$rel]'
+        if ! _manifest_path_eligible "$rel" ||
+            ! manifest_safe_path "$MANIFEST_RECORDING_ROOT" "$rel" ||
+            ! hash=$(sha256_file "$MANIFEST_RECORDING_ROOT/$rel"); then
+            print_error "Cannot establish installed baseline: $MANIFEST_RECORDING_ROOT/$rel"
+            return 1
         fi
+        refreshed["$rel"]="$hash"
+    done
+    for rel in "${!refreshed[@]}"; do
+        MANIFEST_TRACKED["$rel"]="${refreshed[$rel]}"
     done
 }
 
@@ -350,7 +354,8 @@ _record_tracked_copy() {
 
     local hash
     if ! hash=$(sha256_file "$abs_dest"); then
-        return 0
+        print_error "Cannot hash copied helper: $abs_dest"
+        return 1
     fi
     MANIFEST_TRACKED["$rel"]="$hash"
 }
@@ -395,14 +400,14 @@ copy_with_confirm() {
     # If destination doesn't exist, copy directly
     if [[ ! -e "$dest" ]]; then
         cp "$src" "$dest" || return 1
-        _record_tracked_copy "$(_abs_path "$dest")"
+        _record_tracked_copy "$(_abs_path "$dest")" || return 1
         return 0
     fi
 
     # Handle existing file based on flags
     if [[ "$OVERWRITE_ALL" == true ]]; then
         cp "$src" "$dest" || return 1
-        _record_tracked_copy "$(_abs_path "$dest")"
+        _record_tracked_copy "$(_abs_path "$dest")" || return 1
         return 0
     fi
 
@@ -424,7 +429,7 @@ copy_with_confirm() {
     IFS='' read -r response < /dev/tty
     if [[ "$response" =~ ^[Yy] ]]; then
         cp "$src" "$dest" || return 1
-        _record_tracked_copy "$(_abs_path "$dest")"
+        _record_tracked_copy "$(_abs_path "$dest")" || return 1
     else
         print_warning "Skipped: $dest (already exists)"
     fi
@@ -448,16 +453,24 @@ _abs_path() {
 # Usage: copy_dir_with_confirm <source_dir> <destination_dir>
 copy_dir_with_confirm() {
     local src="$1"
-    local dest="$2"
+    local dest="$2" inventory
 
-    # Check every destination ancestor before creating directories.
     if ! _recording_destination_safe "$dest" directory; then
         print_warning "Skipped unsafe copy directory: $dest"
         return 1
     fi
-    mkdir -p "$dest" || return 1
+    # Capture the complete source set before creating any target directories.
+    inventory=$(mktemp) || return 1
+    if ! find "$src" -type f -print0 > "$inventory"; then
+        rm -f "$inventory"
+        print_error "Cannot enumerate copy source: $src"
+        return 1
+    fi
+    if ! mkdir -p "$dest"; then
+        rm -f "$inventory"
+        return 1
+    fi
 
-    # Iterate through source files
     while IFS= read -r -d '' file; do
         local rel_path="${file#$src/}"
         local dest_file="$dest/$rel_path"
@@ -466,11 +479,15 @@ copy_dir_with_confirm() {
 
         if ! _recording_destination_safe "$dest_file"; then
             print_warning "Skipped unsafe copy destination: $dest_file"
+            rm -f "$inventory"
             return 1
         fi
-        mkdir -p "$dest_dir" || return 1
-        copy_with_confirm "$file" "$dest_file" || return 1
-    done < <(find "$src" -type f -print0)
+        if ! mkdir -p "$dest_dir" || ! copy_with_confirm "$file" "$dest_file"; then
+            rm -f "$inventory"
+            return 1
+        fi
+    done < "$inventory"
+    rm -f "$inventory"
 }
 
 # =============================================================================

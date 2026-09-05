@@ -389,3 +389,45 @@ teardown() {
     manifest_options_valid '{}'
     manifest_options_valid '{"languages":["go","rust"],"services":["redis"],"ai_profile":"dual","codex_enabled":true}'
 }
+
+@test "failed staged enumeration cannot replace ownership or create copy targets" {
+    mkdir -p "$SCRATCH/staging" "$SCRATCH/project"
+    manifest_recording_start "$SCRATCH/project"
+    local rel='.devcontainer/scripts/retained.sh' hash="sha256:$(printf '%064d' 0)"
+    MANIFEST_TRACKED["$rel"]="$hash"
+    find() { return 1; }
+    if manifest_adopt_distribution "$SCRATCH/project" "$SCRATCH/staging" '{}'; then
+        fail "partial inventory was accepted"
+    fi
+    [[ "${MANIFEST_TRACKED[$rel]}" == "$hash" ]]
+    if copy_dir_with_confirm "$SCRATCH/staging" "$SCRATCH/project/new"; then
+        fail "failed directory enumeration was accepted"
+    fi
+    [[ ! -e "$SCRATCH/project/new" ]]
+}
+
+@test "failed candidate hashing rejects the whole adoption inventory and retains baselines" {
+    mkdir -p "$SCRATCH/staging/.devcontainer/scripts" "$SCRATCH/project"
+    echo upstream > "$SCRATCH/staging/.devcontainer/scripts/helper.sh"
+    manifest_recording_start "$SCRATCH/project"
+    local rel='.devcontainer/scripts/retained.sh' hash="sha256:$(printf '%064d' 0)"
+    MANIFEST_TRACKED["$rel"]="$hash"
+    sha256_file() { return 1; }
+    if manifest_adopt_distribution "$SCRATCH/project" "$SCRATCH/staging" '{}'; then
+        fail "failed candidate hashing was accepted"
+    fi
+    [[ "${MANIFEST_TRACKED[$rel]}" == "$hash" ]]
+}
+
+@test "rehash failure preserves the previous recording and fails staging" {
+    mkdir -p "$SCRATCH/.devcontainer/scripts"
+    echo upstream > "$SCRATCH/.devcontainer/scripts/helper.sh"
+    manifest_recording_start "$SCRATCH"
+    local rel='.devcontainer/scripts/helper.sh' hash="sha256:$(printf '%064d' 0)"
+    MANIFEST_TRACKED["$rel"]="$hash"
+    sha256_file() { return 1; }
+    if manifest_recording_rehash; then
+        fail "failed rehash was accepted"
+    fi
+    [[ "${MANIFEST_TRACKED[$rel]}" == "$hash" ]]
+}
