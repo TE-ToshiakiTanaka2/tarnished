@@ -42,6 +42,10 @@ Detailed `erd:*` behavior is available under `.tarnished/workflows/erd/`. Use th
 
 The lifecycle should feel the same as Claude Code's `/issue`, `/design`, `/implement`, `/review`, and `/pr` skills. Claude-specific `SKILL.md` files and slash commands are projections of the same workflow intent, not a separate source of truth.
 
+## Foundation Maintenance
+
+Tarnished maintains AI skills and harnesses while the developer owns application code, scaffold seeds, settings and model/profile overrides. Bare setup reruns refresh AI assets; runtime-helper upgrades are separate. Preserve unknown, edited or user-deleted assets and `.local` customizations. Ownership requires a successful installed or exact distribution baseline; never infer it by walking project files. Review legacy config and installed-updater migration before relying on container-start refresh.
+
 ## Codex Skill Compatibility
 
 Codex repo-local skills are shipped under `.agents/skills/`:

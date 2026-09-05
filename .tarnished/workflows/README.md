@@ -12,7 +12,7 @@ The lifecycle is expressed at three altitude levels. Each level has a distinct j
 | **Operational spec** | `.claude/skills/*/SKILL.md` | The detailed, executable procedure (phases, branch/commit/PR contracts, artifact destinations, reporting contracts). This is where behavior is authored. |
 | **Codex projection** | `.agents/skills/*/SKILL.md` | Thin pointers that read the contract and the operational spec, translating Claude-specific tool references for Codex. |
 
-Detailed sub-step behavior lives in the erd command docs. `.claude/commands/erd/*` is the authored copy; `.tarnished/workflows/erd/*` is a byte-identical projection for Codex-facing instructions (generated at scaffold time and kept current by `refresh-assets.sh` for projects whose `.tarnished/refresh.json` includes the `.tarnished/workflows/erd` and `.claude/agents` managed paths — projects scaffolded earlier must adopt those entries once from `templates/agent-workflows/.tarnished/refresh.json`).
+Detailed sub-step behavior lives in the erd command docs. `.claude/commands/erd/*` is the authored copy; `.tarnished/workflows/erd/*` is a byte-identical projection for Codex-facing instructions (generated at scaffold time and kept current by `refresh-assets.sh` for projects using the current default catalog or explicit equivalent mappings; existing projects can migrate safely with the current checkout’s `setup.sh --refresh`).
 
 When editing any level, keep the others aligned in the same commit. Upstream tarnished enforces byte-identity of its own mirrored template trees in CI; a scaffolded project carries no equivalent check, so alignment here is the author's responsibility.
 
@@ -49,7 +49,7 @@ The orchestrator handles user decisions. `designer` and `executor` resolve routi
 
 Delegation requires a primary agent that can run subagents. Where it cannot, every stage runs inline under the primary agent and the report says so; the procedure is unchanged, and what is lost is the model separation between roles.
 
-The routing table, the model binding per role, and the blocked-result contract are specified in `.claude/skills/_shared/delegation/SKILL.md`. Where this contract and the skills disagree, the skills are authoritative: `.claude/skills/` and `.claude/agents/` are refresh-managed while this directory is not, so a project can be running current skills against a stale contract.
+The routing table, the model binding per role, and the blocked-result contract are specified in `.claude/skills/_shared/delegation/SKILL.md`. Where this contract and the skills disagree, the skills are authoritative: Claude assets, applicable Codex skills and these contracts share the refresh distribution. Older catalogs and preserved conflicts can still leave a contract stale.
 
 ## Lifecycle
 

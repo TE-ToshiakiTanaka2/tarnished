@@ -124,114 +124,75 @@ contains the union of every module's language toolchain. Subsequent
 `setup.sh --add-module` invocations are idempotent against the shared root
 files (marker-guarded blocks).
 
-### Upgrading an existing scaffold
+### Maintaining an existing project
 
-`setup.sh --upgrade` refreshes a previously scaffolded project to the latest
-(or `--target-version`-pinned) tarnished version while preserving any files
-you have edited locally.
+Tarnished prepares and maintains an AI-agent development foundation. The downstream developer owns the software under development and its settings. Tarnished maintainers publish shared skills and harness improvements centrally, so model-related workflow improvements do not require each project to rewrite its skills.
 
-```bash
-# First time only: bootstrap a manifest from the current state of files.
-# Required for projects scaffolded before the manifest format existed.
-./setup.sh --create-manifest --from-version v0.0.74 -y
+| Asset | Owner and maintenance authority |
+| --- | --- |
+| Application source, tests, docs, build/package files, Docker/CI files, root instructions and `post.sh` | Developer-owned scaffold seeds after creation; maintenance never overwrites or prunes them |
+| Claude/Codex skills, commands, agents, scripts and shared workflow contracts | Distributed by Tarnished; update only with proven unchanged installed bytes |
+| `.devcontainer/scripts/*.sh` helpers other than `post.sh` | Eligible for manifest upgrades when their installed provenance is proven |
+| Profiles, model overrides, CLI settings, `refresh.json`, extra files and `.local` sidecars | Developer-owned configuration/customization; preserve during maintenance |
+| Manifest and refresh state | Installed provenance, not an inventory of everything in a project |
+| Conflicting or unknown file | Developer decision required; preserve and report current and candidate paths |
 
-# Subsequent updates:
-./setup.sh --upgrade -y                           # Latest develop
-./setup.sh --upgrade --target-version v0.0.76 -y  # Pin to a specific tag
-./setup.sh --upgrade --dry-run                    # Preview without writing
+A bare setup rerun in an existing Tarnished project performs AI refresh. Explicit scaffold options are rejected there; add a monorepo module with `--add-module <name> --lang <language>`. `--overwrite` does not grant permission to re-scaffold an existing project.
 
-# Monorepo: scope the upgrade
-./setup.sh --upgrade --shared-only -y             # Only the root assets
-./setup.sh --upgrade --module backend -y          # Only one module
-
-# Aggressive: also delete tracked files removed upstream
-./setup.sh --upgrade --prune -y
-
-# Bypass the clean-tree precondition (advanced)
-./setup.sh --upgrade --force -y
-```
-
-How it works:
-
-- Each scaffolded scope (root in single mode, or root + per-module in
-  monorepo mode) carries a `.tarnished-manifest.json` recording sha256
-  hashes of every "verbatim copy" file from the originating scaffold.
-- `--upgrade` re-runs the plugin pipeline against a temporary staging
-  directory to discover what the current tarnished version would emit,
-  then per-file compares (old hash, your current file's hash, new hash)
-  and chooses one of: leave as-is (unchanged), overwrite (you didn't
-  edit), skip (you edited — preserved with a diff summary), copy (new
-  upstream file), warn (your file collides with a new upstream path),
-  leave + warn (removed upstream — opt-in delete with `--prune`), or
-  respect-deletion (you removed the file).
-- Merge files (`.gitignore`, `devcontainer.json`, `.claude/settings.json`),
-  dynamically generated files (`docker-compose.yml`, `modules.json`),
-  and user-owned files (`CLAUDE.md`, `AGENTS.md`, `README.md`) are
-  deliberately excluded from manifest tracking. Merge logic re-runs
-  during the upgrade to absorb new whitelist blocks and merge entries.
-- The pre-flight requires a clean git tree (use `git stash` or `--force`
-  to override).
-
-### Always-latest assets (`refresh-assets.sh`)
-
-Operational assets that are intended to be **identical across every
-project** — `.claude/commands/`, `.claude/skills/`, `.claude/scripts/`,
-and language-agnostic rules such as `.claude/rules/shell.md` — are kept
-always-latest by `refresh-assets.sh` rather than by the manifest-driven
-`--upgrade` flow above. The script runs from your devcontainer's `postStartCommand`
-on every container start (and from `post.sh` on the very first boot)
-so a project scaffolded a month ago still picks up the latest
-skill/command/script/shared-rule revisions automatically.
-
-```text
-DevContainer onCreate           DevContainer onStart (every container start)
-─────────────────────           ────────────────────────────────────────────
-  postCreateCommand                postStartCommand
-       │                               │
-       └─→ post.sh                     └─→ refresh-assets.sh
-            │                                │
-            ├─→ setup_plugins                ├─→ git ls-remote upstream HEAD
-            ├─→ setup_codex                  ├─→ if SHA changed → git pull
-            └─→ refresh_assets (FIRST RUN)   ├─→ rsync --delete  upstream → base
-                                             ├─→ rsync (no-del)  *.local/ → base
-                                             └─→ summary print
-```
-
-How it works:
-
-- `<project>/.tarnished/refresh.json` declares the always-latest path
-  whitelist (`schema_version: 1`). The defaults track the Claude template
-  assets in upstream `develop`; override `upstream.repo_url` /
-  `upstream.branch` / `clone_dir` to redirect to a fork or a pinned ref.
-- The upstream clone lives at `/opt/tarnished` (or `~/.cache/tarnished`
-  if `/opt` is not writable). `git ls-remote` checks the upstream HEAD
-  on every invocation; only `git fetch` + `git reset --hard origin/<branch>`
-  + `rsync` runs when the SHA differs.
-- All failure paths emit a warning and exit 0 — container start is
-  never blocked. Offline first-boot keeps the original scaffolded
-  bytes; offline subsequent runs use the cached upstream as-is.
-
-To customize an always-latest asset locally without losing the
-upstream sync, write to the sidecar `.local/` directory mirroring
-the upstream layout:
+Run the **current Tarnished checkout's** script from your downstream project directory:
 
 ```bash
-# Override the brainstorm command for this project only
+bash /path/to/tarnished/setup.sh --refresh --dry-run
+bash /path/to/tarnished/setup.sh --refresh -y
+```
+
+Refresh uses the current checkout's updater and distribution, preserving application code, settings, profile selection and role/model overrides. Container-start refresh uses the installed `.devcontainer/scripts/refresh-assets.sh` and the configured upstream. Runtime failures warn with recovery instructions and return success so the container can start. Unknown CLI flags remain errors.
+
+### AI distribution, customization and migration
+
+`.tarnished/refresh.json` selects the upstream repository, branch, cache and managed paths. New defaults set `use_default_managed_paths: true`: a valid upstream catalog can add future mappings while project settings remain intact. The catalog covers Claude assets, applicable Codex `.agents/skills`, shared workflow `.md` contracts, and the separate erd projection. Codex skills refresh when the project selected Codex or already installed them; Claude/shared policy remains available for every profile. No model or profile is automatically selected or changed.
+
+An absent/false `use_default_managed_paths` keeps the explicit `managed_paths` list authoritative, including an empty list. Current `setup.sh --refresh` creates missing configuration and opts in only exactly recognized shipped legacy catalogs, preserving other fields. Custom catalogs receive guidance to add mappings from `templates/agent-workflows/.tarnished/refresh.json` or explicitly enable defaults once. Runtime refresh never rewrites configuration.
+
+Refresh records successful installed/adopted hashes in `.tarnished/refresh-state.json`. It enumerates upstream assets and sidecars, not project files as owned. Unknown siblings, local edits and user deletions survive. Missing state permits adoption only of matching distribution bytes. An upstream removal deletes only its proven, unchanged upstream-origin file. Removed/reconfigured mappings preserve former files. Repeated runs still reconcile overlays and retry conflicts even when the upstream commit is unchanged.
+
+To explicitly override a distributed asset, copy it to its configured `.local` sidecar and edit the sidecar:
+
+```bash
 mkdir -p .claude/commands.local/erd
 cp .claude/commands/erd/brainstorm.md .claude/commands.local/erd/brainstorm.md
 $EDITOR .claude/commands.local/erd/brainstorm.md
 ```
 
-After the next container start (or `bash .devcontainer/scripts/refresh-assets.sh`),
-`.claude/commands/erd/brainstorm.md` will reflect your `.local/`
-override; everything else under `.claude/commands/` keeps tracking
-upstream. The `.local/` directory is user-owned and never touched by
-the refresh.
+The live projection updates only when it matches its previous installed baseline. Direct edits to the live projection are preserved as conflicts. Removing a sidecar restores upstream only if the projection remains unchanged; overlay-origin files absent from both upstream and sidecar are preserved. Overlay-only added files are supported. For shared erd behavior, duplicate overrides into `.tarnished/workflows/erd.local/`; the two erd projections have separate sidecars. Codex uses `.agents/skills.local`; shared contracts use `.tarnished/workflows.local/<file>.md`.
 
-The always-latest mechanism and `--upgrade` are **disjoint per path**:
-the always-latest whitelist is excluded from manifest tracking
-(`scripts/lib/common.sh::MANIFEST_EXCLUDE_GLOBS`). Files outside the
-whitelist continue to flow through the manifest-driven upgrade path.
+For existing installations, inspect `--refresh --dry-run`, then run `--refresh`. The same command replaces a missing, exactly recognized shipped legacy, or unchanged helper with a trusted version-2 installed baseline with the current safe helper. It records that baseline for subsequent updater releases. An edited/unrecognized helper is preserved and its exact source and destination paths are reported: **review and explicitly copy the safe helper before the next container start**. A safe one-shot refresh does not make an unconverted legacy installed script safe. Custom hooks and settings are retained.
+
+When a conflict is reported, compare the named project file with the named source/cache candidate. Keep an override in its corresponding `.local` path if desired, then explicitly copy the chosen upstream base into the live destination (or remove an unknown collision) and rerun. Exact matches can be adopted safely. Unknown legacy content that differs from today's distribution needs this one-time review; it is never silently declared owned. Files already deleted by older scripts cannot be recovered by provenance migration.
+
+Dry-run writes no target/config/state/summary files or persistent cache and uses a valid local source/cache for exact planned actions. If none exists, it reports that the upstream comparison is unavailable. Refresh state is generated local metadata: add `.tarnished/refresh-state.json` to your ignore rules if it is not already ignored; maintenance does not rewrite your `.gitignore`.
+
+### Runtime-helper upgrades and provenance
+
+AI distribution and manifest upgrades have disjoint ownership. `--upgrade` is limited to delivered `.devcontainer/scripts/*.sh` helpers other than `post.sh`; files outside that positive set are developer-owned. It stages plugins privately and never replays post-copy hooks against your project.
+
+```bash
+# First adoption for a project without a manifest: compare actual distribution bytes.
+bash /path/to/tarnished/setup.sh --create-manifest -y
+# Optional: compare an available historical distribution, not merely label current bytes.
+bash /path/to/tarnished/setup.sh --create-manifest --from-version <ref> -y
+bash /path/to/tarnished/setup.sh --upgrade --dry-run
+bash /path/to/tarnished/setup.sh --upgrade -y
+bash /path/to/tarnished/setup.sh --upgrade --target-version <ref> -y
+bash /path/to/tarnished/setup.sh --upgrade --shared-only -y
+bash /path/to/tarnished/setup.sh --upgrade --module backend -y
+# Remove only proven unchanged helpers that disappeared upstream.
+bash /path/to/tarnished/setup.sh --upgrade --prune -y
+```
+
+Manifest version 2 records successful installed or exact distribution matches. Fresh scaffolding records only successful template copies and rehashes those paths after rendering. Bootstrap compares eligible staged candidates, never walks the downstream repository to infer ownership. Legacy version-1 claims are untrusted: arbitrary source/settings and unknown obsolete files are preserved and their claims dropped; only exact eligible distribution matches can be adopted. A ref name or old manifest hash alone is not proof.
+
+Edited/deleted files retain their installed baseline, as do upstream removals until explicitly pruned. Baselines advance only after installation or an exact current/desired match. `--force` bypasses the upgrade clean-tree precondition and never bypasses ownership or conflict checks.
 
 ## Installation
 
