@@ -20,12 +20,14 @@ Run the lifecycle end to end for one issue, entering at the first incomplete sta
    - no branch matching the issue, issue still open → enter at `design`
    - branch exists, no design commit → enter at `design`
    - design commit, no later commits → enter at `implement`
-   - implementation commits, no review artifact → enter at `review`
-   - review artifact, no pull request → enter at `pr`
-   - open pull request → resume at `pr`; CI validation and any merge still have to run
+   - partial implementation or missing required checks → enter at `implement`
+   - implementation ready, review missing, incomplete, or stale → enter at `review`
+   - implementation and current review complete → enter at `pr`
+   - open pull request → reuse it after any incomplete earlier stages; its existence does not prove review completion
    - merged pull request → nothing to do; report and stop
    - closed but unmerged pull request → report it and stop
    When an entry stage is given explicitly and its prerequisites are absent, report what is missing and stop. The `issue` stage has no prerequisites, because it creates them.
+   Use `.claude/skills/review/references/completion.md` when available to verify review status, code, fetched target commit, and issue body. A legacy `Fixes Applied` heading alone is insufficient. Recognize committed design artifacts with their review even when commit wording differs. Inspect the issue branch, preserve dirty worktrees via the shared branch procedure, and treat failed lookups as unknown rather than absent state.
 5. Surface stage progress so a long run is observable.
 6. Run each stage from the entry point through `pr`: `issue` → `design` → `implement` → `review` → triage → `pr`. Follow each stage's own contract and pass the base branch through unchanged. When the run starts at `issue`, capture the number it produces and use it for every later stage.
 7. There are no approval gates. Each delegated stage ends with the orchestrator's own review of what its author returned, and a blocking finding goes back to that author — capped at two rounds, then escalated. Never advance past a stage whose review has not cleared. A run stops for the user in exactly four places: requirement gathering, an escalation the orchestrator cannot resolve, argument resolution, and a `pr` failure.

@@ -9,9 +9,11 @@ description: Design a GitHub Issue before implementation using Tarnished design 
 
 Create or update design artifacts before production code changes. This is the Codex equivalent of Claude Code's `/design`.
 
+Read `.agents/skills/flow/references/execution.md` for scope, Codex tool and model routing, delegation, and verification rules.
+
 ## Procedure
 
-1. Require an issue number. If none is provided, ask for it.
+1. Resolve the issue number from the request, conversation, or current issue branch. Ask only if it remains ambiguous or absent.
 2. Read `.tarnished/workflows/design.md`.
 3. If present, read `.claude/skills/design/SKILL.md` and `.claude/skills/_shared/branch/SKILL.md` for compatibility details.
 4. Inspect the issue with `gh issue view <issue_number>`.

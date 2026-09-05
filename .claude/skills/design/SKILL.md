@@ -140,7 +140,7 @@ Phases 4-7 produced artifacts but committed nothing. The orchestrator now review
     git add docs/design/shared/<files-modified-in-phase-7> \
             docs/design/#{issue_number}/
     ```
-    Stage only the `shared/*` files that Phase 7 actually wrote (e.g. omit `class.md` when there were no class-diagram changes), plus the entire per-issue directory. Include `docs/design/shared/research/<lib>.md` if Phase 3 produced cross-cutting research. Avoid `git add -A` and `git add .` — they sweep up unrelated untracked content.
+    Stage only owned files written in this run, including the affected `shared/*` files and any cross-cutting research. Use individual per-issue paths instead of the directory shorthand above when it contains pre-existing user changes. Inspect the staged diff against the initial worktree state; pre-staged unrelated files must not enter this commit. Avoid `git add -A` and `git add .`.
 
 19. **Create commit** — Single commit covering both layers. Use the structure documented in "Commit Strategy" below: `docs:` subject, two-bullet body summarizing each layer's changes, and `Refs #{issue_number}` footer.
 
@@ -150,7 +150,7 @@ Phases 4-7 produced artifacts but committed nothing. The orchestrator now review
     git status --short          # only unrelated untracked files (if any) should remain
     git branch --show-current   # confirm we are still on the feature branch
     ```
-    If `git status` still shows tracked files modified under `docs/design/`, Phase 7 did not write the snapshot or staging missed a file — investigate before reporting completion.
+    If owned design changes remain uncommitted, investigate before reporting completion. Compare against the initial worktree state; unrelated pre-existing changes are preserved and do not imply this stage failed.
 
 21. **Report results** - See "Reporting" below. There is no separate sign-off step: the review in 17a-17c is the approval, and the commit records it.
 

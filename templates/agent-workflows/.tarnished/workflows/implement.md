@@ -13,10 +13,10 @@ Implement a GitHub Issue using the design artifacts and existing project convent
 
 1. Load issue details and design artifacts.
 2. Index or inspect the relevant code paths before editing.
-3. Delegate implementation to the `executor`: small, reviewable changes that match existing conventions, committed per logical unit. A judgment the design does not settle comes back as a blocked-result rather than being decided.
+3. Delegate implementation to the `executor`: small, reviewable changes that match existing conventions, committed per logical unit. Resolve routine implementation choices from repository evidence; return decisions that would change requirements or design intent as a blocked-result.
 4. Run build, formatting, linting, and tests appropriate to the stack.
 5. Apply quality improvements for correctness, error handling, security, and maintainability.
-6. Review the result against the design. Send blocking findings back, capped at two rounds, then escalate.
+6. Review the result against both the design and the issue's Requirements. Send blocking findings back, capped at two rounds, then escalate.
 
 ## Output
 

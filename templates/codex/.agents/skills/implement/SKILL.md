@@ -9,6 +9,8 @@ description: Implement and test a GitHub Issue using Tarnished design artifacts.
 
 Implement an issue in focused commits, then verify with build, lint, and tests. This is the Codex equivalent of Claude Code's `/implement`.
 
+Read `.agents/skills/flow/references/execution.md` for scope, Codex tool and model routing, delegation, and verification rules.
+
 ## Procedure
 
 1. Require an issue number. If none is provided, infer it from the branch or ask for it.
@@ -18,11 +20,11 @@ Implement an issue in focused commits, then verify with build, lint, and tests. 
 5. Load both design layers:
    - `docs/design/shared/*`
    - `docs/design/#{issue_number}/*`
-6. Inspect relevant code before editing. Prefer narrow, reviewable changes. Where a subagent mechanism is available, delegate implementation to the `executor` role; a judgment the design does not settle comes back as a blocked-result rather than being decided. Otherwise implement inline and say so in the report.
+6. Inspect relevant code before editing. Prefer narrow, reviewable changes. Where a subagent mechanism is available, delegate implementation to the `executor` role; routine implementation choices follow repository evidence; questions that change requirements or design intent return as a blocked-result. Otherwise implement inline and say so in the report.
 7. Use `.tarnished/workflows/erd/index-repo.md`, `implement.md`, `build.md`, `test.md`, `analyze.md`, `improve.md`, and `troubleshoot.md` as needed.
-8. Run the stack-appropriate formatter, linter, build, and tests.
+8. Run required formatting, lint, build, and tests appropriate to the affected behavior. Reuse valid results for unchanged code; report checks that do not apply or cannot run.
 9. Commit each logical unit with conventional commit subjects.
-10. Review the result against the design. Send blocking findings back, capped at two rounds, then escalate.
+10. Review the result against both the design and the issue's Requirements. Send blocking findings back, capped at two rounds, then escalate.
 
 ## Output
 

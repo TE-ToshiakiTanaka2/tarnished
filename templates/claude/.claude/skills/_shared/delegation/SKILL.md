@@ -11,6 +11,8 @@ Internal reference that defines who executes what across the lifecycle. Referenc
 
 Skills name **roles**, never models. A model name written into a skill cannot be changed by a downstream project without forking the file; a role can be rebound in one place.
 
+User instructions and existing authorization take precedence over this procedural guidance, subject to system, developer, and tool restrictions. Do not introduce approval gates for routine choices within the accepted scope. If a skill requires a pause, identify the exact instruction and the missing decision or capability.
+
 Where this file disagrees with `.tarnished/workflows/*.md` or `.agents/skills/*/SKILL.md`, this file is authoritative. `.claude/skills/` and `.claude/agents/` are refresh-managed; `.tarnished/workflows/` and `.agents/` are not. A project can therefore be running current skills against both a stale contract and a stale Codex projection, and the two stale altitudes can disagree with each other as well — resolve every such conflict here.
 
 ## Roles
@@ -32,15 +34,15 @@ The orchestrator is the only role that can interact with the user. Everything th
 | `design` | `designer` | `orchestrator`, against the issue's Requirements |
 | `implement` | `executor` | `orchestrator`, against the design |
 | `review` | `external-reviewer` | `orchestrator` triages; `executor` applies the fixes |
-| `pr` | `executor` authors the body, creates the PR, monitors CI | `orchestrator` checks the content and owns the merge decision |
+| `pr` | `executor` drafts the body and monitors CI; `orchestrator` creates the PR | `orchestrator` checks the content and owns the merge decision |
 
 **Route by stage authorship, not by the nature of each unit of work.** Each stage's authoring has one owner and the orchestrator reviews rather than co-authors. Within a delegated stage, the subagent routes its own internal work. This replaces the earlier rule that routed work by nature *within* a stage so that a stage could be part-inline and part-delegated; that rule assumed the orchestrator was the only capable writer, and it produced stages with no single accountable author.
 
-A pull request is outward-facing and a merge is irreversible, which is why neither is delegated to the stage's writing agent.
+The executor returns the drafted PR body. The orchestrator checks it and runs the authorized PR creation command. It also owns the merge decision and command; merging requires the user's explicit request or `--merge`.
 
 ## Model binding
 
-Each role's model comes from exactly one place, chosen by how the role is dispatched.
+Each role's model comes from its dispatch channel. The table below describes Claude-primary dispatch. For Codex-native designer/executor dispatch, use a supported `roles.<role>.model` override when present; otherwise inherit the active Codex session model and reasoning effort. Claude agent frontmatter pins are not Codex model IDs. The Codex session default lives in `.codex/config.toml`; the external reviewer always uses its own CLI config. Report unsupported explicit overrides rather than silently substituting another model.
 
 | Role | Channel | Value |
 | --- | --- | --- |
@@ -51,7 +53,7 @@ Each role's model comes from exactly one place, chosen by how the role is dispat
 
 The orchestrator is the session rather than a subagent, so no frontmatter channel reaches it; `.claude/settings.json :: model` is its only channel and is read once at session start.
 
-For the two delegated roles the precedence is:
+For Claude-dispatched designer and executor roles the precedence is:
 
 | # | Source | Notes |
 | --- | --- | --- |
@@ -94,7 +96,7 @@ Report which path was taken when a stage's output names a role.
 
 ## Delegation and the blocked-result protocol
 
-`designer` and `executor` cannot interact with the user. Instead of assuming, either **stops and returns a blocked-result** whenever the answer to a question is not derivable from the issue, the design artifacts, or the codebase.
+`designer` and `executor` route user decisions through the orchestrator. Resolve routine reversible choices from the issue, design, codebase, and accepted decisions supplied by the orchestrator. Return a blocked-result when a missing answer changes requirements, public behavior, design intent, or authority, or when a required prerequisite cannot be recovered within the assigned scope. Complete independent authorized work before returning partial results.
 
 | Field | Required | Purpose |
 | --- | --- | --- |
@@ -108,8 +110,8 @@ Report which path was taken when a stage's output names a role.
 | Trigger | Definition |
 | --- | --- |
 | Requirement-level ambiguity | Two readings of an acceptance criterion that produce different interfaces |
-| Design/convention conflict | The design implies a pattern the codebase consistently does otherwise |
-| Missing prerequisite | A required artifact does not exist |
+| Design/convention conflict | Following the local convention would violate a required design behavior or constraint |
+| Missing prerequisite | A required artifact is absent and cannot be recovered from available history or inputs within the assigned scope |
 
 On receiving a blocked-result the orchestrator answers it and re-dispatches, or escalates to the user when the answer is the user's to give. A subagent that guesses past an ambiguity is the failure this protocol exists to prevent, and it is why delegating the two highest-judgment stages is defensible.
 
@@ -118,7 +120,7 @@ On receiving a blocked-result the orchestrator answers it and re-dispatches, or 
 The orchestrator reviews each delegated artifact before it is committed or built on:
 
 - **Design** — against the issue's Requirements. The order is **write → review → commit**, and the orchestrator performs the commit. Because the commit follows the review, the commit itself records that the review happened; no separate approval artifact is needed.
-- **Implementation** — against the design.
+- **Implementation** — against both the design and the issue's Requirements.
 - **Review findings** — triaged by the orchestrator; fixes applied by the executor.
 
 A blocking finding sends the artifact back to its author, and the orchestrator **re-reviews whatever comes back** — a return that is not re-reviewed is not a review loop. The count is of *return* rounds: the first review is round 0, the first send-back and its re-review is round 1, and the second is round 2. At most **2 returns**; a blocking finding still present after the second re-review is escalated to the user with the finding and what was attempted. Reaching the cap is always reported, never passed over silently.
@@ -140,4 +142,4 @@ Retry budgets exist **only** for mechanical steps, and **only** for command-leve
 
 ## Capability fallback
 
-Delegation requires a primary agent that can run subagents. Where it cannot — for example a Codex-primary profile — **every stage runs inline under the primary agent**, and the stage report records that delegation was unavailable. The lifecycle stays functional rather than degrading quietly; what is lost is the model separation between roles, not any step of the procedure.
+Delegation requires a primary agent that can run subagents. Where the current runtime cannot delegate, or delegation is prohibited, **every stage runs inline under the primary agent**, and the stage report records that delegation was unavailable. The lifecycle stays functional rather than degrading quietly; what is lost is the model separation between roles, not any step of the procedure.

@@ -43,9 +43,9 @@ Each stage's **authoring** has one owner and the orchestrator reviews rather tha
 | `design` | `designer` | `orchestrator`, against the issue's Requirements |
 | `implement` | `executor` | `orchestrator`, against the design |
 | `review` | `external-reviewer` | `orchestrator` triages; `executor` applies the fixes |
-| `pr` | `executor` | `orchestrator` checks the content and owns the merge decision |
+| `pr` | `executor` drafts the body and monitors CI; `orchestrator` creates the PR | `orchestrator` checks the content and owns the merge decision |
 
-The orchestrator is the only role that can interact with the user. `designer` and `executor` therefore return a **blocked-result** — the question, the options, and the evidence already checked — rather than assuming, whenever an answer is not derivable from the issue, the design, or the codebase.
+The orchestrator handles user decisions. `designer` and `executor` resolve routine choices within accepted requirements using repository evidence. A missing decision that changes scope, public behavior, design intent, or authority returns a **blocked-result** with the question, options, checked evidence, and completed independent work.
 
 Delegation requires a primary agent that can run subagents. Where it cannot, every stage runs inline under the primary agent and the report says so; the procedure is unchanged, and what is lost is the model separation between roles.
 

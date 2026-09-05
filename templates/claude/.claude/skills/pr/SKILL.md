@@ -73,7 +73,13 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 
 ## What This Skill Does
 
+Before preparation, resolve the repository, source branch, target, and existing PRs with `gh pr list --head <branch> --state all`. Match the intended base and repository as well. Reuse a unique open PR; report a merged PR as complete. Stop for an ambiguous match, a conflicting base, or a closed unmerged PR rather than silently creating or retargeting one. After an uncertain create result, query again before retrying so a timeout cannot create a duplicate.
+
+Check review evidence using `.claude/skills/review/references/completion.md`. Under `/flow`, complete missing or stale review before proceeding. Standalone `/pr` preserves its optional-review contract: if no review was requested or required, disclose that it was not performed; if an existing review has unresolved required findings, or review is required by the repository, resolve it before creation or merge. Do not treat a stale artifact as approval.
+
 ### Phase 1: Code Analysis and Improvement
+
+Reuse existing review findings and successful checks for unchanged code. Limit improvements and cleanup to the issue; load the following commands only for missing analysis or actionable findings. After changes, rerun affected checks and all repository-required checks. Do not repeat broad verification solely because a new stage began.
 
 1. **Load `/erd:analyze`**:
    - Quality, security, performance, and architecture findings
@@ -86,7 +92,7 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 ### Phase 2: Quality Checks
 
 5. **Static analysis** - Run language-specific linters and formatters
-6. **Run tests** - All test suites
+6. **Run tests** - Required suites and tests affected by changes since the last successful verification; report reused results and unavailable checks
 7. **Fix and re-commit** - If any checks fail, fix and commit
 
 ### Phase 3: Pull Request Creation
@@ -94,7 +100,7 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 8. **Collect change history** - Analyze commit history and diff against target branch
 9. **Push to remote** - `git push -u origin <branch>` (executor)
 10. **Draft the PR body** - The executor writes the body per the "Pull Request Format" below and **returns it without creating anything**
-11. **Check and create** - The orchestrator reads the drafted body, revises it or re-dispatches the executor if it misstates the change, and then runs `gh pr create` itself targeting the specified branch. A pull request is outward-facing: once created, a correction is visible to everyone who was notified
+11. **Check and create or reuse** - The orchestrator reads the drafted body and creates the PR only if the lookup found none. Use a structured body argument or a UTF-8 file with `gh pr create --body-file <path>` so Markdown and shell metacharacters survive unchanged. For an existing open PR, retain its number and URL; update its description only if the authorized changes require it, preserving user-authored content.
 
 ### Phase 4: CI Monitoring and Validation
 
@@ -107,17 +113,17 @@ If a listed MCP server is unavailable in the current environment, fall back to t
     - Interpret CI pass/fail, assess coverage adequacy, verify the implementation matches the issue requirements, identify remaining risks
 14. **Fix loop on CI failure**:
     - Analyze error content from CI logs (`gh run view <run_id> --log-failed`)
-    - Implement fix, commit & push, re-check CI
+    - Implement fix, commit & push, re-check CI. Refresh affected review evidence after each code/design change; green CI alone does not revalidate the review.
     - If the repository has a first-pass CI review workflow configured and it left a review comment, address its Critical and Major findings before merging. This workflow is opt-in and is not installed by scaffolding, so treat its absence as normal
 15. **Report completion** - Present PR URL and validation summary
 
 ### Phase 5: Auto-Merge (if `--merge` flag is specified)
 
-16. **Merge PR** — the orchestrator's decision and the orchestrator's command; the executor never runs it. Squash merge via `gh pr merge <pr_number> --squash --delete-branch`:
-    - Re-read `gh pr checks <pr_number>` immediately before merging and require every check to be green. The watch in Phase 4 can predate a check that started later
+16. **Merge PR** — the orchestrator's decision and the orchestrator's command; the executor never runs it. Record the PR's current `headRefOid` as `VALIDATED_HEAD` and verify that it is the head covered by review and CI. Squash merge via `gh pr merge <pr_number> --squash --delete-branch --match-head-commit "$VALIDATED_HEAD"`:
+    - Re-read aggregate checks and the PR head immediately before merging. Require applicable checks to pass, with no pending, failed, or cancelled required checks. A skipped non-applicable job is not a failure; an empty or unreadable check result is not proof of success. If the head changed, revalidate it before retrying the merge.
     - Only proceeds if CI has passed and validation is successful
     - If merge fails (e.g., merge conflict, branch protection), report the error to user
-17. **Update local target branch** - After a successful merge, switch to the target branch and update it with `git pull --ff-only origin <target_branch>`
+17. **Confirm merge and update** - Read the PR state after the command. A queued or auto-merge request is still pending; continue monitoring within the CI deadline and do not report it merged or switch branches until GitHub confirms `MERGED`. After a confirmed merge, update the local target with `git pull --ff-only origin <target_branch>` using the shared branch worktree rules. Preserve unrelated edits and report separately if the remote merge succeeded but local synchronization could not.
 18. **Report merge result** - Present merge status and final commit
 
 ## erd Commands Used

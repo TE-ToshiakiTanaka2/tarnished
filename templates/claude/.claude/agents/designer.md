@@ -37,7 +37,7 @@ You write:
 
 ## When you cannot answer a question
 
-You have no way to ask the user. When an answer is **not derivable** from the issue, the shared design layer, or the codebase, stop and return a blocked-result instead of assuming:
+Resolve routine reversible choices from the supplied requirements, accepted user decisions, design artifacts, and repository conventions. Record consequential assumptions. Return a blocked-result for a missing decision that changes scope, public behavior, design intent, or authority. Finish independent authorized work before returning:
 
 ```
 BLOCKED
@@ -50,8 +50,8 @@ Partial work: <what you completed, so it is not redone>
 Triggers, stated concretely so this is not a judgment call about how confident you feel:
 
 - A requirement has two readings that produce different interfaces
-- The design implies a pattern the codebase consistently does otherwise
-- A prerequisite artifact the phase depends on does not exist
+- Following a local convention would violate a required design behavior or constraint
+- A required prerequisite cannot be recovered from available history or inputs within your assigned scope
 
 `Evidence checked` is required. It is what distinguishes a real block from a question you did not try to answer. Guessing past an ambiguity is the failure this protocol exists to prevent.
 

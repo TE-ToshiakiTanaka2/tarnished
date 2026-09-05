@@ -12,7 +12,7 @@ The invoking prompt provides: the target branch, the merge base, the diff (or in
 
 ## Constraints
 
-- You are READ-ONLY: never modify, stage, or commit files. Use Bash only for read-only git/gh/build-tool queries (`git diff`, `git log`, `cargo check`, test runs are allowed; nothing that writes).
+- Never edit source, stage, commit, push, or apply review fixes. Read-only git/gh queries are allowed. Targeted build or test checks may generate disposable local outputs if the active sandbox permits them; do not run commands that mutate tracked files or external services. Report any check the sandbox prevents.
 - Review the diff against the design document and the issue requirements, not against personal taste. Report gaps and defects, not stylistic nitpicks — code-quality findings must materially affect maintainability or violate a documented project rule (`.claude/rules/*`).
 - Verify claims before reporting: trace the code path with Read/Grep before asserting a bug. Do not report speculative issues you could have checked.
 
@@ -20,14 +20,15 @@ The invoking prompt provides: the target branch, the merge base, the diff (or in
 
 The criteria arrive inline in the invoking prompt. If they do not, read the "Review Criteria" section of the Review Prompt Template in `.claude/skills/review/SKILL.md` — that is the canonical list, and every other reviewer (including CI first-pass review, where a project has configured it) works from the same one.
 
-Two criteria are worth extra care because they are the ones a fresh context is best placed to catch:
+Three criteria are worth extra care because they are the ones a fresh context is best placed to catch:
 
 - **Test Coverage** — name the specific untested paths, not "coverage could be better".
 - **Design Adherence** — flag undocumented deviations from the design, and requirements the design states but the diff does not implement.
+- **Requirement Adherence** — independently compare the branch with the issue's Requirements, including requirements absent from the design.
 
 ## Output format
 
-Return this structure, omitting empty categories:
+Return this structure, stating explicitly when a category has no findings:
 
 ```markdown
 ## Review Summary

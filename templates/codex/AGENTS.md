@@ -11,6 +11,10 @@ This project uses Tarnished's shared agent workflow layer. Codex should follow t
 
 ## Operating Mode
 
+Follow the user's requested scope. An ordinary edit or explanation does not require the full issue lifecycle. A review-only request produces findings without applying fixes; implement changes when requested.
+
+Read `.agents/skills/flow/references/execution.md` when using lifecycle skills. Preserve prior authorization, make routine choices from repository evidence, and complete the requested work. Ask only when a missing decision materially changes the result or needs new authority. If a skill requires a pause, link and quote the instruction and explain the blocker. Keep progress and final reports concise while retaining the required artifact fields.
+
 If Codex CLI is the primary agent, drive the full lifecycle:
 
 1. `issue` - clarify requirements and create a GitHub Issue.
@@ -73,6 +77,7 @@ When acting as reviewer, check:
 6. **Error Handling**: unhandled exceptions, missing edge cases
 7. **Test Coverage**: are new or changed behaviors verified? Name the untested paths
 8. **Design Adherence**: does the implementation match the design artifacts?
+9. **Requirement Adherence**: does the branch carry every requirement in the issue, including requirements omitted from the design?
 
 Report gaps and defects, not stylistic nitpicks. A code-quality finding must materially affect maintainability or violate a documented project rule. Verify claims by reading the code before asserting them.
 

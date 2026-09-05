@@ -59,46 +59,31 @@ Resolve `--base`, defaulting to `develop`. Pass the same value to `/design`, `/i
 
 ## Stage 2: Determine the entry stage
 
-Derive the entry point from repository evidence rather than a state file. Evidence is authoritative, survives a failed run, and needs no cleanup.
+Use repository evidence and the review completion contract in `.claude/skills/review/references/completion.md`. A failed lookup is unknown state, not evidence that a branch, artifact, or PR is absent.
 
-**When Stage 1 resolved the entry stage to `issue`, skip the rest of this stage** and go straight to Stage 3. There is no branch, no commit, and no artifact to read yet — `/design` creates the branch once `/issue` returns a number. Absence of evidence is accurate here rather than inconclusive: nothing has begun, so there is nothing to resume. Still set up the task tracking described at the end of this stage.
+For a requirement-first entry, go straight to `issue`; there is no existing issue state to inspect. Otherwise:
 
-Otherwise, first **resolve the issue branch itself** and evaluate every subsequent question against that ref — not against `HEAD`. `/flow --issue N` is frequently run from `develop` or from another issue's branch, and reading `HEAD` there reports another issue's progress as this one's. Fetch the branch when it exists only on the remote, and check it out before running any stage.
+1. Check the issue's state and linked merged PRs **before** resolving or checking out its branch. Completed issues may have no surviving branch; report completion without recreating one.
+2. Resolve the issue branch using `_shared/branch/SKILL.md`, including dirty-worktree and multiple-match handling. Read evidence from that branch, not an unrelated `HEAD`.
+3. Query PRs across all states for the repository, head branch, and intended base. A merged PR means report completion; a closed unmerged PR or ambiguous matches require direction. An open PR is reused after any incomplete earlier stages; it does not override missing review evidence.
+4. Select the earliest incomplete stage using the table below. Evaluate explicit `--from` requests against the same prerequisites; they do not bypass incomplete validation.
 
-Before reading branch evidence, **check the issue itself**. `/pr --merge` deletes the source branch both locally and remotely, so a completed issue leaves no branch behind and "no branch" would otherwise be read as "not started":
-
-```bash
-gh issue view <n> --json state,stateReason,closedByPullRequestsReferences
-```
-
-A `CLOSED`/`COMPLETED` issue, or one with a merged pull request in `closedByPullRequestsReferences`, is finished — report and stop. Recover the branch name from that pull request's `headRefName` when you need it for reporting.
-
-The requirement-first entry never reaches this table — Stage 1 already set it and the paragraph above skips the derivation. The table covers only runs that carry an issue number.
-
-| Evidence, evaluated on the issue branch ref | Entry stage |
+| Evidence on the issue branch | Entry stage |
 | --- | --- |
-| Issue closed as completed, or closed by a merged PR | Nothing to do — report and stop |
-| No branch matching `#<n>/`, local or remote, and the issue is open | `design` |
-| Branch exists, no `docs: add design documents for #<n>` commit on it | `design` |
-| Design commit present, no later commit touching anything outside `docs/design/` | `implement` |
-| Implementation commits present, no `docs/review/#<n>/review.md` on the branch, or one with no "Fixes Applied" section | `review` — but **first re-run the implementation review** (see below) |
-| Review artifact complete, no pull request for the branch | `pr` |
-| Open pull request for the branch | Resume at `pr` — CI validation and, with `--merge`, the merge still have to run |
-| Merged pull request for the branch | Nothing to do — report and stop |
-| Closed but unmerged pull request | Report it and stop; reopening or superseding it is the user's call |
+| Open issue, no issue branch | `design` |
+| No committed per-issue design and no implementation | `design` |
+| Design artifacts exist, implementation not yet started | `implement` |
+| Implementation exists but is partial or fails its required checks | `implement` |
+| Implementation is ready, review is missing, incomplete, or stale under the completion contract | `review` |
+| Implementation and current review are complete | `pr` — reuse an existing open PR when present |
 
-A resumed run entering `review` re-runs the orchestrator's implementation review before the external review. The executor commits incrementally, so an interrupted `/implement` leaves commits on the branch that were never reviewed — and "implementation commits exist" cannot distinguish reviewed work from abandoned partial work. Re-running the review is cheap, is idempotent, and needs no extra artifact; the alternative, a durable completion marker, reintroduces exactly the evidence bookkeeping that moving `/design`'s commit after its review removed.
+A design commit uses the documented subject, but recognize equivalent committed artifacts and their orchestrator review when the subject differs. Do not infer completion from a commit subject alone. A design is optional for standalone `implement`; when an existing implementation has no design, assess it against issue requirements rather than inventing a missing-design blocker.
 
-Two evidence rules are deliberately stricter than "the file exists":
+Before entering `review` or `pr`, inspect implementation against the issue, available design, and recorded checks. Commit presence alone can be interrupted partial work. Reuse valid checks; fill missing evidence and finish incomplete implementation first. Exclude commits confined to `docs/design/` or `docs/review/` from the simple implementation-commit heuristic, then inspect the issue's actual deliverable (including documentation-only work).
 
-- **Implementation** is a commit that touches something outside `docs/design/`. The design stage itself can produce follow-up doc commits, and treating any later commit as implementation skips the implement stage on a branch that has none.
-- **Review completion** is a review artifact carrying its Phase 5 "Fixes Applied" section. `/review` writes the artifact in Phase 4, before fixes are applied and dispositions recorded, so mere existence would let an interrupted run resume past the triage in Stage 5.
+When resuming a completed review, verify `review_status`, `verified_head`, target commit, issue body digest, and current changes. Review-artifact-only commits preserve freshness; subsequent implementation or design changes require reassessment. An old `Fixes Applied` heading or an open PR does not skip this check.
 
-Query pull requests across all states (`gh pr list --head <branch> --state all`), not just open ones — the default open-only view reports a merged PR as absent and sends the run back into PR creation.
-
-`--from <stage>` overrides the derivation. When the named stage's prerequisites are absent, report what is missing and stop rather than proceeding on a guess. The `issue` stage is the exception: it has **no** prerequisites, because it creates them — never treat a missing issue number as a missing prerequisite for it.
-
-Track the stages as tasks so a long run stays observable, and keep the task state current as each stage completes.
+Track stage progress using the available task mechanism or concise updates, and record why a stage was reused or resumed.
 
 ## Stage 3: Run the stages
 
@@ -120,7 +105,7 @@ When the entry stage is `issue`, run `/issue` with no arguments, capture the num
 | `design` | `.claude/skills/design/SKILL.md` | issue number, `--base` | `designer` subagent |
 | `implement` | `.claude/skills/implement/SKILL.md` | issue number, `--base` | `executor` subagent |
 | `review` | `.claude/skills/review/SKILL.md` | `--base` as the target branch | `external-reviewer`; fixes by `executor` |
-| `pr` | `.claude/skills/pr/SKILL.md` | `--base` as the target branch, `--merge` when given | `executor`, except content check and merge |
+| `pr` | `.claude/skills/pr/SKILL.md` | `--base` as the target branch, `--merge` when given | `executor` drafts and monitors; `orchestrator` checks, creates, and merges |
 
 Where the primary agent has no subagent mechanism, every stage runs inline under it and the report says so. The procedure is unchanged; what is lost is the model separation between roles.
 
@@ -153,9 +138,9 @@ Triage is the orchestrator's judgment; applying the fixes is the `executor`'s wo
 
 ## Stage 6: Pull request
 
-Follow `/pr`. When resuming onto an existing open PR, skip creation and continue from its CI validation.
+Follow `/pr`. When resuming onto an existing open PR, reuse it after checking current implementation and review evidence. Skip creation; revalidate changes and CI for its current head.
 
-The stage splits at the irreversible operation: the `executor` runs the quality pass, drafts the PR body, pushes, creates the PR, and monitors CI, while the orchestrator reads the body before creation and owns the merge decision including under `--merge`. The executor never runs `gh pr merge`.
+The executor runs the quality pass, drafts the PR body, pushes, and monitors CI. It returns the draft to the orchestrator, which checks it and runs `gh pr create`. The orchestrator also owns the merge decision and command, including under `--merge`.
 
 ## Reporting
 

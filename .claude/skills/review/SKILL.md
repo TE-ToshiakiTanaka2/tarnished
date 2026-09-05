@@ -43,18 +43,15 @@ If a listed MCP server is unavailable in the current environment, fall back to t
 
 ### Phase 1: Collect Context
 
-1. **Identify branches** — Detect current branch and merge base with the target branch (first non-flag argument, default `develop`):
-   ```bash
-   TARGET_BRANCH=${1:-develop}
-   CURRENT_BRANCH=$(git branch --show-current)
-   MERGE_BASE=$(git merge-base "$TARGET_BRANCH" HEAD)
-   ```
+Read `references/completion.md` relative to this skill for review evidence and reuse rules. Apply all nine criteria at every change size; size changes inspection depth, not which requirements are checked.
+
+1. **Identify branches** — Parse reviewer flags separately from the optional target branch (default `develop`); reject unknown or conflicting flags. For example, `/review --codex` uses `develop`, not `--codex`, as its target. Resolve and fetch the target ref, then compute the merge base against the current issue head. Record the target commit and reviewed head. Inspect index/working-tree changes and state explicitly what the committed diff excludes; do not silently include unrelated edits or call excluded work reviewed.
 2. **Determine issue number** — Extract from branch name (e.g., `feature/user/#123/desc` → `123`)
 3. **Load both ground truths** — the design and the issue:
    - `docs/design/#<issue_number>/design.md` and `api-spec.md` if available: architecture decisions, constraints, expected behavior
    - The issue's Requirements section via `gh issue view <issue_number>`. Without it the reviewer treats the design as ground truth, so a requirement dropped upstream of the design passes every check: the code matches the design, and the design matches the reduced issue
 4. **Determine review scope** — Based on change size:
-   - **Small** (< 100 lines changed): Quick review — bugs, security, correctness
+   - **Small** (< 100 lines changed): Focused review — all nine criteria, tracing the affected paths
    - **Medium** (100–500 lines): Standard review — all criteria
    - **Large** (500+ lines): Deep review — all criteria + architecture adherence to design
 
@@ -82,7 +79,7 @@ Then **resolve the reviewer's model and reasoning effort** so they can be record
    echo "${REVIEW_PROMPT}" | codex exec - --sandbox read-only \
      -c model="${REVIEW_MODEL}" -c model_reasoning_effort="${REVIEW_EFFORT}"
    ```
-   Omit a `-c` flag whose value resolved to `default`, letting `.codex/config.toml` supply it, and record what the config holds. Add `--strict-config` when validating a changed model or effort — it rejects unrecognized values instead of silently falling back.
+   Omit a `-c` flag whose value resolved to `default`, letting `.codex/config.toml` supply it, and record what the config holds. Use `--strict-config` to catch unknown configuration fields. Verify model and reasoning-effort support with a minimal runtime check as well; schema validation alone does not establish backend availability.
 4. **Capture output**
 
 ### Phase 3B: Review via `codex review` (with `--builtin`)
@@ -99,7 +96,9 @@ This path takes no custom prompt, so it receives **neither** ground truth and ap
 
 ### Phase 4: Save & Apply Fixes
 
-1. **Save review results** to `docs/review/#{issue_number}/review.md`. The metadata header records branch, base and merge base, review scope with changed-line count, ISO 8601 timestamp, and the reviewer — **including the resolved model and reasoning effort**, e.g. `Codex CLI (model: gpt-5.6-sol, reasoning effort: ultra)`. Mark a Claude-native review as a fallback. The full review output follows the header verbatim.
+A review-only request saves and reports findings without applying fixes. Apply fixes when requested or when review is part of `/flow`. Record completion using `references/completion.md`: a clean review can complete with `None required`; unresolved required fixes or missing review inputs leave it `report-only`.
+
+1. **Save review results** to `docs/review/#{issue_number}/review.md`. The metadata header includes the evidence fields in `references/completion.md` (initially `pending`), branch, base and merge base, review scope with changed-line count, ISO 8601 timestamp, and the reviewer — **including the resolved model and reasoning effort**, using `Codex CLI (model: <resolved model>, reasoning effort: <resolved effort>)`. Mark a Claude-native review as a fallback. The full review output follows the header verbatim.
 2. **Present review results** to the user.
 3. **Triage** — the orchestrator classifies each finding per the severity policy below and decides what must be fixed.
 4. **Apply fixes** — dispatch the `executor` (`.claude/agents/executor.md`) with the triaged must-fix list. It commits as `fix: address review feedback for #<issue_number>`. A blocked-result comes back to the orchestrator, which answers it or escalates.
@@ -107,9 +106,7 @@ This path takes no custom prompt, so it receives **neither** ground truth and ap
 
 ### Phase 5: Report
 
-1. **Update review record** — Append a "Fixes Applied" section to `docs/review/#{issue_number}/review.md` listing the fixes and the fix commit hash. Write it only after Phase 4's verification step has cleared: this section is what marks the review complete, so recording it on unverified fixes lets a resumed run move past a finding nobody confirmed. For any Major finding deliberately left unfixed, record the rationale next to it. Critical findings are not deferrable and so never appear here as deferred.
-
-   This section is also what marks the review complete: `/flow` treats an artifact without it as a review still in progress, since Phase 4 writes the artifact before any fix is applied.
+1. **Update review record** — After verification, record each finding's disposition and the fix commit hashes, or `None required`. Set `verified_head` and `review_status` according to `references/completion.md`. Complete reviews must remain tied to the reviewed code, target commit, and issue body. Saving a `Fixes Applied` heading alone never marks a run complete. Recheck freshness after later code, design, target, or requirement changes.
 2. **Summarize** — Issues found and resolved, deferrals with rationale, remaining minor findings and suggestions.
 
 ## Severity taxonomy and fix policy
