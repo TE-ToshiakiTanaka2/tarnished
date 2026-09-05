@@ -1,541 +1,524 @@
 #!/bin/bash
-# =============================================================================
-# refresh-assets.sh — Always-latest sync for shared Claude/Codex assets (#279)
-# =============================================================================
-# Mirrors a whitelist of operational assets from upstream tarnished into the
-# project, so a project scaffolded a month ago still picks up the latest
-# skill/command/script/shared-rule revisions automatically.
-#
-# Invocation paths (both converge here):
-#   1. First container boot — post.sh sources nothing; instead, the marker
-#      block appended by templates/core/plugin.sh::plugin_post_copy runs the
-#      script directly.
-#   2. Every subsequent container start — postStartCommand in
-#      templates/core/.devcontainer/devcontainer.json invokes it.
-#
-# FR-5 invariant: container start MUST NOT block on this script. Every
-# failure path emits print_warning and returns 0. The only `exit 1` is for
-# an unknown CLI flag (programmer error). `set -e` is deliberately NOT used
-# — the script handles errors explicitly so a transient git/rsync failure
-# never aborts container start.
-# =============================================================================
-
-# Strictness without -e: -u catches unset vars, -o pipefail catches early
-# failures in pipes. -e is omitted because every fallible operation is
-# explicitly checked; turning it on would override the FR-5 invariant.
+# Refresh distributed AI assets without claiming or deleting developer files.
+# Standalone container-start helper: failures warn and return 0. Deliberately no -e.
 set -uo pipefail
 
-# -----------------------------------------------------------------------------
-# Output helpers
-# -----------------------------------------------------------------------------
-# When sourced from post.sh (which already loaded scripts/lib/common.sh in
-# downstream contexts that source it), print_* may already exist. We define
-# minimal fallbacks so the script works standalone (postStartCommand) too.
-
-if ! declare -F print_info >/dev/null 2>&1; then
-    print_info()    { echo "[INFO] $*"; }
+if ! declare -F print_info >/dev/null; then
+    print_info() { echo "[INFO] $*"; }
 fi
-if ! declare -F print_success >/dev/null 2>&1; then
+if ! declare -F print_success >/dev/null; then
     print_success() { echo "[OK] $*"; }
 fi
-if ! declare -F print_warning >/dev/null 2>&1; then
+if ! declare -F print_warning >/dev/null; then
     print_warning() { echo "[WARN] $*" >&2; }
 fi
-if ! declare -F print_error >/dev/null 2>&1; then
-    print_error()   { echo "[ERROR] $*" >&2; }
-fi
 
-# -----------------------------------------------------------------------------
-# Constants
-# -----------------------------------------------------------------------------
-readonly REFRESH_SCHEMA_VERSION=1
-readonly DEFAULT_CONFIG_RELPATH=".tarnished/refresh.json"
-readonly FALLBACK_CACHE_DIR_RELPATH=".cache/tarnished"
-
-# -----------------------------------------------------------------------------
-# Globals populated from CLI flags
-# -----------------------------------------------------------------------------
+PROJECT_ROOT=""
+SCRIPT_REPO_ROOT=""
+SOURCE_DIR=""
 CONFIG_PATH=""
 DRY_RUN=false
-FORCE_PULL=false
 QUIET=false
-
-# Globals populated from refresh.json
 UPSTREAM_REPO_URL=""
 UPSTREAM_BRANCH=""
 CLONE_DIR=""
-declare -a MANAGED_SRC=()
-declare -a MANAGED_DST=()
-declare -a MANAGED_OVERLAY=()
+COMMIT=""
+STATE_PATH=""
+STATE='{"schema_version":1,"entries":{}}'
+CATALOG='[]'
+declare -A ENTRIES=()
+declare -A CANDIDATES=()
+CHANGED=0
+REMOVED=0
 
-# Set true by ensure_clone when it performs a fresh clone, so pull_if_changed
-# does not short-circuit the very first sync (the just-cloned cache trivially
-# matches origin/HEAD but the project still needs the initial mirror).
-JUST_CLONED=false
+warn() {
+    print_warning "refresh-assets: $*"
+}
 
-# Globals tracking summary tallies
-SYNCED_PATHS=0
-ADDED_FILES=0
-REMOVED_FILES=0
-OVERLAY_FILES=0
-
-# Repo root — the parent project where managed_paths apply.
-PROJECT_ROOT=""
-
-# -----------------------------------------------------------------------------
-# parse_args — process CLI flags. Unknown flag is the only exit-1 path.
-# -----------------------------------------------------------------------------
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --config)
-                if [[ $# -lt 2 ]] || [[ "${2:0:2}" == "--" ]]; then
-                    print_error "refresh-assets: --config requires a path argument"
-                    return 1
+            --config|--project-root|--source-dir)
+                if [[ $# -lt 2 || "$2" == --* || -z "$2" ]]; then
+                    warn "$1 requires a path argument; supply it and retry"
+                    return 2
                 fi
-                CONFIG_PATH="$2"
+                case "$1" in
+                    --config) CONFIG_PATH="$2" ;;
+                    --project-root) PROJECT_ROOT="$2" ;;
+                    --source-dir) SOURCE_DIR="$2" ;;
+                esac
                 shift 2
                 ;;
-            --dry-run)
-                DRY_RUN=true
-                shift
-                ;;
-            --force-pull)
-                FORCE_PULL=true
-                shift
-                ;;
-            --quiet)
-                QUIET=true
-                shift
-                ;;
+            --dry-run) DRY_RUN=true; shift ;;
+            --quiet) QUIET=true; shift ;;
+            --force-pull) shift ;; # Compatibility: valid caches are always fetched.
             -h|--help)
-                cat <<EOF
-Usage: refresh-assets.sh [--config <path>] [--dry-run] [--force-pull] [--quiet]
-
-Always-latest sync for shared Claude/Codex assets. See #279.
-
-Options:
-  --config <path>   Path to refresh.json (default: <project_root>/${DEFAULT_CONFIG_RELPATH})
-  --dry-run         Print actions; don't pull or rsync
-  --force-pull      Skip the git ls-remote SHA cache check; always pull
-  --quiet           Suppress per-path "no change" messages
-
-Always returns 0 except for unknown CLI flags (exit 1).
-EOF
-                exit 0
+                print_info 'Usage: refresh-assets.sh [--config <path>] [--project-root <path>] [--source-dir <path>] [--dry-run] [--force-pull] [--quiet]'
+                return 2
                 ;;
-            *)
-                print_error "refresh-assets: unknown flag '$1'"
-                return 1
-                ;;
+            *) warn "unknown flag '$1'"; return 1 ;;
         esac
     done
 }
 
-# -----------------------------------------------------------------------------
-# resolve_project_root — locate the project root (where refresh.json lives).
-# Walks up from the script directory until .tarnished/ or .git/ is found.
-# Falls back to $PWD.
-# -----------------------------------------------------------------------------
-resolve_project_root() {
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-    # Common case: script is at <project>/.devcontainer/scripts/refresh-assets.sh
-    local candidate
-    candidate="$(cd "${script_dir}/../.." && pwd)"
-    if [[ -d "${candidate}/.tarnished" ]] || [[ -d "${candidate}/.git" ]]; then
-        PROJECT_ROOT="$candidate"
-        return 0
-    fi
-
-    # Fallback: walk up from PWD looking for a marker.
-    candidate="$PWD"
-    while [[ "$candidate" != "/" ]]; do
-        if [[ -d "${candidate}/.tarnished" ]] || [[ -d "${candidate}/.git" ]]; then
-            PROJECT_ROOT="$candidate"
-            return 0
+# Check every lexical component, including dangling links and non-directory parents.
+ordinary_path() {
+    local path="$1" part current="" i
+    [[ "$path" == /* && ! "$path" =~ [[:cntrl:]] ]] || return 1
+    local -a parts
+    IFS=/ read -r -a parts <<< "$path"
+    for i in "${!parts[@]}"; do
+        part="${parts[$i]}"
+        [[ -z "$part" ]] && continue
+        [[ "$part" != . && "$part" != .. ]] || return 1
+        current="${current}/${part}"
+        [[ ! -L "$current" ]] || return 1
+        if (( i < ${#parts[@]} - 1 )) && [[ -e "$current" && ! -d "$current" ]]; then
+            return 1
         fi
-        candidate="$(dirname "$candidate")"
     done
-
-    PROJECT_ROOT="$PWD"
 }
 
-# -----------------------------------------------------------------------------
-# load_config — locate, read, and validate refresh.json.
-# Populates UPSTREAM_REPO_URL, UPSTREAM_BRANCH, CLONE_DIR, MANAGED_*.
-# Returns: 0 on success; 1 on missing/malformed/unsupported (caller exits 0).
-# -----------------------------------------------------------------------------
+relative_path() {
+    [[ -n "$1" && "$1" != /* && ! "$1" =~ [[:cntrl:]] ]] || return 1
+    case "/$1/" in */../*|*/./*|*//* ) return 1 ;; esac
+}
+
+safe_join() {
+    relative_path "$2" && ordinary_path "${1%/}/$2" || return 1
+    printf '%s' "${1%/}/$2"
+}
+
+# Configuration does not grant ownership. Reject ambiguous overlapping projections.
+valid_catalog() {
+    jq -e '
+        def rel: type == "string" and length > 0 and
+            (explode | all(. >= 32 and . != 127)) and
+            (startswith("/") | not) and
+            (split("/") | all(. != "" and . != "." and . != ".."));
+        type == "array" and all(.[];
+            type == "object" and (.src | rel) and (.dst | rel) and
+            ((.overlay == null) or (.overlay | rel))) and
+        ([.[] | .dst, (.overlay // empty)] as $paths |
+            all(range(0; $paths|length); . as $i |
+                all(range($i+1; $paths|length); . as $j |
+                    ($paths[$i] != $paths[$j]) and
+                    ($paths[$i] | startswith($paths[$j]+"/") | not) and
+                    ($paths[$j] | startswith($paths[$i]+"/") | not))))
+    ' >/dev/null 2>&1
+}
+
 load_config() {
-    if [[ -z "$CONFIG_PATH" ]]; then
-        CONFIG_PATH="${PROJECT_ROOT}/${DEFAULT_CONFIG_RELPATH}"
-    fi
-
-    if [[ ! -f "$CONFIG_PATH" ]]; then
-        print_warning "refresh-assets: refresh.json missing at ${CONFIG_PATH}; nothing to sync"
+    [[ -n "$CONFIG_PATH" ]] || CONFIG_PATH="${PROJECT_ROOT}/.tarnished/refresh.json"
+    [[ "$CONFIG_PATH" == /* ]] || CONFIG_PATH="${PWD}/${CONFIG_PATH}"
+    if ! ordinary_path "$CONFIG_PATH" || [[ ! -f "$CONFIG_PATH" ]]; then
+        warn "refresh.json missing or unsafe at ${CONFIG_PATH}; restore an ordinary config and retry"
         return 1
     fi
-
-    if ! command -v jq &>/dev/null; then
-        print_warning "refresh-assets: jq not found on PATH; cannot parse refresh.json"
+    if ! jq -e '.schema_version == 1 and (.upstream.repo_url | type == "string" and length > 0) and
+        (.upstream.branch | type == "string" and length > 0) and
+        (.clone_dir | type == "string" and startswith("/")) and
+        ((has("use_default_managed_paths") | not) or (.use_default_managed_paths | type == "boolean"))' \
+        "$CONFIG_PATH" >/dev/null 2>&1; then
+        warn 'invalid config or unsupported schema_version; repair refresh.json and retry'
         return 1
     fi
-
-    local schema
-    schema=$(jq -r '.schema_version // 0' "$CONFIG_PATH" 2>/dev/null) || schema=0
-    if [[ "$schema" != "$REFRESH_SCHEMA_VERSION" ]]; then
-        print_warning "refresh-assets: unsupported schema_version=${schema} (expected ${REFRESH_SCHEMA_VERSION}); refusing to sync"
+    CATALOG=$(jq -c '.managed_paths' "$CONFIG_PATH") || return 1
+    if ! valid_catalog <<< "$CATALOG"; then
+        warn 'invalid/overlapping managed_paths (path escapes project root or overlay); repair config and retry'
         return 1
     fi
-
-    UPSTREAM_REPO_URL=$(jq -r '.upstream.repo_url // ""' "$CONFIG_PATH" 2>/dev/null)
-    UPSTREAM_BRANCH=$(jq -r '.upstream.branch // ""' "$CONFIG_PATH" 2>/dev/null)
-    CLONE_DIR=$(jq -r '.clone_dir // ""' "$CONFIG_PATH" 2>/dev/null)
-
-    # Env overrides (consistent with setup.sh:25-26).
-    if [[ -n "${DEVCONTAINER_REPO_URL:-}" ]]; then
-        UPSTREAM_REPO_URL="$DEVCONTAINER_REPO_URL"
-    fi
-    if [[ -n "${DEVCONTAINER_BRANCH:-}" ]]; then
-        UPSTREAM_BRANCH="$DEVCONTAINER_BRANCH"
-    fi
-
-    if [[ -z "$UPSTREAM_REPO_URL" ]] || [[ -z "$UPSTREAM_BRANCH" ]] || [[ -z "$CLONE_DIR" ]]; then
-        print_warning "refresh-assets: refresh.json missing required fields (upstream.repo_url/branch, clone_dir)"
-        return 1
-    fi
-
-    # Read managed_paths into parallel arrays. jq emits TSV so we split safely
-    # without arming bash word-splitting on user content.
-    local src dst overlay
-    while IFS=$'\t' read -r src dst overlay; do
-        [[ -z "$src" ]] && continue
-        MANAGED_SRC+=("$src")
-        MANAGED_DST+=("$dst")
-        MANAGED_OVERLAY+=("$overlay")
-    done < <(jq -r '
-        .managed_paths // []
-        | .[]
-        | [.src, .dst, (.overlay // "")]
-        | @tsv
-    ' "$CONFIG_PATH" 2>/dev/null)
-
-    if [[ ${#MANAGED_SRC[@]} -eq 0 ]]; then
-        # Empty whitelist is valid — script becomes a no-op.
-        $QUIET || print_info "refresh-assets: managed_paths is empty; nothing to sync"
-        return 1
-    fi
-
-    return 0
+    UPSTREAM_REPO_URL=$(jq -r '.upstream.repo_url' "$CONFIG_PATH")
+    UPSTREAM_BRANCH=$(jq -r '.upstream.branch' "$CONFIG_PATH")
+    CLONE_DIR=$(jq -r '.clone_dir' "$CONFIG_PATH")
+    UPSTREAM_REPO_URL="${DEVCONTAINER_REPO_URL:-$UPSTREAM_REPO_URL}"
+    UPSTREAM_BRANCH="${DEVCONTAINER_BRANCH:-$UPSTREAM_BRANCH}"
+    [[ ! "$UPSTREAM_REPO_URL" =~ [[:cntrl:]] && "$UPSTREAM_REPO_URL" != -* ]] &&
+        git check-ref-format "refs/heads/${UPSTREAM_BRANCH}" >/dev/null 2>&1 || {
+        warn 'invalid upstream URL/branch; repair config and retry'; return 1;
+    }
 }
 
-# -----------------------------------------------------------------------------
-# ensure_clone — make sure CLONE_DIR exists as a git checkout.
-# Falls back to $HOME/<FALLBACK_CACHE_DIR_RELPATH> if CLONE_DIR's parent is
-# not writable. Returns 0 if a usable clone is in place; 1 otherwise.
-# -----------------------------------------------------------------------------
-ensure_clone() {
-    if [[ -d "$CLONE_DIR" ]]; then
-        if [[ -d "${CLONE_DIR}/.git" ]]; then
-            return 0
-        fi
-        # Directory exists but is not a git repo. Refuse to silently delete —
-        # we cannot distinguish a corrupted clone from intentional content.
-        # Manual cleanup is required, but we still exit 0 (FR-5: never block
-        # container start); print_warning matches that contract.
-        print_warning "refresh-assets: ${CLONE_DIR} exists but is not a git repo; remove it manually to enable refresh"
+# Persistent caches may only be reset after origin, ownership and cleanliness checks.
+validate_cache() {
+    ordinary_path "$CLONE_DIR" && [[ "$CLONE_DIR" != / ]] || {
+        warn "unsafe cache path ${CLONE_DIR}; choose a separate ordinary directory"; return 1;
+    }
+    CLONE_DIR=$(realpath -m -- "$CLONE_DIR") || return 1
+    if [[ "$CLONE_DIR" == "$PROJECT_ROOT" || "$CLONE_DIR" == "$PROJECT_ROOT/"* ||
+          "$PROJECT_ROOT" == "$CLONE_DIR/"* ]]; then
+        warn 'cache overlaps project; choose a cache outside the project'; return 1
+    fi
+    if [[ -n "$SCRIPT_REPO_ROOT" ]] &&
+        [[ "$CLONE_DIR" == "$SCRIPT_REPO_ROOT" || "$CLONE_DIR" == "$SCRIPT_REPO_ROOT/"* ||
+           "$SCRIPT_REPO_ROOT" == "$CLONE_DIR/"* ]]; then
+        warn 'cache overlaps updater source checkout; choose a dedicated cache outside it'
         return 1
     fi
-
-    local parent
-    parent="$(dirname "$CLONE_DIR")"
-
-    # Try to create the parent if missing & we can.
-    if [[ ! -d "$parent" ]]; then
-        if ! mkdir -p "$parent" 2>/dev/null; then
-            print_warning "refresh-assets: cannot create ${parent}; falling back to \$HOME/${FALLBACK_CACHE_DIR_RELPATH}"
-            CLONE_DIR="${HOME}/${FALLBACK_CACHE_DIR_RELPATH}"
-            mkdir -p "$(dirname "$CLONE_DIR")" 2>/dev/null || true
+    if [[ -e "$CLONE_DIR" ]]; then
+        if [[ ! -d "$CLONE_DIR/.git" ]] || ! ordinary_path "$CLONE_DIR/.git"; then
+            warn "$CLONE_DIR is not a git repo with an ordinary .git directory; choose a dedicated cache"
+            return 1
         fi
-    elif [[ ! -w "$parent" ]]; then
-        print_warning "refresh-assets: ${parent} not writable; falling back to \$HOME/${FALLBACK_CACHE_DIR_RELPATH}"
-        CLONE_DIR="${HOME}/${FALLBACK_CACHE_DIR_RELPATH}"
-        mkdir -p "$(dirname "$CLONE_DIR")" 2>/dev/null || true
-    fi
-
-    # If the fallback directory already exists and is a git repo, reuse it.
-    if [[ -d "${CLONE_DIR}/.git" ]]; then
-        return 0
-    fi
-
-    if $DRY_RUN; then
-        print_info "refresh-assets: [dry-run] would clone ${UPSTREAM_REPO_URL}@${UPSTREAM_BRANCH} into ${CLONE_DIR}"
-        return 1
-    fi
-
-    print_info "refresh-assets: cloning ${UPSTREAM_REPO_URL}@${UPSTREAM_BRANCH} into ${CLONE_DIR}..."
-    if ! git clone --depth 1 --branch "$UPSTREAM_BRANCH" --quiet \
-            "$UPSTREAM_REPO_URL" "$CLONE_DIR" 2>/dev/null; then
-        print_warning "refresh-assets: clone failed (network unreachable?); project keeps existing assets"
-        rm -rf "$CLONE_DIR" 2>/dev/null || true
-        return 1
-    fi
-
-    # Mark for main() so pull_if_changed does not short-circuit the very
-    # first sync — local SHA trivially equals the just-cloned origin SHA.
-    JUST_CLONED=true
-    return 0
-}
-
-# -----------------------------------------------------------------------------
-# pull_if_changed — check upstream SHA against local HEAD; fetch + reset only
-# when they differ. Returns 0 if the cache is usable for sync; 1 to skip
-# sync (no-op or fetch failed but cache still usable).
-# -----------------------------------------------------------------------------
-pull_if_changed() {
-    # Just-cloned caches always need the first sync, even though local SHA
-    # trivially equals origin's. ensure_clone sets JUST_CLONED for us.
-    if $JUST_CLONED; then
-        return 0
-    fi
-
-    local local_sha
-    local_sha=$(git -C "$CLONE_DIR" rev-parse HEAD 2>/dev/null) || local_sha=""
-
-    if ! $FORCE_PULL && [[ -n "$local_sha" ]]; then
-        local remote_sha
-        remote_sha=$(git -C "$CLONE_DIR" ls-remote origin "$UPSTREAM_BRANCH" 2>/dev/null \
-                        | awk '{print $1}' | head -1)
-        if [[ -z "$remote_sha" ]]; then
-            print_warning "refresh-assets: ls-remote failed; using cached upstream@${local_sha:0:7}"
-            return 0
-        fi
-        if [[ "$remote_sha" == "$local_sha" ]]; then
-            $QUIET || print_success "refresh-assets: upstream unchanged (sha=${local_sha:0:7})"
+        local origin dirty top
+        origin=$(git -C "$CLONE_DIR" remote get-url origin 2>/dev/null) || return 1
+        top=$(git -C "$CLONE_DIR" rev-parse --show-toplevel 2>/dev/null) || return 1
+        dirty=$(git -C "$CLONE_DIR" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+        if [[ "$origin" != "$UPSTREAM_REPO_URL" || "$top" != "$CLONE_DIR" || -n "$dirty" ]]; then
+            warn "unrecognized origin or dirty cache at $CLONE_DIR; preserve its work and choose a clean dedicated cache"
             return 1
         fi
     fi
-
-    if $DRY_RUN; then
-        print_info "refresh-assets: [dry-run] would fetch + reset --hard origin/${UPSTREAM_BRANCH}"
-        return 0
-    fi
-
-    if ! git -C "$CLONE_DIR" fetch --quiet origin "$UPSTREAM_BRANCH" 2>/dev/null; then
-        print_warning "refresh-assets: fetch failed; cache untouched (upstream@${local_sha:0:7})"
-        return 0
-    fi
-
-    # The cache is treated as an immutable mirror — local edits are never
-    # expected. Users wanting to test a local upstream patch should set
-    # DEVCONTAINER_REPO_URL=file:///path/to/local/clone instead.
-    if ! git -C "$CLONE_DIR" reset --hard --quiet "origin/${UPSTREAM_BRANCH}" 2>/dev/null; then
-        print_warning "refresh-assets: reset --hard failed; cache may be in an unexpected state"
-        return 0
-    fi
-
-    return 0
 }
 
-# -----------------------------------------------------------------------------
-# safe_join — verify that joining <root>/<rel> stays within <root>. Rejects
-# absolute paths, "..", and any segment escape after canonicalization. Returns
-# the joined absolute path on stdout (no trailing slash) on success.
-# Returns: 0 on success; 1 if <rel> escapes <root> or contains a forbidden
-# pattern. The script is the only caller; refresh.json may be edited by the
-# user, so this is a defensive check, not a trust gate.
-# -----------------------------------------------------------------------------
-safe_join() {
-    local root="$1"
-    local rel="$2"
+resolve_source() {
+    if [[ -n "$SOURCE_DIR" ]]; then
+        [[ "$SOURCE_DIR" == /* ]] || SOURCE_DIR="${PWD}/${SOURCE_DIR}"
+        ordinary_path "$SOURCE_DIR" || { warn "unsafe source path; repair symlinks and retry"; return 1; }
+        SOURCE_DIR=$(realpath -m -- "$SOURCE_DIR") || return 1
+        [[ -d "$SOURCE_DIR" && "$SOURCE_DIR" != / &&
+            "$SOURCE_DIR" != "$PROJECT_ROOT" && "$SOURCE_DIR" != "$PROJECT_ROOT/"* &&
+            "$PROJECT_ROOT" != "$SOURCE_DIR/"* ]] || {
+            warn 'unsafe/unavailable source directory; provide a separate ordinary checkout'; return 1;
+        }
+        COMMIT=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null) || COMMIT="uncommitted"
+        return 0
+    fi
+    validate_cache || return 1
+    if [[ ! -e "$CLONE_DIR" ]]; then
+        if $DRY_RUN; then
+            print_info 'refresh-assets: [dry-run] upstream comparison unavailable; no persistent cache writes'
+            return 1
+        fi
+        local parent temporary
+        parent=$(dirname "$CLONE_DIR")
+        if ! mkdir -p "$parent"; then
+            warn "cannot create cache parent $parent; choose a writable cache"; return 1
+        fi
+        temporary=$(mktemp -d "$parent/.tarnished-clone.XXXXXX") || {
+            warn "cannot create temporary cache; choose a writable cache directory"; return 1;
+        }
+        if ! git clone --depth 1 --branch "$UPSTREAM_BRANCH" --quiet -- "$UPSTREAM_REPO_URL" "$temporary" 2>/dev/null; then
+            rm -rf -- "$temporary"
+            warn 'clone failed; check upstream connectivity and retry'; return 1
+        fi
+        if [[ -e "$CLONE_DIR" || -L "$CLONE_DIR" ]] || ! ordinary_path "$CLONE_DIR" ||
+            ! mv -T -- "$temporary" "$CLONE_DIR"; then
+            rm -rf -- "$temporary"
+            warn 'cache installation failed; inspect cache path and retry'; return 1
+        fi
+    elif ! $DRY_RUN; then
+        if ! git -C "$CLONE_DIR" fetch --quiet origin "$UPSTREAM_BRANCH" 2>/dev/null; then
+            warn 'fetch failed; retain project assets and retry when upstream is available'; return 1
+        fi
+        validate_cache || return 1
+        if ! git -C "$CLONE_DIR" merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
+            warn 'cache has local/diverged commits or incomplete ancestry; preserve it and choose a fresh cache'
+            return 1
+        fi
+        if ! git -C "$CLONE_DIR" reset --hard --quiet FETCH_HEAD 2>/dev/null; then
+            warn 'cache reset failed; inspect cache and retry'; return 1
+        fi
+    fi
+    SOURCE_DIR="$CLONE_DIR"
+    COMMIT=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null) || return 1
+}
 
-    # Reject empty, absolute, or "..-bearing" inputs up front. Even with
-    # canonicalization, an attacker-controlled refresh.json should never be
-    # able to produce a joined path that resolves outside <root>.
-    if [[ -z "$rel" ]]; then
-        return 1
+load_state() {
+    STATE_PATH="${PROJECT_ROOT}/.tarnished/refresh-state.json"
+    ordinary_path "$STATE_PATH" || { warn 'unsafe refresh state path; repair it before retrying'; return 1; }
+    if [[ -e "$STATE_PATH" ]]; then
+        if [[ ! -f "$STATE_PATH" ]] || ! STATE=$(jq -ce '
+            def rel: type == "string" and length > 0 and
+                (explode | all(. >= 32 and . != 127)) and
+                (startswith("/") | not) and
+                (split("/") | all(. != "" and . != "." and . != ".."));
+            (.schema_version == 1 and (.entries | type == "object") and
+            (.entries | to_entries | all(.[];
+                (.key | rel) and (.value.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+                (.value.origin == "upstream" or .value.origin == "overlay") and
+                (.value.commit | type == "string") and
+                (.value.mapping.repo | type == "string" and length > 0) and
+                (.value.mapping | has("src") and has("dst"))))) as $valid |
+            if $valid then . else error("invalid state") end' "$STATE_PATH" 2>/dev/null); then
+            warn 'invalid refresh state; preserve it for inspection and restore a valid baseline before retrying'; return 1
+        fi
     fi
-    if [[ "${rel:0:1}" == "/" ]]; then
-        return 1
+    local path entry dst
+    while IFS=$'\t' read -r path entry; do
+        [[ -n "$path" ]] || continue
+        relative_path "$path" || { warn 'invalid state destination; inspect refresh-state.json'; return 1; }
+        valid_catalog <<< "[$(jq -c '.mapping' <<< "$entry")]" || {
+            warn 'invalid state mapping; inspect refresh-state.json'; return 1;
+        }
+        dst=$(jq -r '.mapping.dst' <<< "$entry")
+        [[ "$path" == "$dst" || "$path" == "$dst/"* ]] || {
+            warn 'state destination outside mapping; inspect refresh-state.json'; return 1;
+        }
+        ENTRIES["$path"]="$entry"
+    done < <(jq -r '.entries | to_entries[] | .key + "\t" + (.value | tojson)' <<< "$STATE")
+}
+
+codex_selected() {
+    local profile="${PROJECT_ROOT}/.tarnished/agent-profile.json"
+    local manifest="${PROJECT_ROOT}/.tarnished-manifest.json"
+    if [[ -e "$profile" || -L "$profile" ]]; then
+        if ordinary_path "$profile" && jq -e '.ai_profile | IN("claude-main", "codex-main", "dual")' "$profile" >/dev/null 2>&1; then
+            jq -e '.ai_profile | IN("codex-main", "dual")' "$profile" >/dev/null && return 0
+        else
+            warn 'invalid agent profile; preserving installed capabilities; repair profile when convenient'
+        fi
     fi
-    case "/$rel/" in
-        */../*) return 1 ;;
+    if ordinary_path "$manifest" && [[ -f "$manifest" ]] &&
+        jq -e '.scaffold_options.codex_enabled == true' "$manifest" >/dev/null 2>&1; then
+        return 0
+    fi
+    ordinary_path "$PROJECT_ROOT/.agents/skills" && [[ -d "$PROJECT_ROOT/.agents/skills" ]]
+}
+
+hash_file() {
+    local result
+    result=$(sha256sum -- "$1") || return 1
+    printf '%s' "${result%% *}"
+}
+
+record_entry() {
+    local path="$1" mapping="$2" hash="$3" origin="$4" entry
+    entry=$(jq -cn --argjson mapping "$mapping" --arg hash "$hash" --arg origin "$origin" \
+        --arg commit "$COMMIT" '{mapping:$mapping,sha256:$hash,origin:$origin,commit:$commit}') || return 1
+    # An unchanged installed baseline does not need a commit/timestamp-only rewrite.
+    if [[ -n "${ENTRIES[$path]:-}" ]] && jq -e --argjson new "$entry" \
+        'del(.commit) == ($new | del(.commit))' <<< "${ENTRIES[$path]}" >/dev/null; then
+        return 0
+    fi
+    ENTRIES["$path"]="$entry"
+}
+
+# Atomic per-file installation, rechecking path and content immediately before replacement.
+install_file() {
+    local candidate="$1" target="$2" expected="$3" desired_hash="$4" temporary parent current=""
+    ordinary_path "$candidate" && [[ -f "$candidate" ]] && ordinary_path "$target" || return 1
+    parent=$(dirname "$target")
+    mkdir -p "$parent" && ordinary_path "$target" || return 1
+    temporary=$(mktemp "$parent/.refresh-file.XXXXXX") || return 1
+    if ! ordinary_path "$candidate" || ! cp -p -- "$candidate" "$temporary" ||
+        [[ "$(hash_file "$temporary")" != "$desired_hash" ]]; then
+        rm -f -- "$temporary"; return 1
+    fi
+    if [[ -f "$target" ]]; then current=$(hash_file "$target") || current=error; fi
+    if ! ordinary_path "$target" || [[ -e "$target" && ! -f "$target" ]] || [[ "$current" != "$expected" ]] ||
+        ! mv -fT -- "$temporary" "$target"; then
+        rm -f -- "$temporary"; return 1
+    fi
+}
+
+reconcile_file() {
+    local path="$1" base="$2" overlay="$3" mapping="$4" removal_proven="$5"
+    local target desired="" origin=upstream desired_hash="" current_hash="" old_hash="" old_origin=""
+    local prior="${ENTRIES[$path]:-}" base_hash=""
+    case "$path" in
+        .tarnished/refresh.json|.tarnished/refresh-state.json|.tarnished/agent-profile.json|\
+        .tarnished-manifest.json|.codex/config.toml|.claude/settings.json|\
+        .devcontainer/scripts/post.sh|AGENTS.md|CLAUDE.md|.git/*|.git|*.local|*.local/*)
+            warn "preserve developer-owned configuration $path; remove it from the managed mapping"
+            return
+            ;;
     esac
-
-    local joined="${root%/}/${rel}"
-    # Canonicalize WITHOUT requiring the path to exist (-m). Compare prefix.
-    local canonical_root canonical_joined
-    canonical_root=$(realpath -m "$root" 2>/dev/null) || return 1
-    canonical_joined=$(realpath -m "$joined" 2>/dev/null) || return 1
-    if [[ "$canonical_joined" != "$canonical_root" ]] \
-        && [[ "$canonical_joined" != "${canonical_root%/}/"* ]]; then
-        return 1
+    target=$(safe_join "$PROJECT_ROOT" "$path") || { warn "unsafe destination $path; repair symlink/type conflict"; return; }
+    if ! ordinary_path "$base" || { [[ -n "$overlay" ]] && ! ordinary_path "$overlay"; }; then
+        warn "unsafe source/overlay for $path; repair symlink/type conflict"; return
     fi
-    printf '%s' "$canonical_joined"
-}
-
-# -----------------------------------------------------------------------------
-# apply_overlay — copy a user-owned overlay path on top of a managed path.
-# Directory overlays are copied without --delete; file overlays replace the
-# managed file. Missing overlays are valid no-ops.
-# -----------------------------------------------------------------------------
-apply_overlay() {
-    local overlay_rel="$1"
-    local dst_abs="$2"
-    local is_dir="$3"
-
-    [[ -z "$overlay_rel" ]] && return 0
-
-    local overlay_abs
-    overlay_abs=$(safe_join "$PROJECT_ROOT" "$overlay_rel") || {
-        print_warning "refresh-assets: overlay ${overlay_rel} escapes project root; skipping"
-        return 0
-    }
-
-    local overlay_opts=(-a)
-    $DRY_RUN && overlay_opts+=(--dry-run)
-
-    local overlay_log
-    if [[ "$is_dir" == true ]]; then
-        [[ -d "$overlay_abs" ]] || return 0
-        overlay_log=$(rsync "${overlay_opts[@]}" --itemize-changes \
-                        "${overlay_abs}/" "${dst_abs}/" 2>&1) || {
-            print_warning "refresh-assets: overlay rsync of ${overlay_rel} failed"
-            return 0
-        }
-    else
-        [[ -f "$overlay_abs" ]] || return 0
-        mkdir -p "$(dirname "$dst_abs")" 2>/dev/null || true
-        overlay_log=$(rsync "${overlay_opts[@]}" --itemize-changes \
-                        "$overlay_abs" "$dst_abs" 2>&1) || {
-            print_warning "refresh-assets: overlay rsync of ${overlay_rel} failed"
-            return 0
-        }
+    if [[ -e "$target" && ! -f "$target" ]] || [[ -e "$base" && ! -f "$base" ]] ||
+        [[ -n "$overlay" && -e "$overlay" && ! -f "$overlay" ]]; then
+        warn "file/directory collision at $path; inspect source, target and overlay"; return
     fi
-
-    local overlaid
-    overlaid=$(grep -cE '^>f' <<<"$overlay_log" 2>/dev/null)
-    OVERLAY_FILES=$((OVERLAY_FILES + overlaid))
-}
-
-# -----------------------------------------------------------------------------
-# sync_paths — for each managed_paths entry, mirror upstream into project,
-# then overlay <project>/<overlay>/ on top. Directory entries use --delete;
-# file entries replace only that file so sibling files remain untouched.
-# -----------------------------------------------------------------------------
-sync_paths() {
-    if ! command -v rsync &>/dev/null; then
-        print_warning "refresh-assets: rsync not found on PATH; cannot sync"
+    [[ ! -f "$base" ]] || desired="$base"
+    if [[ -n "$overlay" && -f "$overlay" ]]; then desired="$overlay"; origin=overlay; fi
+    if [[ -n "$prior" ]]; then
+        if ! jq -e --argjson mapping "$mapping" '.mapping == $mapping' <<< "$prior" >/dev/null; then
+            warn "changed mapping at $target; preserve previous ownership and review config"; return
+        fi
+        old_hash=$(jq -r '.sha256' <<< "$prior")
+        old_origin=$(jq -r '.origin' <<< "$prior")
+    fi
+    if [[ -f "$target" ]]; then
+        current_hash=$(hash_file "$target") || { warn "cannot hash $target; check permissions and retry"; return; }
+    elif [[ -n "$prior" ]]; then
+        $QUIET || print_info "refresh-assets: preserve user deletion $target"
         return
     fi
-
-    local i
-    for i in "${!MANAGED_SRC[@]}"; do
-        local src_rel="${MANAGED_SRC[$i]}"
-        local dst_rel="${MANAGED_DST[$i]}"
-        local overlay_rel="${MANAGED_OVERLAY[$i]}"
-
-        # Defensive: refresh.json values must stay inside CLONE_DIR/PROJECT_ROOT.
-        # Anything else (absolute paths, "..", etc.) is treated as a configuration
-        # error — skip the entry with a warning, never write outside the bounds.
-        local src_abs dst_abs
-        src_abs=$(safe_join "$CLONE_DIR" "$src_rel") || {
-            print_warning "refresh-assets: src ${src_rel} escapes clone_dir; skipping"
-            continue
-        }
-        dst_abs=$(safe_join "$PROJECT_ROOT" "$dst_rel") || {
-            print_warning "refresh-assets: dst ${dst_rel} escapes project root; skipping"
-            continue
-        }
-
-        if [[ ! -d "$src_abs" ]] && [[ ! -f "$src_abs" ]]; then
-            print_warning "refresh-assets: upstream ${src_rel} missing in cache; skipping"
-            continue
+    if [[ -n "$desired" ]]; then
+        desired_hash=$(hash_file "$desired") || { warn "cannot hash $desired; check permissions and retry"; return; }
+        if [[ "$current_hash" == "$desired_hash" ]]; then
+            record_entry "$path" "$mapping" "$desired_hash" "$origin"
+            return
         fi
-
-        local rsync_opts=(-a)
-        local is_dir=false
-        if [[ -d "$src_abs" ]]; then
-            is_dir=true
-            rsync_opts+=(--delete)
+        if [[ -z "$prior" && -n "$current_hash" && -f "$base" ]]; then
+            base_hash=$(hash_file "$base") || return
         fi
-        $DRY_RUN && rsync_opts+=(--dry-run)
-
-        if [[ "$is_dir" == true ]]; then
-            if [[ -f "$dst_abs" ]]; then
-                print_warning "refresh-assets: dst ${dst_rel} is a file but upstream source is a directory; skipping"
-                continue
-            fi
-            mkdir -p "$dst_abs" 2>/dev/null || true
+        if [[ -n "$current_hash" && "$current_hash" != "$old_hash" && "$current_hash" != "$base_hash" ]]; then
+            warn "conflict: preserve $target; compare $desired; place intentional overrides at ${overlay:-a project-owned path} then adopt the chosen base and retry"
+            return
+        fi
+        print_info "refresh-assets: $(if $DRY_RUN; then printf '[dry-run] '; fi)install $target from $desired"
+        if $DRY_RUN; then return; fi
+        if install_file "$desired" "$target" "$current_hash" "$desired_hash"; then
+            record_entry "$path" "$mapping" "$desired_hash" "$origin"
+            CHANGED=$((CHANGED + 1))
         else
-            if [[ -d "$dst_abs" ]]; then
-                print_warning "refresh-assets: dst ${dst_rel} is a directory but upstream source is a file; skipping"
-                continue
-            fi
-            mkdir -p "$(dirname "$dst_abs")" 2>/dev/null || true
+            warn "copy failed for $target; baseline retained; check permissions and retry"
         fi
-
-        local rsync_log
-        if [[ "$is_dir" == true ]]; then
-            rsync_log=$(rsync "${rsync_opts[@]}" --itemize-changes \
-                            "${src_abs}/" "${dst_abs}/" 2>&1) || {
-                print_warning "refresh-assets: rsync of ${dst_rel} failed; skipping (sibling paths still attempted)"
-                continue
-            }
+    elif [[ -n "$prior" && -n "$current_hash" ]]; then
+        if [[ "$old_origin" == overlay || "$current_hash" != "$old_hash" || "$removal_proven" != true ]]; then
+            warn "preserve removed/edited asset $target; inspect prior mapping and customization before manual removal"
+            return
+        fi
+        print_info "refresh-assets: $(if $DRY_RUN; then printf '[dry-run] '; fi)remove $target (unchanged upstream asset)"
+        if $DRY_RUN; then return; fi
+        if ordinary_path "$target" && [[ "$(hash_file "$target")" == "$old_hash" ]] && rm -- "$target"; then
+            unset 'ENTRIES[$path]'
+            REMOVED=$((REMOVED + 1))
         else
-            rsync_log=$(rsync "${rsync_opts[@]}" --itemize-changes \
-                            "$src_abs" "$dst_abs" 2>&1) || {
-                print_warning "refresh-assets: rsync of ${dst_rel} failed; skipping (sibling paths still attempted)"
-                continue
-            }
+            warn "remove failed for $target; baseline retained; inspect permissions and retry"
         fi
+    fi
+}
 
-        # Tally added/removed from --itemize-changes output.
-        local added removed
-        added=$(grep -cE '^>f' <<<"$rsync_log" 2>/dev/null)
-        removed=$(grep -cE '^\*deleting' <<<"$rsync_log" 2>/dev/null)
-        ADDED_FILES=$((ADDED_FILES + added))
-        REMOVED_FILES=$((REMOVED_FILES + removed))
-        SYNCED_PATHS=$((SYNCED_PATHS + 1))
-
-        apply_overlay "$overlay_rel" "$dst_abs" "$is_dir"
+# Enumerate distribution and sidecars only, never walk a downstream managed directory.
+reconcile_mapping() {
+    local row="$1" src dst overlay src_abs dst_abs overlay_abs="" mapping path relative entry
+    local kind=directory removal_proven=false listed
+    src=$(jq -r '.src' <<< "$row")
+    dst=$(jq -r '.dst' <<< "$row")
+    overlay=$(jq -r '.overlay // ""' <<< "$row")
+    src_abs=$(safe_join "$SOURCE_DIR" "$src") && dst_abs=$(safe_join "$PROJECT_ROOT" "$dst") || {
+        warn "unsafe mapping $src -> $dst; repair symlink/type conflict"; return;
+    }
+    if [[ -n "$overlay" ]]; then
+        overlay_abs=$(safe_join "$PROJECT_ROOT" "$overlay") || { warn "unsafe overlay $overlay; repair it and retry"; return; }
+    fi
+    mapping=$(jq -cn --arg repo "$UPSTREAM_REPO_URL" --arg src "$src" --arg dst "$dst" \
+        --arg overlay "$overlay" '{repo:$repo,src:$src,dst:$dst,overlay:(if $overlay == "" then null else $overlay end)}')
+    if [[ -f "$src_abs" ]]; then kind="file"; removal_proven=true
+    elif [[ -d "$src_abs" ]]; then removal_proven=true
+    elif [[ -e "$src_abs" ]]; then warn "unsupported source $src_abs; inspect mapping"; return
+    else
+        # A missing source in an arbitrary directory is not evidence of an upstream removal.
+        if [[ "$COMMIT" != uncommitted ]] &&
+            listed=$(git -C "$SOURCE_DIR" ls-tree "$COMMIT" -- "$src" 2>/dev/null) && [[ -z "$listed" ]]; then
+            removal_proven=true
+        else
+            warn "upstream $src unavailable; preserve previous files and retry with a valid checkout"
+        fi
+        [[ ! -f "$overlay_abs" ]] || kind="file"
+        entry="${ENTRIES[$dst]:-}"
+        [[ -z "$entry" ]] || kind="file"
+    fi
+    if [[ "$kind" == directory && ( -f "$dst_abs" || -f "$overlay_abs" ) ]] ||
+        [[ "$kind" == file && ( -d "$dst_abs" || -d "$overlay_abs" ) ]]; then
+        warn "file/directory collision for $dst; inspect mapping and overlay"; return
+    fi
+    CANDIDATES=()
+    if [[ "$kind" == file ]]; then CANDIDATES["$dst"]=1
+    else
+        local root inventory
+        for root in "$src_abs" "$overlay_abs"; do
+            [[ -n "$root" && -d "$root" ]] || continue
+            inventory=$(mktemp) || { warn 'cannot inventory source; repair temporary storage and retry'; return; }
+            if ! find "$root" -type f -print0 > "$inventory"; then
+                rm -f -- "$inventory"
+                warn "cannot enumerate $root; preserve mapping and repair permissions before retrying"
+                return
+            fi
+            while IFS= read -r -d '' path; do
+                relative="${path#"$root/"}"
+                relative_path "$relative" || { warn "unsupported filename under $root; rename it and retry"; continue; }
+                CANDIDATES["$dst/$relative"]=1
+            done < "$inventory"
+            rm -f -- "$inventory"
+        done
+    fi
+    for path in "${!ENTRIES[@]}"; do
+        [[ "$path" == "$dst" || "$path" == "$dst/"* ]] || continue
+        if jq -e --argjson mapping "$mapping" '.mapping == $mapping' <<< "${ENTRIES[$path]}" >/dev/null; then
+            CANDIDATES["$path"]=1
+        fi
+    done
+    for path in "${!CANDIDATES[@]}"; do
+        relative="${path#"$dst"}"
+        reconcile_file "$path" "$src_abs$relative" "${overlay_abs:+$overlay_abs$relative}" "$mapping" "$removal_proven"
     done
 }
 
-# -----------------------------------------------------------------------------
-# print_summary — one structured line per FR description.
-# -----------------------------------------------------------------------------
-print_summary() {
-    local prefix="refresh-assets:"
-    $DRY_RUN && prefix="refresh-assets [dry-run]:"
-    print_success "${prefix} ${SYNCED_PATHS} paths synced (${ADDED_FILES} files added, ${REMOVED_FILES} removed); ${OVERLAY_FILES} overlay files preserved"
+persist_state() {
+    $DRY_RUN && return 0
+    local updated temporary entry
+    updated=$({ for entry in "${!ENTRIES[@]}"; do
+        jq -cn --arg path "$entry" --argjson value "${ENTRIES[$entry]}" '{key:$path,value:$value}' || return 1
+    done; } | jq -sc '{schema_version:1,entries:from_entries}') || {
+        warn 'cannot serialize refresh state; keep prior state and retry'; return 1;
+    }
+    [[ "$(jq -Sc . <<< "$STATE")" != "$(jq -Sc . <<< "$updated")" ]] || return 0
+    ordinary_path "$STATE_PATH" && mkdir -p "$(dirname "$STATE_PATH")" || {
+        warn 'cannot create refresh state directory; fix permissions and retry'; return 1;
+    }
+    temporary=$(mktemp "${STATE_PATH}.XXXXXX") || { warn 'state write failed; fix permissions and retry'; return 1; }
+    if ! printf '%s\n' "$updated" > "$temporary" || ! ordinary_path "$STATE_PATH" ||
+        ! mv -fT -- "$temporary" "$STATE_PATH"; then
+        rm -f -- "$temporary"
+        warn 'state write failed; prior baseline retained; fix permissions and retry'
+        return 1
+    fi
 }
 
-# -----------------------------------------------------------------------------
-# main — orchestration. Always exits 0 except for unknown-flag exit 1.
-# -----------------------------------------------------------------------------
 main() {
-    parse_args "$@" || exit 1
-
-    resolve_project_root
-
-    if ! load_config; then
-        exit 0
+    local rc=0 dependency catalog_path defaults row codex=false
+    parse_args "$@" || rc=$?
+    [[ "$rc" != 1 ]] || return 1
+    [[ "$rc" == 0 ]] || return 0
+    for dependency in jq git realpath find sha256sum cp mv mkdir mktemp rm dirname; do
+        if ! command -v "$dependency" &>/dev/null; then
+            warn "$dependency not found; install it and retry"; return 0
+        fi
+    done
+    SCRIPT_REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null) || SCRIPT_REPO_ROOT=""
+    if [[ -z "$PROJECT_ROOT" ]]; then
+        PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd) || return 0
     fi
-
-    if ! ensure_clone; then
-        exit 0
+    [[ "$PROJECT_ROOT" == /* ]] || PROJECT_ROOT="${PWD}/${PROJECT_ROOT}"
+    if ! ordinary_path "$PROJECT_ROOT" || [[ ! -d "$PROJECT_ROOT" || "$PROJECT_ROOT" == / ]]; then
+        warn 'unsafe/unavailable project root; provide an ordinary directory'; return 0
     fi
-
-    if ! pull_if_changed; then
-        # No-op (upstream unchanged); summary already printed.
-        exit 0
+    PROJECT_ROOT=$(realpath -m -- "$PROJECT_ROOT") || { warn "cannot resolve project root; inspect it and retry"; return 0; }
+    if ! load_config || ! load_state; then
+        warn "configuration/state unavailable; resolve diagnostics above and retry"
+        return 0
     fi
-
-    sync_paths
-    print_summary
-    exit 0
+    if [[ "$CATALOG" == '[]' ]] && ! jq -e '.use_default_managed_paths == true' "$CONFIG_PATH" >/dev/null; then
+        $QUIET || print_info 'refresh-assets: managed_paths is empty; nothing to sync'
+        return 0
+    fi
+    resolve_source || { warn "upstream comparison unavailable; resolve source/cache diagnostics and retry"; return 0; }
+    if jq -e '.use_default_managed_paths == true' "$CONFIG_PATH" >/dev/null; then
+        catalog_path="$SOURCE_DIR/templates/agent-workflows/.tarnished/refresh.json"
+        if ordinary_path "$catalog_path" && [[ -f "$catalog_path" ]] &&
+            defaults=$(jq -ce '.managed_paths' "$catalog_path" 2>/dev/null) && valid_catalog <<< "$defaults"; then
+            CATALOG="$defaults"
+        else
+            warn 'upstream default catalog unavailable/invalid; using project snapshot; retry after upstream repair'
+        fi
+    fi
+    codex_selected && codex=true
+    while IFS= read -r row; do
+        if ! $codex && jq -e '.dst == ".agents/skills" or (.dst | startswith(".agents/skills/"))' <<< "$row" >/dev/null; then
+            continue
+        fi
+        reconcile_mapping "$row"
+    done < <(jq -c '.[]' <<< "$CATALOG")
+    persist_state || return 0
+    $QUIET || print_success "refresh-assets: reconciliation complete ($CHANGED installed, $REMOVED removed); upstream unchanged files still reconciled"
+    return 0
 }
 
 main "$@"
