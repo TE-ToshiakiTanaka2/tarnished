@@ -24,6 +24,14 @@ teardown() {
     fi
 }
 
+# Existing apply fixtures take their decision observation before invoking the API.
+apply_fixture() {
+    local current="" desired=""
+    [[ ! -f "$4" || -L "$4" ]] || current=$(sha256_file "$4")
+    [[ ! -f "$3" || -L "$3" ]] || desired=$(sha256_file "$3")
+    manifest_apply "$1" "$2" "$3" "$4" "$current" "$desired"
+}
+
 # -----------------------------------------------------------------------------
 # sha256_file
 # -----------------------------------------------------------------------------
@@ -301,10 +309,10 @@ teardown() {
     mkdir -p "$SCRATCH/project" "$SCRATCH/staging/.devcontainer/scripts"
     echo upstream > "$SCRATCH/staging/$rel"
     chmod +x "$SCRATCH/staging/$rel"
-    manifest_apply NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
+    apply_fixture NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
     [[ -x "$SCRATCH/project/$rel" ]]
     [[ "$(cat "$SCRATCH/project/$rel")" == upstream ]]
-    manifest_apply PRUNE "$rel" '' "$SCRATCH/project/$rel"
+    apply_fixture PRUNE "$rel" '' "$SCRATCH/project/$rel"
     [[ ! -e "$SCRATCH/project/$rel" ]]
     [[ -d "$SCRATCH/project/.devcontainer/scripts" ]]
 }
@@ -315,18 +323,18 @@ teardown() {
     echo keep > "$SCRATCH/outside"
     ln -s "$SCRATCH/outside" "$SCRATCH/project/$rel"
     echo new > "$SCRATCH/staging/$rel"
-    run manifest_apply UPDATE "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
+    run apply_fixture UPDATE "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
     [[ "$status" -ne 0 && "$(cat "$SCRATCH/outside")" == keep ]]
     rm "$SCRATCH/project/$rel"
     mkdir "$SCRATCH/project/$rel"
-    run manifest_apply UPDATE "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
+    run apply_fixture UPDATE "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
     [[ "$status" -ne 0 ]]
     rmdir "$SCRATCH/project/$rel"
     rm "$SCRATCH/staging/$rel"
     ln -s "$SCRATCH/outside" "$SCRATCH/staging/$rel"
-    run manifest_apply NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
+    run apply_fixture NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
     [[ "$status" -ne 0 && ! -e "$SCRATCH/project/$rel" ]]
-    run manifest_apply PRUNE app.py '' "$SCRATCH/outside"
+    run apply_fixture PRUNE app.py '' "$SCRATCH/outside"
     [[ "$status" -ne 0 && "$(cat "$SCRATCH/outside")" == keep ]]
 }
 
@@ -335,7 +343,7 @@ teardown() {
     mkdir -p "$SCRATCH/project" "$SCRATCH/staging/.devcontainer/scripts"
     echo new > "$SCRATCH/staging/$rel"
     DRY_RUN=true
-    manifest_apply NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
+    apply_fixture NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel"
     [[ ! -e "$SCRATCH/project/.devcontainer" ]]
 }
 
@@ -483,4 +491,133 @@ teardown() {
     MANIFEST_DELETED['.devcontainer/scripts/a.sh']=1
     manifest_recording_start "$SCRATCH"
     [[ ${#MANIFEST_DELETED[@]} -eq 0 ]]
+}
+
+@test "hashing and manifest adoption preserve literal backslash filenames" {
+    local rel='.devcontainer/scripts/skill\name.sh'
+    mkdir -p "$SCRATCH/staging/.devcontainer/scripts" "$SCRATCH/project/.devcontainer/scripts"
+    echo content > "$SCRATCH/staging/$rel"
+    echo content > "$SCRATCH/plain"
+    local hash old
+    hash=$(sha256_file "$SCRATCH/plain")
+    [[ "$(sha256_file "$SCRATCH/staging/$rel")" == "$hash" ]]
+    manifest_apply NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel" '' "$hash"
+    manifest_adopt_distribution "$SCRATCH/project" "$SCRATCH/staging" '{}'
+    manifest_write "$SCRATCH/project" v1 abc '{}'
+    old=$(manifest_read "$SCRATCH/project")
+    manifest_adopt_distribution "$SCRATCH/project" "$SCRATCH/staging" "$old"
+    [[ ${#MANIFEST_TRACKED[@]} -eq 1 && "${MANIFEST_TRACKED[$rel]}" == "$hash" ]]
+    manifest_write "$SCRATCH/project" v1 abc '{}'
+    [[ "$(manifest_read "$SCRATCH/project")" == "$old" ]]
+}
+
+@test "physical host prefixes work while root leaves and internal symlinks remain rejected" {
+    mkdir -p "$SCRATCH/physical/project/.devcontainer/scripts"
+    ln -s "$SCRATCH/physical" "$SCRATCH/host-alias"
+    local root="$SCRATCH/host-alias/project"
+    [[ "$(manifest_physical_root "$root")" == "$SCRATCH/physical/project" ]]
+    [[ "$(manifest_physical_root "$SCRATCH/host-alias/new/private")" == "$SCRATCH/physical/new/private" ]]
+    manifest_safe_path "$root" '.devcontainer/scripts/helper.sh'
+    manifest_recording_start "$root"
+    echo content > "$SCRATCH/source"
+    copy_with_confirm "$SCRATCH/source" "$root/.devcontainer/scripts/helper.sh"
+    [[ -n "${MANIFEST_TRACKED[.devcontainer/scripts/helper.sh]:-}" ]]
+    ln -s "$SCRATCH/physical/project" "$SCRATCH/project-alias"
+    ! manifest_physical_root "$SCRATCH/project-alias"
+    ! manifest_physical_root "$SCRATCH/project-alias/"
+    ln -s "$SCRATCH" "$root/internal"
+    ! manifest_safe_path "$root" 'internal/outside.sh'
+    ! manifest_safe_path "$root" '../outside.sh'
+}
+
+@test "UPDATE refuses an edit made during temporary copying" {
+    local rel='.devcontainer/scripts/helper.sh'
+    mkdir -p "$SCRATCH/project/.devcontainer/scripts" "$SCRATCH/staging/.devcontainer/scripts"
+    echo old > "$SCRATCH/project/$rel"
+    echo upstream > "$SCRATCH/staging/$rel"
+    local before desired
+    before=$(sha256_file "$SCRATCH/project/$rel")
+    desired=$(sha256_file "$SCRATCH/staging/$rel")
+    cp() { command cp "$@" || return 1; echo 'concurrent edit' > "$SCRATCH/project/$rel"; }
+    run manifest_apply UPDATE "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel" "$before" "$desired"
+    [[ "$status" -ne 0 && "$(cat "$SCRATCH/project/$rel")" == 'concurrent edit' ]]
+}
+
+@test "NEW refuses a collision introduced during temporary copying" {
+    local rel='.devcontainer/scripts/helper.sh'
+    mkdir -p "$SCRATCH/project/.devcontainer/scripts" "$SCRATCH/staging/.devcontainer/scripts"
+    echo upstream > "$SCRATCH/staging/$rel"
+    local desired
+    desired=$(sha256_file "$SCRATCH/staging/$rel")
+    cp() { command cp "$@" || return 1; echo 'new developer file' > "$SCRATCH/project/$rel"; }
+    run manifest_apply NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel" '' "$desired"
+    [[ "$status" -ne 0 && "$(cat "$SCRATCH/project/$rel")" == 'new developer file' ]]
+}
+
+@test "PRUNE and NOOP reject destinations changed since the driver's observation" {
+    local rel='.devcontainer/scripts/helper.sh'
+    mkdir -p "$SCRATCH/project/.devcontainer/scripts"
+    echo old > "$SCRATCH/project/$rel"
+    local before
+    before=$(sha256_file "$SCRATCH/project/$rel")
+    echo edited > "$SCRATCH/project/$rel"
+    run manifest_apply PRUNE "$rel" '' "$SCRATCH/project/$rel" "$before" ''
+    [[ "$status" -ne 0 && "$(cat "$SCRATCH/project/$rel")" == edited ]]
+    run manifest_apply NOOP "$rel" '' "$SCRATCH/project/$rel" "$before" "$before"
+    [[ "$status" -ne 0 && "$(cat "$SCRATCH/project/$rel")" == edited ]]
+}
+
+@test "UPDATE verifies copied desired bytes before replacing the target" {
+    local rel='.devcontainer/scripts/helper.sh'
+    mkdir -p "$SCRATCH/project/.devcontainer/scripts" "$SCRATCH/staging/.devcontainer/scripts"
+    echo old > "$SCRATCH/project/$rel"
+    echo upstream > "$SCRATCH/staging/$rel"
+    local before desired
+    before=$(sha256_file "$SCRATCH/project/$rel")
+    desired=$(sha256_file "$SCRATCH/staging/$rel")
+    cp() { echo corrupt > "${@: -1}"; }
+    run manifest_apply UPDATE "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel" "$before" "$desired"
+    [[ "$status" -ne 0 && "$(cat "$SCRATCH/project/$rel")" == old ]]
+}
+
+@test "BSD-like hashing and mv tools support helper installation without GNU options" {
+    local rel='.devcontainer/scripts/skill\name.sh'
+    mkdir -p "$SCRATCH/project" "$SCRATCH/staging/.devcontainer/scripts"
+    echo content > "$SCRATCH/staging/$rel"
+    local desired
+    desired=$(sha256_file "$SCRATCH/staging/$rel")
+    command() {
+        if [[ "$1" == -v && "$2" == sha256sum ]]; then return 1; fi
+        builtin command "$@"
+    }
+    realpath() { echo 'unsupported realpath option' >&2; return 1; }
+    mv() {
+        local arg
+        for arg in "$@"; do [[ "$arg" != -*T* ]] || return 1; done
+        command mv "$@"
+    }
+    [[ "$(sha256_file "$SCRATCH/staging/$rel")" == "$desired" ]]
+    manifest_apply NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel" '' "$desired"
+    manifest_adopt_distribution "$SCRATCH/project" "$SCRATCH/staging" '{}'
+    manifest_write "$SCRATCH/project" v1 abc '{}'
+    [[ "$(sha256_file "$SCRATCH/project/$rel")" == "$desired" ]]
+}
+
+@test "portable rename directory race fails its postcondition without recording success" {
+    local rel='.devcontainer/scripts/helper.sh'
+    mkdir -p "$SCRATCH/project" "$SCRATCH/staging/.devcontainer/scripts"
+    echo upstream > "$SCRATCH/staging/$rel"
+    local desired
+    desired=$(sha256_file "$SCRATCH/staging/$rel")
+    manifest_recording_start "$SCRATCH/project"
+    manifest_tally_reset
+    mv() {
+        mkdir -p "${@: -1}"
+        command mv "$@"
+    }
+    if manifest_apply NEW "$rel" "$SCRATCH/staging/$rel" "$SCRATCH/project/$rel" '' "$desired"; then
+        fail 'directory race incorrectly reported a successful installation'
+    fi
+    [[ -d "$SCRATCH/project/$rel" && "$TALLY_NEW" -eq 0 ]]
+    [[ ${#MANIFEST_TRACKED[@]} -eq 0 ]]
 }

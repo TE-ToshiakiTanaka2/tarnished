@@ -87,6 +87,7 @@ manifest_options_valid() {
 manifest_read() {
     local scope_root="$1"
     local file
+    scope_root=$(manifest_physical_root "$scope_root") || return 1
     file="$(manifest_path "$scope_root")"
 
     if [[ ! -f "$file" ]]; then
@@ -169,6 +170,7 @@ manifest_write() {
         return 1
     fi
     local file tmp
+    scope_root=$(manifest_physical_root "$scope_root") || return 1
     file="$(manifest_path "$scope_root")"
     if ! manifest_safe_path "$scope_root" "$MANIFEST_FILENAME"; then
         print_error "manifest_write: unsafe manifest path: $file"
@@ -314,7 +316,7 @@ manifest_adopt_distribution() {
             if _manifest_path_eligible "$rel"; then
                 MANIFEST_TRACKED["$rel"]="$hash"
             fi
-        done < <(printf '%s' "$old_json" | jq -r '.files | to_entries[] | [.key,.value] | @tsv')
+        done < <(printf '%s' "$old_json" | jq -r '.files | to_entries[] | "\(.key)\t\(.value)"')
     elif [[ "$version" == 1 ]]; then
         print_warning "Legacy manifest ownership is unproven; only exact distribution matches are adopted." >&2
         while IFS= read -r rel; do
@@ -359,7 +361,7 @@ manifest_walk_directory() {
     fi
 
     local abs_root inventory
-    abs_root="$(cd "$root" && pwd)" || return 1
+    abs_root=$(manifest_physical_root "$root") || return 1
     inventory=$(mktemp) || return 1
     if ! find "$abs_root" \
         \( -type d \( -name .git -o -name .serena -o -name target -o -name node_modules -o -name .venv -o -name dist -o -name __pycache__ \) -prune \) -o \
@@ -555,38 +557,50 @@ manifest_tally_reset() {
 # Honors the global DRY_RUN to suppress filesystem mutations while still
 # updating tallies — this is what powers --dry-run's preview output.
 #
-# Usage: manifest_apply <decision> <rel_path> <staging_path> <target_path>
+# Usage: manifest_apply <decision> <rel> <staged> <target> <expected-current> <expected-desired>
+# Missing expected-current denotes an absent destination, not arbitrary content.
 manifest_apply() {
-    local decision="$1"
-    local rel_path="$2"
-    local staging_path="$3"
-    local target_path="$4"
-
-    local target_root staging_root tmp
+    [[ "$#" -eq 6 ]] || { print_error "manifest_apply: expected content hashes required"; return 1; }
+    local decision="$1" rel_path="$2" staging_path="$3" target_path="$4"
+    local expected_current="$5" expected_desired="$6"
+    local target_root staging_root tmp copied_hash
+    [[ -z "$expected_current" || "$expected_current" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    [[ -z "$expected_desired" || "$expected_desired" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
     if ! _manifest_path_eligible "$rel_path" || [[ "$target_path" != */"$rel_path" ]]; then
         print_warning "Refusing unsafe/ineligible maintenance path: $target_path" >&2
         return 1
     fi
-    target_root="${target_path%/"$rel_path"}"
+    target_root=$(manifest_physical_root "${target_path%/"$rel_path"}") || return 1
+    target_path="$target_root/$rel_path"
     if ! manifest_safe_path "$target_root" "$rel_path"; then
         print_warning "Refusing unsafe maintenance target: $target_path" >&2
         return 1
     fi
     if [[ "$decision" == UPDATE || "$decision" == NEW ]]; then
-        [[ "$staging_path" == */"$rel_path" ]] || return 1
-        staging_root="${staging_path%/"$rel_path"}"
+        [[ -n "$expected_desired" && "$staging_path" == */"$rel_path" ]] || return 1
+        staging_root=$(manifest_physical_root "${staging_path%/"$rel_path"}") || return 1
+        staging_path="$staging_root/$rel_path"
         manifest_safe_path "$staging_root" "$rel_path" && [[ -f "$staging_path" ]] || return 1
         if [[ "${DRY_RUN:-false}" != true ]]; then
             mkdir -p "$(dirname "$target_path")" || return 1
             manifest_safe_path "$target_root" "$rel_path" || return 1
             tmp=$(mktemp "$(dirname "$target_path")/.tarnished-copy.XXXXXX") || return 1
             if ! cp -p "$staging_path" "$tmp" ||
-                ! manifest_safe_path "$target_root" "$rel_path" ||
-                ! mv "$tmp" "$target_path"; then
+                ! copied_hash=$(sha256_file "$tmp") || [[ "$copied_hash" != "$expected_desired" ]] ||
+                ! manifest_current_matches "$target_root" "$rel_path" "$expected_current" ||
+                ! mv -f "$tmp" "$target_path"; then
                 rm -f "$tmp"
+                print_warning "Preserved changed or failed helper: $target_path; compare with $staging_path and retry" >&2
+                return 1
+            fi
+            if ! manifest_current_matches "$target_root" "$rel_path" "$expected_desired"; then
+                print_warning "Installed helper changed before recording: $target_path; preserve it and retry" >&2
                 return 1
             fi
         fi
+    elif [[ "$decision" == NOOP ]]; then
+        # A NOOP can adopt a new baseline; verify the observed bytes still exist.
+        manifest_current_matches "$target_root" "$rel_path" "$expected_current" || return 1
     fi
 
     case "$decision" in
@@ -618,8 +632,11 @@ manifest_apply() {
             ;;
         PRUNE)
             if [[ "${DRY_RUN:-false}" != true ]]; then
+                if ! manifest_current_matches "$target_root" "$rel_path" "$expected_current"; then
+                    print_warning "Preserved helper changed before prune: $target_path; inspect it and retry" >&2
+                    return 1
+                fi
                 rm -f "$target_path" || return 1
-
             fi
             ((TALLY_PRUNED++)) || true
             PRUNED_FILES+=("$rel_path")
@@ -633,6 +650,17 @@ manifest_apply() {
             return 1
             ;;
     esac
+}
+
+# Compare with the decision driver's observation immediately before mutation.
+# Path validation is repeated after hashing so a type change is also rejected.
+manifest_current_matches() {
+    local root="$1" rel="$2" expected="$3" current=""
+    manifest_safe_path "$root" "$rel" || return 1
+    if [[ -f "$root/$rel" ]]; then
+        current=$(sha256_file "$root/$rel") || return 1
+    fi
+    [[ "$current" == "$expected" ]] && manifest_safe_path "$root" "$rel"
 }
 
 # Compact "(~K +N -M)" summary line used in the SKIP_EDITED rows.

@@ -83,9 +83,11 @@ sha256_file() {
 
     local hex
     if command -v sha256sum &> /dev/null; then
-        hex=$(sha256sum "$path" | cut -d' ' -f1)
+        hex=$(sha256sum < "$path") || return 1
+        hex="${hex%% *}"
     elif command -v shasum &> /dev/null; then
-        hex=$(shasum -a 256 "$path" | cut -d' ' -f1)
+        hex=$(shasum -a 256 < "$path") || return 1
+        hex="${hex%% *}"
     else
         print_error "sha256_file: neither sha256sum nor shasum is available"
         return 1
@@ -112,6 +114,7 @@ sha256_file() {
 MANIFEST_RECORDING="${MANIFEST_RECORDING:-false}"
 # Absolute path used to compute the relative key inside MANIFEST_TRACKED.
 MANIFEST_RECORDING_ROOT="${MANIFEST_RECORDING_ROOT:-}"
+MANIFEST_RECORDING_INPUT_ROOT="${MANIFEST_RECORDING_INPUT_ROOT:-}"
 # Map: <repo-relative-path> → "sha256:<hex>". Declared lazily by
 # manifest_recording_start to avoid `declare -gA` errors on older bash.
 declare -gA MANIFEST_TRACKED 2>/dev/null || true
@@ -223,7 +226,9 @@ manifest_recording_start() {
         print_error "manifest_recording_start: root_dir required"
         return 1
     fi
-    MANIFEST_RECORDING_ROOT="$(cd "$root" && pwd)" || return 1
+    MANIFEST_RECORDING_INPUT_ROOT="$(_abs_path "${root%/}")"
+    MANIFEST_RECORDING_ROOT=$(manifest_physical_root "$MANIFEST_RECORDING_INPUT_ROOT") || return 1
+    [[ -d "$MANIFEST_RECORDING_ROOT" ]] || return 1
     manifest_safe_path "$MANIFEST_RECORDING_ROOT" .tarnished-manifest.json || return 1
     MANIFEST_RECORDING=true
     # Clear prior state.
@@ -277,16 +282,36 @@ _manifest_path_eligible() {
     ! _manifest_path_excluded "$rel" && ! _manifest_path_excluded "$scoped"
 }
 
-# Reject symlinks and non-directory ancestors, including ancestors of the root.
-# A missing regular-file destination is allowed; existing directory leaves are not.
+# Establish the physical maintenance boundary. Host filesystem aliases above
+# this root are allowed (for example macOS /var); the selected root leaf cannot
+# itself be a symlink. Missing private descendants use their existing parent's
+# physical spelling without requiring GNU realpath options.
+manifest_physical_root() {
+    local root="$1" ancestor suffix="" physical
+    while [[ "$root" != / && "$root" == */ ]]; do root="${root%/}"; done
+    [[ "$root" == /* && "$root" != / ]] || return 1
+    _manifest_relative_path_valid "${root#/}" || return 1
+    [[ ! -L "$root" ]] || return 1
+    ancestor="$root"
+    while [[ ! -e "$ancestor" && ! -L "$ancestor" ]]; do
+        suffix="/${ancestor##*/}$suffix"
+        ancestor="${ancestor%/*}"
+        [[ -n "$ancestor" ]] || ancestor=/
+    done
+    [[ -d "$ancestor" ]] || return 1
+    physical=$(cd -P "$ancestor" && pwd -P) || return 1
+    printf '%s%s' "${physical%/}" "$suffix"
+}
+
+# Only project-relative components are controlled update paths: reject every
+# symlink and incompatible type below the canonical root, including the leaf.
 manifest_safe_path() {
     local root="$1" rel="$2" kind="${3:-file}" path part
     _manifest_relative_path_valid "$rel" || return 1
-    [[ "$root" == /* && "$root" != / ]] || return 1
-    _manifest_relative_path_valid "${root#/}" || return 1
-    path=""
+    root=$(manifest_physical_root "$root") || return 1
+    path="$root"
     local parts=()
-    IFS='/' read -r -a parts <<< "${root#/}/$rel"
+    IFS='/' read -r -a parts <<< "$rel"
     local i
     for ((i = 0; i < ${#parts[@]}; i++)); do
         part="${parts[$i]}"
@@ -302,6 +327,21 @@ manifest_safe_path() {
             fi
         fi
     done
+}
+
+# Resolve only the recorded root prefix, never internal symlink components.
+_manifest_recording_destination() {
+    local dest="$1" abs rel
+    abs=$(_abs_path "$dest")
+    case "$abs" in
+        "$MANIFEST_RECORDING_ROOT") printf '%s' "$MANIFEST_RECORDING_ROOT"; return 0 ;;
+        "$MANIFEST_RECORDING_INPUT_ROOT") printf '%s' "$MANIFEST_RECORDING_ROOT"; return 0 ;;
+        "$MANIFEST_RECORDING_ROOT"/*) rel="${abs#"$MANIFEST_RECORDING_ROOT/"}" ;;
+        "$MANIFEST_RECORDING_INPUT_ROOT"/*) rel="${abs#"$MANIFEST_RECORDING_INPUT_ROOT/"}" ;;
+        *) return 1 ;;
+    esac
+    _manifest_relative_path_valid "$rel" || return 1
+    printf '%s/%s' "$MANIFEST_RECORDING_ROOT" "$rel"
 }
 
 # Rehash only the finite set successfully copied, after plugin transformations.
@@ -340,6 +380,7 @@ _record_tracked_copy() {
     [[ "$MANIFEST_RECORDING" != true ]] && return 0
     [[ -z "$MANIFEST_RECORDING_ROOT" ]] && return 0
 
+    abs_dest=$(_manifest_recording_destination "$abs_dest") || return 0
     # Skip destinations outside the recording root (defensive — plugins
     # could write to /tmp for unrelated reasons).
     case "$abs_dest" in
@@ -374,7 +415,7 @@ skip_confirm="${skip_confirm:-false}"
 _recording_destination_safe() {
     local dest="$1" kind="${2:-file}" abs rel
     [[ "$MANIFEST_RECORDING" == true ]] || return 0
-    abs=$(_abs_path "$dest")
+    abs=$(_manifest_recording_destination "$dest") || return 1
     if [[ "$abs" == "$MANIFEST_RECORDING_ROOT" && "$kind" == directory ]]; then
         manifest_safe_path "$(dirname "$abs")" "${abs##*/}" directory
         return
@@ -393,6 +434,9 @@ copy_with_confirm() {
     if ! _recording_destination_safe "$dest"; then
         print_warning "Skipped unsafe copy destination: $dest"
         return 1
+    fi
+    if [[ "$MANIFEST_RECORDING" == true ]]; then
+        dest=$(_manifest_recording_destination "$dest") || return 1
     fi
     if [[ ! -f "$src" || -L "$src" ]]; then
         print_warning "Skipped non-regular copy source: $src"
@@ -460,6 +504,9 @@ copy_dir_with_confirm() {
     if ! _recording_destination_safe "$dest" directory; then
         print_warning "Skipped unsafe copy directory: $dest"
         return 1
+    fi
+    if [[ "$MANIFEST_RECORDING" == true ]]; then
+        dest=$(_manifest_recording_destination "$dest") || return 1
     fi
     # Capture the complete source set before creating any target directories.
     inventory=$(mktemp) || return 1
