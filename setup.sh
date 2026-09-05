@@ -22,6 +22,13 @@
 # Remote Execution Bootstrap
 # =============================================================================
 
+# Associative-array provenance uses modern Bash, including on macOS hosts.
+# Check before remote bootstrap or any project writes.
+if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4) )); then
+    printf '[ERROR] Tarnished setup requires Bash 4.4 or newer; run it with an installed modern Bash.\n' >&2
+    exit 1
+fi
+
 REMOTE_REPO_URL="${DEVCONTAINER_REPO_URL:-https://github.com/TE-ToshiakiTanaka2/tarnished.git}"
 REMOTE_BRANCH="${DEVCONTAINER_BRANCH:-develop}"
 
@@ -74,7 +81,7 @@ fi
 set -e
 
 # Script configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 
 # Source common library
@@ -1737,6 +1744,13 @@ validate_maintenance_target() {
 # Use this checkout's safe updater, even when the installed helper is legacy.
 run_refresh() {
     local root="$1"
+    root=$(manifest_physical_root "$root") || { print_error "Unsafe project root; use an ordinary project directory"; return 1; }
+    # Reject a self-hosted or nested source before config migration and helper
+    # installation. Runtime's nonfatal rejection cannot guard subsequent setup writes.
+    if [[ "$root" == "$SCRIPT_DIR" || "$root" == "$SCRIPT_DIR/"* || "$SCRIPT_DIR" == "$root/"* ]]; then
+        print_error "Refresh source/target overlap: $SCRIPT_DIR and $root; invoke a separate Tarnished checkout from the downstream project"
+        return 1
+    fi
     validate_maintenance_target "$root" || return 1
     local old_manifest='{}'
     if manifest_exists "$root"; then
@@ -1744,7 +1758,8 @@ run_refresh() {
     fi
     local defaults="$SCRIPT_DIR/templates/agent-workflows/.tarnished/refresh.json"
     local legacy="$SCRIPT_DIR/scripts/lib/refresh-legacy.json"
-    local config="$root/.tarnished/refresh.json" candidate temp_config=""
+    local config="$root/.tarnished/refresh.json" candidate temp_config="" config_start_hash=""
+    [[ ! -f "$config" ]] || config_start_hash=$(sha256_file "$config") || return 1
     local updater="$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
     if [[ ! -f "$config" ]]; then
         candidate=$(cat "$defaults")
@@ -1769,11 +1784,18 @@ run_refresh() {
             manifest_safe_path "$root" .tarnished/refresh.json || return 1
             mkdir -p "$root/.tarnished" || return 1
             temp_config=$(mktemp "$root/.tarnished/.refresh-config.XXXXXX") || return 1
-            if ! printf '%s\n' "$candidate" > "$temp_config" || ! manifest_safe_path "$root" .tarnished/refresh.json || ! mv -fT "$temp_config" "$config"; then
+            local config_hash
+            if ! printf '%s\n' "$candidate" > "$temp_config" || ! config_hash=$(sha256_file "$temp_config") ||
+                ! manifest_current_matches "$root" .tarnished/refresh.json "$config_start_hash" || ! mv -f "$temp_config" "$config"; then
                 rm -f "$temp_config"
+                print_warning "Refresh configuration changed during preparation or installation failed; preserve it and inspect $config before retrying"
                 return 1
             fi
             temp_config=""
+            if ! manifest_safe_path "$root" .tarnished/refresh.json || [[ "$(sha256_file "$config")" != "$config_hash" ]]; then
+                print_warning "Refresh configuration changed during installation; inspect $config before retrying"
+                return 1
+            fi
         fi
     fi
     local -a args=(--project-root "$root" --source-dir "$SCRIPT_DIR" --config "$config")
@@ -1802,20 +1824,31 @@ run_refresh() {
     elif [[ -z "$installed_hash" && -z "$trusted_hash" && -z "${MANIFEST_DELETED[$rel]:-}" ]] || [[ -n "$trusted_hash" && "$installed_hash" == "$trusted_hash" ]] || jq -e --arg hash "$installed_hash" 'any(.helper_hashes[]; .sha256 == $hash)' "$legacy" >/dev/null; then
         helper_proven=true
         print_info "Install safe container-start updater: $updater -> $root/$rel"
+        if [[ -z "$installed_hash" ]]; then
+            print_info "New updater file does not establish container-start wiring. Existing hooks/settings are preserved; check $root/.devcontainer/devcontainer.json and $root/.devcontainer/scripts/post.sh and configure invocation of $root/$rel if needed"
+        fi
         if [[ "$DRY_RUN" != true ]]; then
             manifest_safe_path "$root" "$rel" || return 1
             mkdir -p "$root/.devcontainer/scripts" || return 1
             temp_helper=$(mktemp "$root/.devcontainer/scripts/.refresh-updater.XXXXXX") || return 1
-            local current_hash=""
-            [[ ! -f "$root/$rel" ]] || current_hash=$(sha256_file "$root/$rel")
-            if ! cp -p "$updater" "$temp_helper" || [[ "$(sha256_file "$temp_helper")" != "$desired_hash" ]] ||
-                ! manifest_safe_path "$root" "$rel" || [[ "$current_hash" != "$installed_hash" ]] ||
-                ! mv -fT "$temp_helper" "$root/$rel"; then
+            if ! cp -p "$updater" "$temp_helper" || [[ "$(sha256_file "$temp_helper")" != "$desired_hash" ]]; then
                 rm -f "$temp_helper"
-                print_warning "Cannot install safe updater; manually compare and copy $updater to $root/$rel before restarting the container"
+                print_warning "Cannot prepare safe updater; compare $updater with $root/$rel and retry"
+                return 1
+            fi
+            # Recheck after copying, immediately before the atomic replacement.
+            if ! manifest_current_matches "$root" "$rel" "$installed_hash" || ! mv -f "$temp_helper" "$root/$rel"; then
+                rm -f "$temp_helper"
+                print_warning "Updater changed during preparation or replacement failed; preserved prior baseline for $root/$rel; compare with $updater and retry"
+                return 1
+            fi
+            if ! manifest_current_matches "$root" "$rel" "$desired_hash"; then
+                print_warning "Updater changed after replacement; retain prior baseline and inspect $root/$rel before retrying"
                 return 1
             fi
         fi
+    elif [[ -z "$installed_hash" ]]; then
+        print_info "Container-start updater is absent; preserving recorded deletion: $root/$rel. Restore an exact copy from $updater only if you intend to enable it again; existing hooks/settings are preserved"
     else
         print_warning "Container-start updater remains old or locally edited: $root/$rel. Compare it with $updater and explicitly copy the chosen safe updater before restarting the container; custom hooks/settings were preserved"
     fi
@@ -1830,7 +1863,7 @@ run_refresh() {
         if [[ "$(jq -r '.manifest_version // 0' <<< "$old_manifest")" == 2 ]]; then
             while IFS=$'\t' read -r key hash; do
                 [[ -n "$key" ]] && MANIFEST_TRACKED["$key"]="$hash"
-            done < <(jq -r '.files | to_entries[] | [.key,.value] | @tsv' <<< "$old_manifest")
+            done < <(jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' <<< "$old_manifest")
         elif [[ "$(jq -r '.manifest_version // 0' <<< "$old_manifest")" == 1 ]]; then
             print_warning "Legacy manifest ownership claims are untrusted and dropped; other helpers can be adopted with --create-manifest after exact distribution comparison"
         fi
@@ -1871,6 +1904,7 @@ bootstrap_manifest_scope() {
 
 run_create_manifest() {
     local target_dir="$1"
+    target_dir=$(manifest_physical_root "$target_dir") || { print_error "Unsafe project root"; return 1; }
     validate_maintenance_target "$target_dir" || return 1
     UPGRADE_TARGET_DIR="$target_dir"
     local saved_target_version="$TARGET_VERSION"
@@ -2271,7 +2305,7 @@ apply_decisions_for_scope() {
             continue
         fi
         OLD_HASHES["$path"]="$hash"
-    done < <(jq -r '.files | to_entries[] | [.key,.value] | @tsv' <<< "$old_json")
+    done < <(jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' <<< "$old_json")
 
     # Snapshot new hashes from the staged run that just populated
     # MANIFEST_TRACKED. Copy now because subsequent operations may clear
@@ -2326,7 +2360,7 @@ apply_decisions_for_scope() {
         # Per review.md Critical #4: do NOT swallow manifest_apply
         # failures — a partial cp/rm corrupts the lifecycle invariant.
         # Count failures and abort before the manifest is rewritten.
-        if ! manifest_apply "$decision" "$rel" "$staging_path" "$target_path"; then
+        if ! manifest_apply "$decision" "$rel" "$staging_path" "$target_path" "$current" "$new"; then
             print_error "manifest_apply failed for: $rel (decision=$decision)"
             ((apply_failures++)) || true
         elif [[ "$decision" == NEW || "$decision" == UPDATE || ( "$decision" == NOOP && -n "$new" ) ]]; then
@@ -2376,6 +2410,7 @@ apply_decisions_for_scope() {
 # Returns: 0 on success.
 run_upgrade() {
     local target_dir="$1"
+    target_dir=$(manifest_physical_root "$target_dir") || { print_error "Unsafe project root"; return 1; }
 
     if [[ ! -d "$target_dir" ]]; then
         print_error "upgrade: target directory not found: $target_dir"
@@ -2813,7 +2848,7 @@ main() {
     fi
 
     # Target directory is current directory
-    TARGET_DIR="$(pwd)"
+    TARGET_DIR=$(manifest_physical_root "$(pwd)") || { print_error "Unsafe project root"; exit 1; }
 
     # Load plugins
     print_section "Loading Plugins"

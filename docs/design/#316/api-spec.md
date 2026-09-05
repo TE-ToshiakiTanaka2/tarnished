@@ -55,3 +55,7 @@ Refresh state at `.tarnished/refresh-state.json`:
 | Summary | Counts plus conflicting/unknown/removed/unsafe paths and concrete recovery source/target references |
 
 Keep `manifest_decide(old,current,new)` as the pure trusted-baseline state machine where useful; migration/eligibility must strip untrusted claims before calling it. Apply equivalent decisions to runtime effective upstream/overlay candidates, with overlay-origin deletion protection. Shared existing plugin function signatures do not change.
+
+## Host boundary and write verification
+
+Shell maintenance requires Bash 4.4+. Explicit roots may canonicalize host ancestors once with portable `pwd -P` traversal; reject symlink root leaves and every symlink below the resulting physical roots. Compare overlap on physical roots before setup refresh writes. Never canonicalize an individual managed path to bypass its checks. BSD utility compatibility uses `shasum` when needed and portable atomic ordinary-file renames with expected-current checks before mutation plus installed-content verification. Dry-run Git inspection suppresses optional index/lock writes.

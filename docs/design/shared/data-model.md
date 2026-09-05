@@ -312,3 +312,7 @@ The shipped defaults use pinned model IDs. The Claude designer's `[1m]` suffix b
 The `.gitignore` produced by `update_gitignore()` and Codex's `plugin_post_copy` is structured as a sequence of **marker-guarded blocks**. The marker (a comment line) is the keyed-on identity of the block; rewriting it without coordination would re-trigger the block-append on existing projects (a benign but visible side effect). The exact marker strings and block contents are defined in [api-spec.md](./api-spec.md) :: "Setup / Plugin Surface".
 
 The same marker-guarded-block pattern (#263) governs the language toolchain blocks appended to `Dockerfile.dev` and `post.sh` by language plugins — see api-spec.md :: "Language plugin contract".
+
+### Host maintenance boundary (#316)
+
+Setup and refresh require Bash 4.4+; BSD-like utilities are supported via portable root resolution/renames and a `shasum -a 256` fallback. Explicit project/source/staging/cache roots may resolve host ancestor aliases once, but symlink root leaves and all symlinks below each physical root are rejected. State/config paths are checked below that root, never individually canonicalized to bypass protection. Compare physical source/target roots before setup refresh writes. Check expected-current hashes immediately before mutation and verify installed ordinary-file bytes before recording success. Dry-run Git checks suppress optional index/lock writes.

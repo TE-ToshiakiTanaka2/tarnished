@@ -292,3 +292,172 @@ full_snapshot() {
     jq -e --arg other "$other" '.deleted_paths == [$other]' "$PROJECT/.tarnished-manifest.json"
     [[ ! -e "$PROJECT/$other" ]]
 }
+
+@test "helper migration preserves edits made during temporary copy and retains baseline" {
+    bash "$DIST/setup.sh" --refresh -y >/dev/null
+    printf '\n# next updater\n' >> "$DIST/templates/core/.devcontainer/scripts/refresh-assets.sh"
+    local before real_cp
+    before=$(sha256sum "$PROJECT/.tarnished-manifest.json")
+    real_cp=$(command -v cp)
+    mkdir "$SCRATCH/race-bin"
+    cat > "$SCRATCH/race-bin/cp" <<MOCK
+#!/bin/bash
+"$real_cp" "\$@" || exit 1
+for arg in "\$@"; do
+    if [[ "\$arg" == */.refresh-updater.* ]]; then
+        printf '# developer saved during update\\n' > "$PROJECT/.devcontainer/scripts/refresh-assets.sh"
+    fi
+done
+MOCK
+    chmod +x "$SCRATCH/race-bin/cp"
+    run env PATH="$SCRATCH/race-bin:$PATH" bash "$DIST/setup.sh" --refresh -y
+    assert_failure
+    [[ "$(cat "$PROJECT/.devcontainer/scripts/refresh-assets.sh")" == '# developer saved during update' ]]
+    [[ "$(sha256sum "$PROJECT/.tarnished-manifest.json")" == "$before" ]]
+    assert_output --partial 'Updater changed during preparation'
+}
+
+@test "new and deletion-preserved updater diagnostics distinguish wiring from file installation" {
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    assert_output --partial 'New updater file does not establish container-start wiring'
+    assert_output --partial 'Existing hooks/settings are preserved'
+    rm "$PROJECT/.devcontainer/scripts/refresh-assets.sh"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    assert_output --partial 'updater is absent; preserving recorded deletion'
+    refute_output --partial 'updater remains old or locally edited'
+}
+
+@test "self-checkout and nested source refresh reject overlap before any target mutation" {
+    # Disposable distribution self-hosts a legacy marker and old catalog.
+    mkdir -p "$DIST/.tarnished"
+    jq -n '{manifest_version:1,tarnished_version:"legacy",tarnished_commit:"",created_at:"",scaffold_options:{},files:{}}' \
+        > "$DIST/.tarnished-manifest.json"
+    jq --slurpfile legacy "$DIST/scripts/lib/refresh-legacy.json" \
+        'del(.use_default_managed_paths) | .managed_paths=$legacy[0].managed_path_catalogs[0]' \
+        "$DIST/templates/agent-workflows/.tarnished/refresh.json" > "$DIST/.tarnished/refresh.json"
+    local before
+    before=$(find "$DIST" -type f -exec sha256sum {} + | LC_ALL=C sort)
+    cd "$DIST"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_failure
+    assert_output --partial 'Refresh source/target overlap'
+    [[ "$(find "$DIST" -type f -exec sha256sum {} + | LC_ALL=C sort)" == "$before" ]]
+    [[ ! -e "$DIST/.devcontainer" ]]
+    mkdir "$DIST/downstream"
+    cd "$DIST/downstream"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_failure
+    assert_output --partial 'Refresh source/target overlap'
+    [[ -z "$(find . -mindepth 1 -print)" ]]
+}
+
+@test "ordinary project beneath a host alias refreshes while a symlink root leaf is rejected" {
+    mkdir "$SCRATCH/host"
+    mv "$PROJECT" "$SCRATCH/host/project"
+    PROJECT="$SCRATCH/host/project"
+    ln -s "$SCRATCH/host" "$SCRATCH/host-alias"
+    cd "$SCRATCH/host-alias/project"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    [[ -f "$PROJECT/.claude/skills/sample/SKILL.md" ]]
+    ln -s "$PROJECT" "$SCRATCH/project-link"
+    cd "$SCRATCH/project-link"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_failure
+    assert_output --partial 'Unsafe project root'
+}
+
+@test "bare refresh at a real monorepo root preserves module trees and explicit add-module still works" {
+    rm -rf "$DIST/templates"
+    cp -a "$REPO_ROOT/templates" "$DIST/templates"
+    local monorepo="$SCRATCH/monorepo"
+    mkdir "$monorepo"
+    cd "$monorepo"
+    run bash "$DIST/setup.sh" --monorepo --module backend:go -y monorepo
+    assert_success
+    printf 'package backend // work in progress\n' > backend/work.go
+    mkdir -p backend/tests backend/docs
+    printf 'developer test\n' > backend/tests/test.txt
+    printf 'developer document\n' > backend/docs/design.md
+    local before
+    before=$(find backend -type f -exec sha256sum {} + | LC_ALL=C sort)
+    run bash "$DIST/setup.sh" -y
+    assert_success
+    [[ "$(find backend -type f -exec sha256sum {} + | LC_ALL=C sort)" == "$before" ]]
+    jq -e '.entries[".tarnished/workflows/flow.md"].origin == "upstream"' .tarnished/refresh-state.json
+    run bash "$DIST/setup.sh" --add-module frontend --lang node -y
+    assert_success
+    [[ "$(find backend -type f -exec sha256sum {} + | LC_ALL=C sort)" == "$before" ]]
+    jq -e '[.modules[].name] == ["backend","frontend"]' modules.json
+}
+
+@test "setup refresh works with BSD-like mv and shasum-only hashing" {
+    local toolbox="$SCRATCH/bsd-bin" tool real_mv
+    mkdir "$toolbox"
+    # Limit discovery to portable commands and shasum, deliberately omitting
+    # GNU realpath and sha256sum. Host Perl remains shasum's shebang runtime.
+    for tool in bash jq git cut cp dirname mktemp mkdir rm sed tr find basename date head cat sort awk grep shasum uname; do
+        ln -s "$(command -v "$tool")" "$toolbox/$tool"
+    done
+    real_mv=$(command -v mv)
+    cat > "$toolbox/mv" <<MOCK
+#!/bin/bash
+for arg in "\$@"; do
+    if [[ "\$arg" == -*T* ]]; then exit 64; fi
+done
+exec "$real_mv" "\$@"
+MOCK
+    chmod +x "$toolbox/mv"
+    rm "$PROJECT/.tarnished/refresh.json"
+    run env PATH="$toolbox" bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    [[ -f "$PROJECT/.claude/skills/sample/SKILL.md" ]]
+    [[ -f "$PROJECT/.devcontainer/scripts/refresh-assets.sh" ]]
+    jq -e '.files[".devcontainer/scripts/refresh-assets.sh"] | test("^sha256:[0-9a-f]{64}$")' "$PROJECT/.tarnished-manifest.json"
+}
+
+@test "legacy configuration edits during preparation survive migration" {
+    jq --slurpfile old "$DIST/scripts/lib/refresh-legacy.json" \
+        'del(.use_default_managed_paths) | .managed_paths=$old[0].managed_path_catalogs[0]' \
+        "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    mv "$SCRATCH/config" "$PROJECT/.tarnished/refresh.json"
+    local real_mktemp
+    real_mktemp=$(command -v mktemp)
+    mkdir "$SCRATCH/config-race-bin"
+    cat > "$SCRATCH/config-race-bin/mktemp" <<MOCK
+#!/bin/bash
+for arg in "\$@"; do
+    if [[ "\$arg" == */.refresh-config.* ]]; then
+        printf '{"developer":"concurrent edit"}\\n' > "$PROJECT/.tarnished/refresh.json"
+    fi
+done
+exec "$real_mktemp" "\$@"
+MOCK
+    chmod +x "$SCRATCH/config-race-bin/mktemp"
+    run env PATH="$SCRATCH/config-race-bin:$PATH" bash "$DIST/setup.sh" --refresh -y
+    assert_failure
+    [[ "$(cat "$PROJECT/.tarnished/refresh.json")" == '{"developer":"concurrent edit"}' ]]
+    [[ ! -e "$PROJECT/.devcontainer/scripts/refresh-assets.sh" ]]
+    [[ ! -e "$PROJECT/.tarnished-manifest.json" ]]
+    assert_output --partial 'Refresh configuration changed during preparation'
+}
+
+@test "eligible backslash helper names survive repeated bootstrap and upgrade without renamed ownership keys" {
+    rm -rf "$DIST/templates"
+    cp -a "$REPO_ROOT/templates" "$DIST/templates"
+    local helper='.devcontainer/scripts/tool\name.sh'
+    printf '#!/bin/bash\nprintf "helper\\n"\n' > "$DIST/templates/core/$helper"
+    cp "$DIST/templates/core/$helper" "$PROJECT/$helper"
+    run bash "$DIST/setup.sh" --create-manifest -y
+    assert_success
+    run bash "$DIST/setup.sh" --create-manifest -y
+    assert_success
+    run bash "$DIST/setup.sh" --upgrade --force -y
+    assert_success
+    run bash "$DIST/setup.sh" --upgrade --force -y
+    assert_success
+    jq -e --arg helper "$helper" '.files | keys | map(select(contains("\\"))) == [$helper]' "$PROJECT/.tarnished-manifest.json"
+    cmp "$PROJECT/$helper" "$DIST/templates/core/$helper"
+}

@@ -359,7 +359,7 @@ Loaded by `setup.sh` in `--create-manifest` and `--upgrade` modes. Provides mani
 | `manifest_write` | `<scope_root> <version> <commit> <scaffold_options_json>` | exit `0` on success | atomic replace via `tmp + mv`; reads `MANIFEST_TRACKED` |
 | `manifest_walk_directory` | `<root>` | `<rel_path>\t<hash>` lines on stdout | none. Private staging/source inventory only; never bootstrap ownership by scanning downstream. Honors positive eligibility plus exclusions. |
 | `manifest_decide` | `<old_h_or_-> <current_h_or_-> <new_h_or_->` | one of `NOOP \| UPDATE \| SKIP_EDITED \| NEW \| SKIP_NEW_CONFLICT \| LEAVE_REMOVED \| PRUNE \| SKIP_USER_DELETED` on stdout | none. Pure function. Reads global `PRUNE_ENABLED` for the LEAVE_REMOVED/PRUNE branch. |
-| `manifest_apply` | `<decision> <staging_path> <target_path>` | exit `0` | mutates target tree per decision (write/delete); honors `DRY_RUN`; updates tally globals (`TALLY_*`) and per-decision file-list arrays |
+| `manifest_apply` | `<decision> <rel_path> <staging_path> <target_path> <expected_current_hash> <expected_desired_hash>` | tally + per-file output | validates expected hashes, copied bytes, final current content and installed postcondition; failed replacement/prune preserves the previous baseline |
 | `manifest_diff_summary` | `<staging_path> <target_path>` | `(~K +N -M)` line on stdout | none |
 | `manifest_summary_print` | `<old_version> <new_version>` | summary block on stderr | reads tally globals; sectioned by scope in monorepo mode |
 
@@ -711,3 +711,7 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 `erd` follows semver. Tag bumps are computed from branch prefix per `versioning.yml`. Default-bump fallback is `rc`. The CLI itself is at `0.1.0` (pre-1.0).
 
 `modules.json` (#263) carries its own `version` field; current value is `1`. Bumps follow a major-only convention (no minor/patch; field additions are non-breaking by tolerant readers).
+
+### Host maintenance boundary (#316)
+
+Setup and refresh require Bash 4.4+; BSD-like utilities are supported via portable root resolution/renames and a `shasum -a 256` fallback. Explicit project/source/staging/cache roots may resolve host ancestor aliases once, but symlink root leaves and all symlinks below each physical root are rejected. State/config paths are checked below that root, never individually canonicalized to bypass protection. Compare physical source/target roots before setup refresh writes. Check expected-current hashes immediately before mutation and verify installed ordinary-file bytes before recording success. Dry-run Git checks suppress optional index/lock writes.
