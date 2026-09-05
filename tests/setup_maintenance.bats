@@ -229,3 +229,66 @@ full_snapshot() {
     [[ ! -e "$PROJECT/.devcontainer/scripts/refresh-assets.sh" ]]
     [[ "$(jq -r '.files[".devcontainer/scripts/refresh-assets.sh"]' "$PROJECT/.tarnished-manifest.json")" == "$baseline" ]]
 }
+
+@test "explicit false preserves a known legacy catalog byte for byte" {
+    jq --slurpfile old "$DIST/scripts/lib/refresh-legacy.json" \
+        '.use_default_managed_paths = false | .managed_paths = $old[0].managed_path_catalogs[0]' \
+        "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    mv "$SCRATCH/config" "$PROJECT/.tarnished/refresh.json"
+    local before
+    before=$(sha256sum "$PROJECT/.tarnished/refresh.json")
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    [[ "$(sha256sum "$PROJECT/.tarnished/refresh.json")" == "$before" ]]
+    assert_output --partial 'Preserving custom managed_paths'
+}
+
+@test "actual scaffolded workflow contracts adopt and update without unresolved profile placeholders" {
+    # Use real template bytes instead of this suite's small synthetic catalog.
+    rm -rf "$DIST/templates"
+    cp -a "$REPO_ROOT/templates" "$DIST/templates"
+    local fresh="$SCRATCH/fresh"
+    mkdir "$fresh"
+    cd "$fresh"
+    run bash "$DIST/setup.sh" --lang go --ai-profile codex-main -y fresh
+    assert_success
+    cmp .tarnished/workflows/README.md "$DIST/templates/agent-workflows/.tarnished/workflows/README.md"
+    cmp .tarnished/workflows/review.md "$DIST/templates/agent-workflows/.tarnished/workflows/review.md"
+    local profile_before
+    profile_before=$(sha256sum .tarnished/agent-profile.json)
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    jq -e '.entries[".tarnished/workflows/README.md"].origin == "upstream" and .entries[".tarnished/workflows/review.md"].origin == "upstream"' .tarnished/refresh-state.json
+    printf '\nUpdated shared review contract.\n' >> "$DIST/templates/agent-workflows/.tarnished/workflows/review.md"
+    printf '\nUpdated shared workflow introduction.\n' >> "$DIST/templates/agent-workflows/.tarnished/workflows/README.md"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    cmp .tarnished/workflows/README.md "$DIST/templates/agent-workflows/.tarnished/workflows/README.md"
+    cmp .tarnished/workflows/review.md "$DIST/templates/agent-workflows/.tarnished/workflows/review.md"
+    ! grep -q '{{' .tarnished/workflows/README.md .tarnished/workflows/review.md
+    [[ "$(sha256sum .tarnished/agent-profile.json)" == "$profile_before" ]]
+}
+
+@test "refresh preserves legacy helper deletion and retains other v2 tombstones when recording helper proof" {
+    local helper='.devcontainer/scripts/refresh-assets.sh' other='.devcontainer/scripts/deleted.sh' hash
+    hash="sha256:$(sha256sum "$DIST/templates/core/$helper" | cut -d' ' -f1)"
+    jq -n --arg helper "$helper" --arg hash "$hash" \
+        '{manifest_version:1,tarnished_version:"legacy",tarnished_commit:"",created_at:"",scaffold_options:{},files:{($helper):$hash}}' \
+        > "$PROJECT/.tarnished-manifest.json"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    [[ ! -e "$PROJECT/$helper" ]]
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    [[ ! -e "$PROJECT/$helper" ]]
+    # An explicit restoration may be adopted; another deletion still survives
+    # the manifest writer used for updater baseline installation.
+    cp "$DIST/templates/core/$helper" "$PROJECT/$helper"
+    jq -n --arg helper "$helper" --arg other "$other" --arg hash "$hash" \
+        '{manifest_version:2,tarnished_version:"prior",tarnished_commit:"",created_at:"",scaffold_options:{},files:{($helper):$hash},deleted_paths:[$other]}' \
+        > "$PROJECT/.tarnished-manifest.json"
+    run bash "$DIST/setup.sh" --refresh -y
+    assert_success
+    jq -e --arg other "$other" '.deleted_paths == [$other]' "$PROJECT/.tarnished-manifest.json"
+    [[ ! -e "$PROJECT/$other" ]]
+}

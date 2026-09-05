@@ -118,11 +118,32 @@ JSON file at the root of a monorepo target produced by `setup.sh --monorepo`. Re
 
 Each root/module scope has `manifest_version: 2`, existing version/commit/timestamp/options metadata, and `files: {relative_path: "sha256:<64 lowercase hex>"}`. Empty maps are valid. Files are eligible copied runtime helpers under `.devcontainer/scripts/`, excluding `post.sh`, sidecars and all project-owned seeds/settings. Hashes describe last successfully installed or exactly distribution-matched bytes. Conflicts, failed writes, user deletions and unpruned removals retain old hashes. Only successful prune drops a removal entry. Equivalent writes preserve timestamps/state bytes.
 
-Version-1 entries are untrusted. Bootstrap compares eligible staged distribution candidates without scanning the downstream repository; only exact matches establish provenance without mutation. A supplied historical ref selects comparison content, not permission to trust legacy observed hashes. Re-bootstrap preserves trusted edited/deleted entries. Validate schema, hash format, scope-relative path components and absence of symlinks before all target access.
+Version-1 entries are untrusted. Bootstrap compares eligible staged distribution candidates without scanning the downstream repository; only exact matches establish provenance without mutation. A supplied historical ref selects comparison content, not permission to trust legacy observed hashes. Re-bootstrap preserves trusted edited/deleted entries. Missing eligible version-1 paths become optional `deleted_paths` tombstones in version 2, disjoint from `files`. These preserve deletion intent across repeated bootstrap/upgrade/refresh without granting content ownership. Restoring an exact distributed file permits explicit adoption and clears its tombstone. Validate schema, hash format, scope-relative path components and absence of symlinks before all target access.
 
 ### `.tarnished/refresh-state.json` schema
 
-Versioned local metadata: `{schema_version: 1, files: {destination: entry}}`. Each entry records `repo_url`, `mapping_src`, `mapping_dst`, `installed_hash`, `origin` (`upstream` or `overlay`), and diagnostic source `commit`. It binds a successful installation or exact match to a specific source/destination mapping. Mapping changes preserve old destinations rather than granting deletion authority. Advance entries only after success; retain old baseline on conflict/failure/deletion. Overlay-origin content is never automatically pruned. Malformed or symlink state cannot authorize updates. State is excluded from distribution and manifests.
+Versioned local metadata: `{schema_version: 1, entries: {destination: entry}}`. Each entry records nested `mapping: {repo, src, dst, overlay}`, `sha256` (64 lowercase hexadecimal characters without a prefix), `origin` (`upstream` or `overlay`), and diagnostic source `commit`. `overlay` is a relative path or `null`. It binds a successful installation or exact match to the complete mapping. Mapping changes preserve old destinations rather than granting deletion authority. Advance entries only after success; retain old baselines on conflicts/failures/deletions. Overlay-origin content is never automatically pruned. Malformed or symlink state cannot authorize updates. State is excluded from distribution and manifests.
+
+Example with a syntactically valid illustrative digest (actual entries contain the installed content hash):
+
+```json
+{
+  "schema_version": 1,
+  "entries": {
+    ".agents/skills/flow/SKILL.md": {
+      "mapping": {
+        "repo": "https://github.com/TE-ToshiakiTanaka2/tarnished.git",
+        "src": "templates/codex/.agents/skills",
+        "dst": ".agents/skills",
+        "overlay": ".agents/skills.local"
+      },
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "origin": "upstream",
+      "commit": "example-source-commit"
+    }
+  }
+}
+```
 
 ## Relationships
 

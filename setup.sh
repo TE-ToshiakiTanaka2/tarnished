@@ -1750,7 +1750,7 @@ run_refresh() {
         candidate=$(cat "$defaults")
         print_info "Install default refresh configuration: $config"
     elif jq -e --slurpfile legacy "$legacy" \
-        '(.use_default_managed_paths // false) == false and (.managed_paths as $paths | any($legacy[0].managed_path_catalogs[]; . == $paths))' "$config" >/dev/null; then
+        '(has("use_default_managed_paths") | not) and (.managed_paths as $paths | any($legacy[0].managed_path_catalogs[]; . == $paths))' "$config" >/dev/null; then
         candidate=$(jq --slurpfile defaults "$defaults" \
             '.use_default_managed_paths = true | .managed_paths = $defaults[0].managed_paths' "$config")
         print_info "Adopt current default AI catalog; preserve project upstream/cache choices: $config"
@@ -1792,13 +1792,14 @@ run_refresh() {
     if [[ "$(jq -r '.manifest_version // 0' <<< "$old_manifest")" == 2 ]]; then
         trusted_hash=$(jq -r --arg rel "$rel" '.files[$rel] // empty' <<< "$old_manifest")
     fi
+    manifest_load_deleted "$root" "$old_manifest" || return 1
     desired_hash=$(sha256_file "$updater")
     installed_hash=""
     [[ -f "$root/$rel" ]] && installed_hash=$(sha256_file "$root/$rel")
     if [[ "$installed_hash" == "$desired_hash" ]]; then
         print_info "Container-start updater is current: $root/$rel"
         helper_proven=true
-    elif [[ -z "$installed_hash" && -z "$trusted_hash" ]] || [[ -n "$trusted_hash" && "$installed_hash" == "$trusted_hash" ]] || jq -e --arg hash "$installed_hash" 'any(.helper_hashes[]; .sha256 == $hash)' "$legacy" >/dev/null; then
+    elif [[ -z "$installed_hash" && -z "$trusted_hash" && -z "${MANIFEST_DELETED[$rel]:-}" ]] || [[ -n "$trusted_hash" && "$installed_hash" == "$trusted_hash" ]] || jq -e --arg hash "$installed_hash" 'any(.helper_hashes[]; .sha256 == $hash)' "$legacy" >/dev/null; then
         helper_proven=true
         print_info "Install safe container-start updater: $updater -> $root/$rel"
         if [[ "$DRY_RUN" != true ]]; then
@@ -1823,6 +1824,8 @@ run_refresh() {
         # the legacy migration. Version-1 claims remain untrusted.
         manifest_recording_start "$root" || return 1
         manifest_recording_stop
+        manifest_load_deleted "$root" "$old_manifest" || return 1
+        unset 'MANIFEST_DELETED[$rel]'
         local key hash opts version commit
         if [[ "$(jq -r '.manifest_version // 0' <<< "$old_manifest")" == 2 ]]; then
             while IFS=$'\t' read -r key hash; do
@@ -2279,6 +2282,10 @@ apply_decisions_for_scope() {
         NEW_HASHES["$k"]="${MANIFEST_TRACKED[$k]}"
     done
 
+    # Deletion intent is not a trusted content baseline. Keep legacy missing
+    # helpers absent across subsequent v2 reconciliations.
+    manifest_load_deleted "$scope_root" "$old_json" || return 1
+
     # Reset tallies for this scope.
     manifest_tally_reset
 
@@ -2288,6 +2295,9 @@ apply_decisions_for_scope() {
         ALL_PATHS["$k"]=1
     done
     for k in "${!NEW_HASHES[@]}"; do
+        ALL_PATHS["$k"]=1
+    done
+    for k in "${!MANIFEST_DELETED[@]}"; do
         ALL_PATHS["$k"]=1
     done
 
@@ -2310,7 +2320,7 @@ apply_decisions_for_scope() {
             current=""
         fi
         decision=$(manifest_decide "$old" "$current" "$new")
-        if [[ "$legacy" == true && -z "$current" ]] && jq -e --arg rel "$rel" '.files | has($rel)' <<< "$old_json" >/dev/null; then
+        if [[ -n "${MANIFEST_DELETED[$rel]:-}" && -z "$current" ]]; then
             decision=SKIP_USER_DELETED
         fi
         # Per review.md Critical #4: do NOT swallow manifest_apply
@@ -2321,6 +2331,7 @@ apply_decisions_for_scope() {
             ((apply_failures++)) || true
         elif [[ "$decision" == NEW || "$decision" == UPDATE || ( "$decision" == NOOP && -n "$new" ) ]]; then
             INSTALLED_HASHES["$rel"]="$new"
+            unset 'MANIFEST_DELETED[$rel]'
         elif [[ "$decision" == PRUNE ]]; then
             unset 'INSTALLED_HASHES[$rel]'
         fi

@@ -1,6 +1,6 @@
 # Shared Agent Workflows
 
-This directory holds the agent-neutral lifecycle contracts for `{{PROJECT_NAME}}`.
+This directory holds the project’s agent-neutral lifecycle contracts.
 
 ## Source-of-truth graph
 
@@ -18,9 +18,7 @@ When editing any level, keep the others aligned in the same commit. Upstream tar
 
 ## Agent Profile
 
-- **Profile**: `{{AI_PROFILE}}`
-- **Primary agent**: `{{AI_PRIMARY_AGENT}}`
-- **Review agent**: `{{AI_REVIEW_AGENT}}`
+Read the current profile, primary agent, review agent and role overrides from `.tarnished/agent-profile.json`. That project-owned configuration is authoritative; these centrally refreshed contracts do not embed scaffold-time selections.
 
 ## Roles
 

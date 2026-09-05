@@ -15,27 +15,30 @@ Both refresh options require arguments and validated ordinary directories. `--so
 
 ## Persisted schemas
 
-Manifest v2 retains `tarnished_version`, `tarnished_commit`, `created_at`, `scaffold_options`, and `files: {path: "sha256:<64 lowercase hex>"}`. Read v1 only for conservative migration. `files` hashes mean installed/matched baselines; preserve them on conflicts or user deletion. Empty maps are valid. Do not rewrite equivalent state to change timestamps.
+Manifest v2 retains `tarnished_version`, `tarnished_commit`, `created_at`, `scaffold_options`, and `files: {path: "sha256:<64 lowercase hex>"}`. Read v1 only for conservative migration. `files` hashes mean installed/matched baselines; preserve them on conflicts or user deletion. Empty maps are valid. Optional `deleted_paths: [relative_path]` stores legacy deletion intent separately from proven `files` baselines. These eligible paths remain absent across repeated upgrade/bootstrap/refresh runs until the developer restores an exact distributed file for adoption; a tombstone grants no overwrite or prune authority. Do not rewrite equivalent state to change timestamps.
 
 Refresh state at `.tarnished/refresh-state.json`:
 
 ```json
 {
   "schema_version": 1,
-  "files": {
+  "entries": {
     ".agents/skills/flow/SKILL.md": {
-      "repo_url": "https://github.com/TE-ToshiakiTanaka2/tarnished.git",
-      "mapping_src": "templates/codex/.agents/skills",
-      "mapping_dst": ".agents/skills",
-      "installed_hash": "sha256:<64 lowercase hex>",
+      "mapping": {
+        "repo": "https://github.com/TE-ToshiakiTanaka2/tarnished.git",
+        "src": "templates/codex/.agents/skills",
+        "dst": ".agents/skills",
+        "overlay": ".agents/skills.local"
+      },
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "origin": "upstream",
-      "commit": "<source commit>"
+      "commit": "example-source-commit"
     }
   }
 }
 ```
 
-`origin` is `upstream` or `overlay`. Keys, mappings, hashes, and origins are validated before use. Mapping identity includes source and destination plus repository; unrelated source/config changes do not authorize deleting former destinations. An implementation may store equivalent per-mapping state instead, provided these semantics and validation remain observable. State is local metadata; it never joins either distributed asset inventory.
+`origin` is `upstream` or `overlay`. Keys, nested `mapping` values, unprefixed 64-character SHA-256 hex digests, and origins are validated before use. The all-zero digest above illustrates valid syntax; actual records contain the installed content digest. Mapping identity includes source and destination plus repository; unrelated source/config changes do not authorize deleting former destinations. State is local metadata; it never joins either distributed asset inventory.
 
 `refresh.json` remains schema 1 with optional `use_default_managed_paths: boolean`. Absence/false preserves the explicit project's `managed_paths`, including empty arrays. True selects the current upstream default `managed_paths` catalog, falling back with a warning to the project snapshot when the catalog is unavailable. It does not replace upstream/cache settings or profile choices.
 
