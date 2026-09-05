@@ -43,6 +43,9 @@ CONFLICTS=0
 UNKNOWN=0
 UNSAFE=0
 FAILURES=0
+BACKED_UP=0
+BACKUP_RUN=""
+BACKUP_PATH=""
 declare -a HASH_COMMAND=()
 
 warn() {
@@ -355,6 +358,9 @@ codex_selected() {
         jq -e '.scaffold_options.codex_enabled == true' "$manifest" >/dev/null 2>&1; then
         return 0
     fi
+    if ordinary_path "$PROJECT_ROOT/.codex/config.toml" && [[ -f "$PROJECT_ROOT/.codex/config.toml" ]]; then
+        return 0
+    fi
     ordinary_path "$PROJECT_ROOT/.agents/skills" && [[ -d "$PROJECT_ROOT/.agents/skills" ]]
 }
 
@@ -382,21 +388,57 @@ record_entry() {
     ENTRIES["$path"]="$entry"
 }
 
-# Atomic per-file installation, rechecking path and content immediately before replacement.
+# Backups are outside refresh/manifest ownership and never automatically removed.
+# A private run directory also protects backups of settings containing secrets.
+backup_file() {
+    local target="$1" expected="$2" root="$PROJECT_ROOT/.tarnished/backups" relative parent recovery
+    BACKUP_PATH=""
+    ordinary_path "$root" && [[ ! -e "$root" || -d "$root" ]] || return 1
+    if [[ -z "$BACKUP_RUN" ]]; then
+        (umask 077; mkdir -p "$root") && ordinary_path "$root" || return 1
+        BACKUP_RUN=$(umask 077; mktemp -d "$root/refresh.XXXXXX") || return 1
+    fi
+    ordinary_path "$BACKUP_RUN" && [[ -d "$BACKUP_RUN" ]] || return 1
+    relative="${target#"$PROJECT_ROOT/"}"
+    BACKUP_PATH="$BACKUP_RUN/$relative"
+    parent=$(dirname "$BACKUP_PATH")
+    ordinary_path "$BACKUP_PATH" && [[ ! -e "$BACKUP_PATH" ]] || return 1
+    (umask 077; mkdir -p "$parent") && ordinary_path "$BACKUP_PATH" || return 1
+    [[ ! -e "$BACKUP_PATH" ]] && ordinary_path "$target" && [[ -f "$target" ]] || return 1
+    # noclobber reserves an ordinary new leaf before copying; never reuse backups.
+    (umask 077; set -C; : > "$BACKUP_PATH") || return 1
+    ordinary_path "$BACKUP_PATH" && [[ -f "$BACKUP_PATH" ]] &&
+        cp -p -- "$target" "$BACKUP_PATH" && ordinary_path "$BACKUP_PATH" &&
+        [[ -f "$BACKUP_PATH" && "$(hash_file "$BACKUP_PATH")" == "$expected" ]] || return 1
+    BACKED_UP=$((BACKED_UP + 1))
+    print_info "refresh-assets: backed up $target to $BACKUP_PATH"
+    printf -v recovery 'cp -- %q %q' "$BACKUP_PATH" "$target"
+    print_info "refresh-assets: restore with: $recovery"
+    ordinary_path "$target" && [[ -f "$target" && "$(hash_file "$target")" == "$expected" ]]
+}
+
+# Atomic per-file installation with verified backup and last-moment content checks.
 install_file() {
     local candidate="$1" target="$2" expected="$3" desired_hash="$4" temporary parent current=""
     ordinary_path "$candidate" && [[ -f "$candidate" ]] && ordinary_path "$target" || return 1
     parent=$(dirname "$target")
     mkdir -p "$parent" && ordinary_path "$target" || return 1
     temporary=$(mktemp "$parent/.refresh-file.XXXXXX") || return 1
-    if ! ordinary_path "$candidate" || ! cp -p -- "$candidate" "$temporary" ||
-        [[ "$(hash_file "$temporary")" != "$desired_hash" ]]; then
-        rm -f -- "$temporary"; return 1
+    if ! ordinary_path "$candidate" || ! ordinary_path "$temporary" || ! cp -p -- "$candidate" "$temporary" ||
+        ! ordinary_path "$temporary" || [[ ! -f "$temporary" || "$(hash_file "$temporary")" != "$desired_hash" ]]; then
+        ordinary_path "$temporary" && rm -f -- "$temporary"; return 1
     fi
-    if [[ -f "$target" ]]; then current=$(hash_file "$target") || current=error; fi
+    BACKUP_PATH=""
+    if [[ -n "$expected" ]] && ! backup_file "$target" "$expected"; then
+        warn "backup failed or target changed for $target; target and baseline preserved; inspect $PROJECT_ROOT/.tarnished/backups and retry"
+        ordinary_path "$temporary" && rm -f -- "$temporary"; return 1
+    fi
+    if ordinary_path "$target" && [[ -f "$target" ]]; then current=$(hash_file "$target") || current=error; fi
     if ! ordinary_path "$target" || [[ -e "$target" && ! -f "$target" ]] || [[ "$current" != "$expected" ]] ||
+        ! ordinary_path "$temporary" || [[ ! -f "$temporary" || "$(hash_file "$temporary")" != "$desired_hash" ]] ||
+        { [[ -n "$expected" ]] && { ! ordinary_path "$BACKUP_PATH" || [[ ! -f "$BACKUP_PATH" || "$(hash_file "$BACKUP_PATH")" != "$expected" ]]; }; } ||
         ! mv -f -- "$temporary" "$target"; then
-        rm -f -- "$temporary"; return 1
+        ordinary_path "$temporary" && rm -f -- "$temporary"; return 1
     fi
     ordinary_path "$target" && [[ -f "$target" ]] &&
         [[ "$(hash_file "$target")" == "$desired_hash" ]]
@@ -405,10 +447,11 @@ install_file() {
 reconcile_file() {
     local path="$1" base="$2" overlay="$3" mapping="$4" removal_proven="$5"
     local target desired="" origin=upstream desired_hash="" current_hash="" old_hash="" old_origin=""
-    local prior="${ENTRIES[$path]:-}" base_hash=""
+    local prior="${ENTRIES[$path]:-}"
     case "$path" in
         .tarnished/refresh.json|.tarnished/refresh-state.json|.tarnished/agent-profile.json|\
-        .tarnished-manifest.json|.codex/config.toml|.claude/settings.json|\
+        .tarnished-manifest.json|.tarnished/backups|.tarnished/backups/*|\
+        .codex/config.local.toml|.claude/settings.local.json|\
         .devcontainer/scripts/post.sh|AGENTS.md|CLAUDE.md|.git/*|.git|*.local|*.local/*)
             PRESERVED=$((PRESERVED + 1))
             UNKNOWN=$((UNKNOWN + 1))
@@ -439,10 +482,6 @@ reconcile_file() {
     fi
     if [[ -f "$target" ]]; then
         current_hash=$(hash_file "$target") || { FAILURES=$((FAILURES + 1)); warn "cannot hash $target; check permissions and retry"; return; }
-    elif [[ -n "$prior" ]]; then
-        PRESERVED=$((PRESERVED + 1))
-        $QUIET || print_info "refresh-assets: preserve user deletion $target"
-        return
     fi
     if [[ -n "$desired" ]]; then
         desired_hash=$(hash_file "$desired") || { FAILURES=$((FAILURES + 1)); warn "cannot hash $desired; check permissions and retry"; return; }
@@ -458,20 +497,8 @@ reconcile_file() {
             fi
             return
         fi
-        if [[ -z "$prior" && -n "$current_hash" && -f "$base" ]]; then
-            base_hash=$(hash_file "$base") || {
-                FAILURES=$((FAILURES + 1)); warn "cannot hash $base; check permissions and retry"; return;
-            }
-        fi
-        if [[ -n "$current_hash" && "$current_hash" != "$old_hash" && "$current_hash" != "$base_hash" ]]; then
-            PRESERVED=$((PRESERVED + 1))
-            if [[ -n "$prior" ]]; then CONFLICTS=$((CONFLICTS + 1)); else UNKNOWN=$((UNKNOWN + 1)); fi
-            if [[ "$origin" == overlay ]]; then
-                warn "conflict: preserve $target; compare $desired; to keep this overlay, explicitly copy effective overlay $desired to $target and retry; for upstream-only recovery, remove the sidecar then copy $base to $target"
-            else
-                warn "conflict: preserve $target; compare $base; for upstream-only recovery, explicitly copy $base to $target and retry; to retain edits, save them at ${overlay:-a project-owned path} and explicitly copy the chosen effective bytes to $target"
-            fi
-            return
+        if $DRY_RUN && [[ -n "$current_hash" ]]; then
+            print_info "refresh-assets: [dry-run] backup $target under $PROJECT_ROOT/.tarnished/backups/<unique-run>/$path before replacement"
         fi
         print_info "refresh-assets: $(if $DRY_RUN; then printf '[dry-run] '; fi)install $target from $desired"
         if $DRY_RUN; then return; fi
@@ -512,6 +539,11 @@ reconcile_mapping() {
         UNSAFE=$((UNSAFE + 1))
         warn "unsafe mapping $src -> $dst; repair symlink/type conflict"; return;
     }
+    case "$overlay" in
+        .tarnished/backups|.tarnished/backups/*)
+            UNSAFE=$((UNSAFE + 1))
+            warn "reserved backup overlay $overlay; choose a project customization outside .tarnished/backups"; return ;;
+    esac
     if [[ -n "$overlay" ]]; then
         overlay_abs=$(safe_join "$PROJECT_ROOT" "$overlay") || { UNSAFE=$((UNSAFE + 1)); warn "unsafe overlay $overlay; repair it and retry"; return; }
     fi
@@ -545,7 +577,7 @@ reconcile_mapping() {
         for root in "$src_abs" "$overlay_abs"; do
             [[ -n "$root" && -d "$root" ]] || continue
             inventory=$(mktemp) || { FAILURES=$((FAILURES + 1)); warn 'cannot inventory source; repair temporary storage and retry'; return; }
-            if ! find "$root" -type f -print0 > "$inventory"; then
+            if ! find "$root" -path "$PROJECT_ROOT/.tarnished/backups" -prune -o -type f -print0 > "$inventory"; then
                 rm -f -- "$inventory"
                 FAILURES=$((FAILURES + 1))
                 warn "cannot enumerate $root; preserve mapping and repair permissions before retrying"
@@ -642,15 +674,28 @@ main() {
             warn 'upstream default catalog unavailable/invalid; using project snapshot; retry after upstream repair'
         fi
     fi
+    # Older shipped default catalogs predate CLI settings. The current updater
+    # keeps these mandatory default targets while sourcing bytes at the selected ref.
+    # Explicit custom/empty mappings never enter this compatibility path.
+    if jq -e '.use_default_managed_paths == true' "$CONFIG_PATH" >/dev/null; then
+        CATALOG=$(jq -c '
+            reduce [{src:"templates/claude/.claude/settings.json",dst:".claude/settings.json"},
+                    {src:"templates/codex/.codex/config.toml",dst:".codex/config.toml"}][] as $setting
+                (. ; if any(.[]; .dst as $dst | $setting.dst == $dst or ($setting.dst | startswith($dst + "/")))
+                     then . else . + [$setting] end)' <<< "$CATALOG") || {
+            warn 'cannot extend legacy settings catalog; inspect config and retry'; return 0;
+        }
+        valid_catalog <<< "$CATALOG" || { warn 'settings catalog overlaps a customization; repair mappings and retry'; return 0; }
+    fi
     codex_selected && codex=true
     while IFS= read -r row; do
-        if ! $codex && jq -e '.dst == ".agents/skills" or (.dst | startswith(".agents/skills/"))' <<< "$row" >/dev/null; then
+        if ! $codex && jq -e '.dst == ".codex/config.toml" or .dst == ".agents/skills" or (.dst | startswith(".agents/skills/"))' <<< "$row" >/dev/null; then
             continue
         fi
         reconcile_mapping "$row"
     done < <(jq -c '.[]' <<< "$CATALOG")
     persist_state || FAILURES=$((FAILURES + 1))
-    $QUIET || print_success "refresh-assets: reconciliation complete ($CHANGED installed, $REMOVED removed, $UNCHANGED unchanged, $ADOPTED adopted, $PRESERVED preserved: $CONFLICTS conflicts, $UNKNOWN unknown; $UNSAFE unsafe, $FAILURES failures); upstream unchanged files still reconciled"
+    $QUIET || print_success "refresh-assets: reconciliation complete ($CHANGED installed, $BACKED_UP backed-up, $REMOVED removed, $UNCHANGED unchanged, $ADOPTED adopted, $PRESERVED preserved: $CONFLICTS conflicts, $UNKNOWN unknown; $UNSAFE unsafe, $FAILURES failures); upstream unchanged files still reconciled"
     return 0
 }
 

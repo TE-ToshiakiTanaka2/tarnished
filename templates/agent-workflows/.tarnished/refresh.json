@@ -75,6 +75,14 @@
       "src": "templates/agent-workflows/.tarnished/workflows/review.md",
       "dst": ".tarnished/workflows/review.md",
       "overlay": ".tarnished/workflows.local/review.md"
+    },
+    {
+      "src": "templates/claude/.claude/settings.json",
+      "dst": ".claude/settings.json"
+    },
+    {
+      "src": "templates/codex/.codex/config.toml",
+      "dst": ".codex/config.toml"
     }
   ],
   "use_default_managed_paths": true

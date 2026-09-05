@@ -185,6 +185,8 @@ if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
         ".tarnished/workflows.local"
         ".tarnished/workflows.local/*"
         ".tarnished/refresh.json"
+        ".tarnished/backups"
+        ".tarnished/backups/*"
         ".tarnished/refresh-state.json"
         ".tarnished/agent-profile.json"
         ".codex/config.toml"
