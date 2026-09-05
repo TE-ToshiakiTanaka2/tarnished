@@ -157,6 +157,32 @@ if ! declare -p MANIFEST_EXCLUDE_GLOBS &>/dev/null; then
         # .tarnished/workflows/erd in downstream projects (#304).
         ".tarnished/workflows/erd"
         ".tarnished/workflows/erd/*"
+        ".agents/skills"
+        ".agents/skills/*"
+        ".agents/skills.local"
+        ".agents/skills.local/*"
+        ".tarnished/workflows/issue.md"
+        ".tarnished/workflows/flow.md"
+        ".tarnished/workflows/implement.md"
+        ".tarnished/workflows/pr.md"
+        ".tarnished/workflows/review.md"
+        ".tarnished/workflows/README.md"
+        ".tarnished/workflows/design.md"
+        ".tarnished/workflows"
+        ".tarnished/workflows/*"
+        ".tarnished/workflows.local/issue.md"
+        ".tarnished/workflows.local/flow.md"
+        ".tarnished/workflows.local/implement.md"
+        ".tarnished/workflows.local/pr.md"
+        ".tarnished/workflows.local/review.md"
+        ".tarnished/workflows.local/README.md"
+        ".tarnished/workflows.local/design.md"
+        ".tarnished/workflows.local"
+        ".tarnished/workflows.local/*"
+        ".tarnished/refresh.json"
+        ".tarnished/refresh-state.json"
+        ".tarnished/agent-profile.json"
+        ".codex/config.toml"
         # User-owned overlay sidecars (#279 FR-4). Files in these
         # directories survive every refresh and MUST never be tracked
         # by the manifest either.
@@ -195,7 +221,8 @@ manifest_recording_start() {
         print_error "manifest_recording_start: root_dir required"
         return 1
     fi
-    MANIFEST_RECORDING_ROOT="$(cd "$root" && pwd)"
+    MANIFEST_RECORDING_ROOT="$(cd "$root" && pwd)" || return 1
+    manifest_safe_path "$MANIFEST_RECORDING_ROOT" .tarnished-manifest.json || return 1
     MANIFEST_RECORDING=true
     # Clear prior state.
     unset MANIFEST_TRACKED
@@ -219,6 +246,74 @@ _manifest_path_excluded() {
         [[ "$rel" == $pat ]] && return 0
     done
     return 1
+}
+
+# Relative inventory keys cannot escape a scope or break line-based serialization.
+_manifest_relative_path_valid() {
+    local rel="$1" part
+    [[ -n "$rel" && "$rel" != /* && "$rel" != */ ]] || return 1
+    [[ ! "$rel" =~ [[:cntrl:]] ]] || return 1
+    local parts=()
+    IFS='/' read -r -a parts <<< "$rel"
+    for part in "${parts[@]}"; do
+        [[ -n "$part" && "$part" != . && "$part" != .. ]] || return 1
+    done
+}
+
+# Maintenance is a positive policy, not everything outside an exclusion list.
+# Prefixes support module scopes; staging determines which helpers were delivered.
+_manifest_path_eligible() {
+    local rel="$1" scoped
+    _manifest_relative_path_valid "$rel" || return 1
+    [[ ! "$rel" =~ (^|/)[^/]*\.local(/|$) ]] || return 1
+    case "$rel" in
+        .devcontainer/scripts/*.sh) scoped="$rel" ;;
+        */.devcontainer/scripts/*.sh) scoped=".devcontainer/${rel#*/.devcontainer/}" ;;
+        *) return 1 ;;
+    esac
+    [[ "${scoped##*/}" != post.sh ]] || return 1
+    ! _manifest_path_excluded "$rel" && ! _manifest_path_excluded "$scoped"
+}
+
+# Reject symlinks and non-directory ancestors, including ancestors of the root.
+# A missing regular-file destination is allowed; existing directory leaves are not.
+manifest_safe_path() {
+    local root="$1" rel="$2" kind="${3:-file}" path part
+    _manifest_relative_path_valid "$rel" || return 1
+    [[ "$root" == /* && "$root" != / ]] || return 1
+    _manifest_relative_path_valid "${root#/}" || return 1
+    path=""
+    local parts=()
+    IFS='/' read -r -a parts <<< "${root#/}/$rel"
+    local i
+    for ((i = 0; i < ${#parts[@]}; i++)); do
+        part="${parts[$i]}"
+        path="$path/$part"
+        [[ ! -L "$path" ]] || return 1
+        if [[ -e "$path" ]]; then
+            if [[ "$i" -lt $((${#parts[@]} - 1)) ]]; then
+                [[ -d "$path" ]] || return 1
+            elif [[ "$kind" == directory ]]; then
+                [[ -d "$path" ]] || return 1
+            else
+                [[ -f "$path" ]] || return 1
+            fi
+        fi
+    done
+}
+
+# Rehash only the finite set successfully copied, after plugin transformations.
+manifest_recording_rehash() {
+    local rel hash
+    for rel in "${!MANIFEST_TRACKED[@]}"; do
+        if _manifest_path_eligible "$rel" &&
+            manifest_safe_path "$MANIFEST_RECORDING_ROOT" "$rel" &&
+            hash=$(sha256_file "$MANIFEST_RECORDING_ROOT/$rel"); then
+            MANIFEST_TRACKED["$rel"]="$hash"
+        else
+            unset 'MANIFEST_TRACKED[$rel]'
+        fi
+    done
 }
 
 # Public: register an already-written file for manifest tracking. Plugins
@@ -248,7 +343,8 @@ _record_tracked_copy() {
 
     local rel="${abs_dest#${MANIFEST_RECORDING_ROOT}/}"
 
-    if _manifest_path_excluded "$rel"; then
+    if ! _manifest_path_eligible "$rel" ||
+        ! manifest_safe_path "$MANIFEST_RECORDING_ROOT" "$rel"; then
         return 0
     fi
 
@@ -267,31 +363,51 @@ _record_tracked_copy() {
 OVERWRITE_ALL="${OVERWRITE_ALL:-false}"
 skip_confirm="${skip_confirm:-false}"
 
+# Validate scaffold destinations before any write/mkdir while recording is active.
+_recording_destination_safe() {
+    local dest="$1" kind="${2:-file}" abs rel
+    [[ "$MANIFEST_RECORDING" == true ]] || return 0
+    abs=$(_abs_path "$dest")
+    if [[ "$abs" == "$MANIFEST_RECORDING_ROOT" && "$kind" == directory ]]; then
+        manifest_safe_path "$(dirname "$abs")" "${abs##*/}" directory
+        return
+    fi
+    [[ "$abs" == "$MANIFEST_RECORDING_ROOT/"* ]] || return 1
+    rel="${abs#"$MANIFEST_RECORDING_ROOT/"}"
+    manifest_safe_path "$MANIFEST_RECORDING_ROOT" "$rel" "$kind"
+}
+
 # Copy a single file with overwrite confirmation
 # Usage: copy_with_confirm <source> <destination>
 copy_with_confirm() {
     local src="$1"
     local dest="$2"
 
+    if ! _recording_destination_safe "$dest"; then
+        print_warning "Skipped unsafe copy destination: $dest"
+        return 1
+    fi
+    if [[ ! -f "$src" || -L "$src" ]]; then
+        print_warning "Skipped non-regular copy source: $src"
+        return 1
+    fi
+
     # If destination doesn't exist, copy directly
     if [[ ! -e "$dest" ]]; then
-        cp "$src" "$dest"
+        cp "$src" "$dest" || return 1
         _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
     # Handle existing file based on flags
     if [[ "$OVERWRITE_ALL" == true ]]; then
-        cp "$src" "$dest"
+        cp "$src" "$dest" || return 1
         _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
     if [[ "$skip_confirm" == true ]]; then
         print_warning "Skipped: $dest (already exists)"
-        # Even when we skipped the write, the existing file still represents
-        # the canonical content for upgrade purposes; record its current hash.
-        _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
@@ -299,7 +415,6 @@ copy_with_confirm() {
     if [[ ! -e /dev/tty ]] || ! : < /dev/tty 2>/dev/null; then
         # Non-interactive environment: skip by default
         print_warning "Skipped: $dest (already exists, non-interactive)"
-        _record_tracked_copy "$(_abs_path "$dest")"
         return 0
     fi
 
@@ -308,13 +423,12 @@ copy_with_confirm() {
     local response
     IFS='' read -r response < /dev/tty
     if [[ "$response" =~ ^[Yy] ]]; then
-        cp "$src" "$dest"
+        cp "$src" "$dest" || return 1
+        _record_tracked_copy "$(_abs_path "$dest")"
     else
         print_warning "Skipped: $dest (already exists)"
     fi
-    # Record either way — the destination now exists with some content
-    # (either the freshly copied source or the user's original).
-    _record_tracked_copy "$(_abs_path "$dest")"
+    return 0
 }
 
 # Internal: resolve a (possibly relative) path to absolute. Used by the
@@ -336,8 +450,12 @@ copy_dir_with_confirm() {
     local src="$1"
     local dest="$2"
 
-    # Create destination directory if needed
-    mkdir -p "$dest"
+    # Check every destination ancestor before creating directories.
+    if ! _recording_destination_safe "$dest" directory; then
+        print_warning "Skipped unsafe copy directory: $dest"
+        return 1
+    fi
+    mkdir -p "$dest" || return 1
 
     # Iterate through source files
     while IFS= read -r -d '' file; do
@@ -346,8 +464,12 @@ copy_dir_with_confirm() {
         local dest_dir
         dest_dir="$(dirname "$dest_file")"
 
-        mkdir -p "$dest_dir"
-        copy_with_confirm "$file" "$dest_file"
+        if ! _recording_destination_safe "$dest_file"; then
+            print_warning "Skipped unsafe copy destination: $dest_file"
+            return 1
+        fi
+        mkdir -p "$dest_dir" || return 1
+        copy_with_confirm "$file" "$dest_file" || return 1
     done < <(find "$src" -type f -print0)
 }
 

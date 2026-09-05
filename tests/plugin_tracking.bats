@@ -58,7 +58,7 @@ assert_plugin_tracks_emitted_files() {
     source "$plugin_path"
 
     manifest_recording_start "$STAGING"
-    plugin_copy "$STAGING" >/dev/null 2>&1 || true
+    plugin_copy "$STAGING" >/dev/null 2>&1
     manifest_recording_stop
 
     local missing=()
@@ -66,13 +66,17 @@ assert_plugin_tracks_emitted_files() {
         local rel="${f#${STAGING}/}"
         # Skip directories we pre-seeded but plugins did not write into.
         # We inspect every actual file under STAGING.
-        if _manifest_path_excluded "$rel"; then
+        if ! _manifest_path_eligible "$rel"; then
             continue
         fi
         if [[ -z "${MANIFEST_TRACKED[$rel]:-}" ]]; then
             missing+=("$rel")
         fi
     done < <(find "$STAGING" -type f -print0)
+
+    for rel in "${!MANIFEST_TRACKED[@]}"; do
+        _manifest_path_eligible "$rel" || fail "Ineligible ownership: $rel"
+    done
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         printf 'plugin %s did not record %d file(s):\n' "$plugin_path" "${#missing[@]}"

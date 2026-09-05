@@ -7,12 +7,12 @@
 #   - Per-file lifecycle decisions (manifest_decide — the FR-4 8-case state
 #     machine)
 #   - manifest_apply (mutate the target tree per decision)
-#   - manifest_walk_directory (compute hashes from current state, used by
-#     --create-manifest)
+#   - manifest_walk_directory (private staged distribution inventory)
+#   - manifest_adopt_distribution (exact matches and retained v2 baselines)
 #   - manifest_summary_print (FR-11 end-of-run summary)
 #
 # Sourced by setup.sh in --create-manifest and --upgrade modes only. The
-# scaffold modes (single, monorepo init, add-module) do not need this file.
+# scaffold modes may use recording helpers from common.sh before writing v2 state.
 #
 # Depends on scripts/lib/common.sh for:
 #   - sha256_file
@@ -29,7 +29,7 @@ _MANIFEST_SH_LOADED=1
 # =============================================================================
 
 readonly MANIFEST_FILENAME=".tarnished-manifest.json"
-readonly MANIFEST_SUPPORTED_VERSION=1
+readonly MANIFEST_SUPPORTED_VERSION=2
 
 # MANIFEST_EXCLUDE_GLOBS is defined in scripts/lib/common.sh so that
 # copy_with_confirm can consult it without sourcing manifest.sh. This file
@@ -73,21 +73,37 @@ manifest_read() {
         return 1
     fi
 
-    local version
-    if ! version=$(jq -r '.manifest_version // 0' "$file" 2>/dev/null); then
-        print_error "manifest parse failed (invalid JSON): $file"
+    if ! manifest_safe_path "$scope_root" "$MANIFEST_FILENAME"; then
+        print_error "Unsafe manifest path: $file"
         return 1
     fi
-
-    if ! [[ "$version" =~ ^[0-9]+$ ]] || [[ "$version" -lt 1 ]]; then
-        print_error "manifest missing required 'manifest_version' field: $file"
+    if ! jq -e '
+        type == "object" and
+        (.manifest_version == 1 or .manifest_version == 2) and
+        (.tarnished_version | type == "string") and
+        (.tarnished_commit | type == "string") and
+        (.created_at | type == "string") and
+        (.scaffold_options | type == "object") and
+        (.scaffold_options.languages // [] | type == "array" and all(.[]; type == "string")) and
+        (.scaffold_options.services // [] | type == "array" and all(.[]; type == "string")) and
+        (.files | type == "object") and
+        (.files | to_entries | all(.[];
+            (.key | length > 0) and
+            (.key | explode | all(.[]; . >= 32 and . != 127)) and
+            (.value | type == "string" and test("^sha256:[0-9a-f]{64}$"))))
+    ' "$file" >/dev/null 2>&1; then
+        print_error "Invalid manifest schema/version/hash: $file"
         return 1
     fi
-
-    if [[ "$version" -gt "$MANIFEST_SUPPORTED_VERSION" ]]; then
-        print_error "Unsupported manifest_version: $version (max supported: $MANIFEST_SUPPORTED_VERSION). Upgrade setup.sh."
-        return 1
-    fi
+    local version rel
+    version=$(jq -r '.manifest_version' "$file")
+    while IFS= read -r rel; do
+        if ! _manifest_relative_path_valid "$rel" ||
+            { [[ "$version" == 2 ]] && ! _manifest_path_eligible "$rel"; }; then
+            print_error "Invalid manifest ownership path: $rel"
+            return 1
+        fi
+    done < <(jq -r '.files | keys[]' "$file")
 
     cat "$file"
 }
@@ -114,7 +130,11 @@ manifest_write() {
 
     local file tmp
     file="$(manifest_path "$scope_root")"
-    tmp="${file}.tmp"
+    if ! manifest_safe_path "$scope_root" "$MANIFEST_FILENAME"; then
+        print_error "manifest_write: unsafe manifest path: $file"
+        return 1
+    fi
+    tmp=$(mktemp "${file}.tmp.XXXXXX") || return 1
 
     local created_at
     created_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -153,39 +173,83 @@ manifest_write() {
         return 1
     fi
 
-    mv "$tmp" "$file"
+    # Equivalent successful reconciliation must not churn timestamps/state.
+    if [[ -f "$file" ]] && jq -e --slurp '
+        (.[0] | del(.created_at)) == (.[1] | del(.created_at))
+    ' "$file" "$tmp" >/dev/null 2>&1; then
+        rm -f "$tmp"
+        return 0
+    fi
+    if ! manifest_safe_path "$scope_root" "$MANIFEST_FILENAME" ||
+        ! mv "$tmp" "$file"; then
+        rm -f "$tmp"
+        return 1
+    fi
 }
 
 # Internal: serialize MANIFEST_TRACKED to a sorted JSON object.
 _manifest_files_to_json() {
-    if [[ ${#MANIFEST_TRACKED[@]} -eq 0 ]]; then
-        printf '{}'
-        return 0
-    fi
     local key
+    for key in "${!MANIFEST_TRACKED[@]}"; do
+        if ! _manifest_path_eligible "$key" ||
+            [[ ! "${MANIFEST_TRACKED[$key]}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            print_error "Invalid manifest entry: $key" >&2
+            return 1
+        fi
+    done
     {
-        printf '{'
-        local first=true
-        for key in $(printf '%s\n' "${!MANIFEST_TRACKED[@]}" | LC_ALL=C sort); do
-            if [[ "$first" == true ]]; then
-                first=false
-            else
-                printf ','
-            fi
-            # jq -Rs encodes both key and value safely.
-            printf '%s:%s' \
-                "$(printf '%s' "$key" | jq -Rs .)" \
-                "$(printf '%s' "${MANIFEST_TRACKED[$key]}" | jq -Rs .)"
+        for key in "${!MANIFEST_TRACKED[@]}"; do
+            printf '%s\t%s\n' "$key" "${MANIFEST_TRACKED[$key]}"
         done
-        printf '}'
-    }
+    } | LC_ALL=C sort | jq -Rn '
+        reduce inputs as $line ({};
+            ($line | split("\t")) as $entry | .[$entry[0]] = $entry[1])'
+}
+
+# Establish ownership only from a private distribution inventory. Never enumerate
+# the downstream tree. Legacy hashes are intentionally ignored; v2 baselines are
+# retained even when a developer changed or deleted the installed file.
+# Usage: manifest_adopt_distribution <root> <staging> <validated-old-json-or-{}>
+manifest_adopt_distribution() {
+    local root="$1" staging="$2" old_json="$3" rel hash current
+    local version
+    version=$(printf '%s' "$old_json" | jq -r '.manifest_version // 0') || return 1
+    unset MANIFEST_TRACKED
+    declare -gA MANIFEST_TRACKED
+    if [[ "$version" == 2 ]]; then
+        while IFS=$'\t' read -r rel hash; do
+            [[ -n "$rel" ]] || continue
+            if _manifest_path_eligible "$rel"; then
+                MANIFEST_TRACKED["$rel"]="$hash"
+            fi
+        done < <(printf '%s' "$old_json" | jq -r '.files | to_entries[] | [.key,.value] | @tsv')
+    elif [[ "$version" == 1 ]]; then
+        print_warning "Legacy manifest ownership is unproven; only exact distribution matches are adopted." >&2
+        while IFS= read -r rel; do
+            print_warning "Legacy claim requires verification (preserved): $root/$rel" >&2
+        done < <(printf '%s' "$old_json" | jq -r '.files | keys[]')
+    fi
+    while IFS=$'\t' read -r rel hash; do
+        [[ -n "$rel" ]] || continue
+        if ! manifest_safe_path "$root" "$rel"; then
+            print_warning "Unsafe candidate preserved: $root/$rel" >&2
+            continue
+        fi
+        if [[ -f "$root/$rel" ]] && current=$(sha256_file "$root/$rel") &&
+            [[ "$current" == "$hash" ]]; then
+            MANIFEST_TRACKED["$rel"]="$hash"
+        elif [[ -e "$root/$rel" ]]; then
+            print_warning "Unknown or edited file preserved: $root/$rel; compare with $staging/$rel and explicitly adopt the desired file." >&2
+        fi
+    done < <(manifest_walk_directory "$staging")
 }
 
 # =============================================================================
 # Directory walk (used by --create-manifest)
 # =============================================================================
 
-# Walk <root>, hashing every file that is not in MANIFEST_EXCLUDE_GLOBS.
+# Walk a private distribution staging <root>, hashing eligible helpers only.
+# Never call this against a downstream project to infer ownership.
 # Emits one line per file: "<rel_path>\t<sha256:hex>".
 # Honors an optional list of additional path prefixes to skip (e.g. monorepo
 # module sub-trees when walking the root scope).
@@ -208,7 +272,7 @@ manifest_walk_directory() {
         local rel="${path#${abs_root}/}"
 
         # Skip excluded globs.
-        if _manifest_path_excluded "$rel"; then
+        if ! _manifest_path_eligible "$rel" || ! manifest_safe_path "$abs_root" "$rel"; then
             continue
         fi
 
@@ -272,6 +336,10 @@ manifest_decide() {
     [[ -n "$current" ]] && has_current=true
     [[ -n "$new" ]]     && has_new=true
 
+    if [[ "$has_new" == true && "$current" == "$new" ]]; then
+        printf 'NOOP'
+        return 0
+    fi
     if [[ "$has_new" == true ]]; then
         if [[ "$has_old" == false ]]; then
             # Not in old manifest — the new tarnished version added this file.
@@ -391,15 +459,38 @@ manifest_apply() {
     local staging_path="$3"
     local target_path="$4"
 
+    local target_root staging_root tmp
+    if ! _manifest_path_eligible "$rel_path" || [[ "$target_path" != */"$rel_path" ]]; then
+        print_warning "Refusing unsafe/ineligible maintenance path: $target_path" >&2
+        return 1
+    fi
+    target_root="${target_path%/"$rel_path"}"
+    if ! manifest_safe_path "$target_root" "$rel_path"; then
+        print_warning "Refusing unsafe maintenance target: $target_path" >&2
+        return 1
+    fi
+    if [[ "$decision" == UPDATE || "$decision" == NEW ]]; then
+        [[ "$staging_path" == */"$rel_path" ]] || return 1
+        staging_root="${staging_path%/"$rel_path"}"
+        manifest_safe_path "$staging_root" "$rel_path" && [[ -f "$staging_path" ]] || return 1
+        if [[ "${DRY_RUN:-false}" != true ]]; then
+            mkdir -p "$(dirname "$target_path")" || return 1
+            manifest_safe_path "$target_root" "$rel_path" || return 1
+            tmp=$(mktemp "$(dirname "$target_path")/.tarnished-copy.XXXXXX") || return 1
+            if ! cp -p "$staging_path" "$tmp" ||
+                ! manifest_safe_path "$target_root" "$rel_path" ||
+                ! mv "$tmp" "$target_path"; then
+                rm -f "$tmp"
+                return 1
+            fi
+        fi
+    fi
+
     case "$decision" in
         NOOP)
             ((TALLY_NOOP++)) || true
             ;;
         UPDATE)
-            if [[ "${DRY_RUN:-false}" != true ]]; then
-                mkdir -p "$(dirname "$target_path")"
-                cp "$staging_path" "$target_path" || return 1
-            fi
             ((TALLY_UPDATED++)) || true
             UPDATED_FILES+=("$rel_path")
             ;;
@@ -411,10 +502,6 @@ manifest_apply() {
             SKIPPED_EDITED_DIFFS+=("$diff")
             ;;
         NEW)
-            if [[ "${DRY_RUN:-false}" != true ]]; then
-                mkdir -p "$(dirname "$target_path")"
-                cp "$staging_path" "$target_path" || return 1
-            fi
             ((TALLY_NEW++)) || true
             NEW_FILES+=("$rel_path")
             ;;
@@ -429,13 +516,7 @@ manifest_apply() {
         PRUNE)
             if [[ "${DRY_RUN:-false}" != true ]]; then
                 rm -f "$target_path" || return 1
-                # Try to clean up empty parent dirs (best-effort, non-fatal).
-                local d
-                d="$(dirname "$target_path")"
-                while [[ "$d" != "/" ]] && [[ "$d" != "." ]] && [[ -d "$d" ]]; do
-                    rmdir "$d" 2>/dev/null || break
-                    d="$(dirname "$d")"
-                done
+
             fi
             ((TALLY_PRUNED++)) || true
             PRUNED_FILES+=("$rel_path")
