@@ -10,15 +10,20 @@ issue_body_sha256: "09c92d33ac68e638bfd1cc05fc682c8a8b8a60e05398b5dd1d03345b4ca8
 timestamp: "2026-09-05T13:10:37.342327+00:00"
 reviewer_model: "gpt-6-astra"
 reviewer_reasoning_effort: "high"
-review_status: "report-only"
-verified_head: null
+review_status: "complete"
+verified_head: "ccd9a4e90b264f5e16509b7f128d5fdebd4f9273"
 reviewer: "Independent Codex CLI 0.153.4, fresh context, read-only"
 reviewer_configuration: "Runtime verified against project .codex/config.toml"
 review_scope: "Deep: 36 files, 3624 additions, 1881 deletions; prior review artifacts excluded"
-orchestrator_verdict: "REQUEST_CHANGES"
+orchestrator_verdict: "APPROVE"
 finding_counts: {"Critical": 0, "Major": 4, "Minor": 7}
 additional_reviewer: "Claude Fable 5.1 (claude-fable-5-1; runtime verified)"
+unresolved_finding_counts: {"Critical": 0, "Major": 0, "Minor": 0}
+fix_reviewed_head: "ccd9a4e90b264f5e16509b7f128d5fdebd4f9273"
+verified_timestamp: "2026-09-05T14:12:49.524200+00:00"
 ---
+
+> Current disposition: all 4 confirmed Major and 7 confirmed Minor findings below were fixed and verified after the user authorized implementation. Historical report-only verdicts and original reviewer output are preserved; see the final Fixes Applied and focused review sections.
 
 # Independent review — original output
 
@@ -217,3 +222,85 @@ The raw verdict and severities above have not been rewritten. The following is t
 - Claude assessed all nine criteria and both independent ground truths, but had only Read/Glob/Grep. It did not execute Bats, ShellCheck, Git commands or the mirror script. Its statement about absent CI evidence concerns shell behavior; the existing PR does have passing Rust/asset-parity and related CI checks. Earlier local Bats/ShellCheck and all 21 mirror successes remain valid for unchanged code.
 - The orchestrator checked the symlink-prefix behavior and Codex sidecar ignore rule using temporary fixtures, counted the shipped source candidates, and reproduced the self-checkout behavior in a disposable clone. Live macOS portability remains untested.
 - The source tree, reviewed HEAD, fetched base and issue digest are unchanged. Only this review artifact has been updated; previous raw reviews are preserved. No fixes, commits, pushes, PR edits or merges were made in response to this additional review.
+
+
+# Fixes Applied — authorized follow-up
+
+The user's subsequent request authorized implementation. This section supersedes the earlier report-only and unresolved dispositions without changing either independent review's original output or severity. All **4 confirmed Major and 7 confirmed Minor** findings are fixed; optional recommendations remain outside this change.
+
+| Confirmed finding | Fix and verification |
+| --- | --- |
+| Major: helper UPDATE/NEW/PRUNE race | `1bda420`, `e5871b7`, `ccd9a4e`: require expected current/desired hashes, check temporary bytes, recheck current content/type immediately before mutation and installed bytes before recording ownership. Setup helper/config migration uses the same checks. Deterministic copy-time edit/collision, prune/NOOP, source-byte, config-edit and rename-directory regressions pass. |
+| Major: escaped filenames poison state | `1bda420`, `6309a25`, `ccd9a4e`: hash stdin with validated SHA-256; preserve literal control-free manifest keys. Installation, exact adoption, repeat refresh, bootstrap and upgrade regressions with backslash filenames pass; invalid checksum output cannot enter state. |
+| Major: host ancestor symlinks | `1bda420`, `6309a25`, `ccd9a4e`: establish physical outer roots while rejecting selected-root leaf and internal symlinks; compare physical overlap. Project/source/cache/config/staging alias tests and internal-link rejection pass. Design now states this boundary explicitly. |
+| Major: GNU-only maintenance | `1bda420`, `e5871b7`, `6309a25`, `ccd9a4e`: portable traversal/rename and shasum fallback, with mutation checks and installed-file postconditions. Linux fixtures using BSD-like command shims pass for runtime, setup and library paths. Bash 4.4+ is documented and checked before setup writes; no live macOS run was performed. |
+| Minor: overlay recovery instructions | `6309a25`, `ccd9a4e`: warnings/docs distinguish adopting effective overlay bytes from upstream-only recovery. Published recovery sequence passes with an existing baseline; preservation logic remains conservative. |
+| Minor: dry-run index writes | `6309a25`: Git cache status suppresses optional locks; dry-run preserves index bytes and metadata after cached-file mtime-only changes. |
+| Minor: missing-helper/wiring diagnostics | `ccd9a4e`: distinguish preserved deletion, edited/unknown helper and newly installed file; explain that existing container hooks/settings remain authoritative. New/deleted-helper diagnostic tests pass. |
+| Minor: incomplete runtime summary | `6309a25`: report unchanged/adopted/preserved/conflict/unknown/unsafe/failure categories, including persistence failures. Mixed outcome summary regression passes. |
+| Minor: ignored Codex sidecars | `ccd9a4e`: document local ignored behavior and explicit project allow-list entries for sharing; stable gitignore block markers remain unchanged. |
+| Minor: missing monorepo regression | `ccd9a4e`: positive real monorepo bare-refresh test preserves module trees and exercises explicit add-module afterwards. |
+| Minor: self/nested source-target manifest rewrite | `ccd9a4e`: reject physical source/target overlap before config/helper/manifest changes. Disposable self-checkout and nested-source snapshots remain unchanged after rejection. |
+
+## Verification and remaining limits
+
+- Frozen implementation: `ccd9a4e90b264f5e16509b7f128d5fdebd4f9273`; fix commits are `1bda420`, `e5871b7`, `6309a25`, and `ccd9a4e`.
+- Final affected Bats suites: **78 setup, 66 runtime refresh, 67 manifest/plugin tests passed (211 total)**. This includes 27 new regression cases. Syntax, ShellCheck, whitespace and all 21 mirror comparisons passed. The orchestrator independently rechecked final mirror identity, whitespace, changes and coverage before accepting the executor's successful mechanical validation.
+- Rust is unchanged by these fixes; prior format/check/Clippy, 109 binary tests and 15 integration tests remain applicable. Prior CI results apply only to their old head; the updated PR's CI is checked separately after push.
+- Portability evidence is Linux fixtures and BSD-like tool shims, not a live macOS test. Stock macOS Bash 3.2 is unsupported; use Bash 4.4+.
+- The fetched develop commit and decoded issue-body SHA-256 still match the review inputs. Only the preexisting unrelated `.claude/scheduled_tasks.lock` is untracked and excluded. Source was frozen during the independent follow-up; the subsequent review-artifact-only commit does not change the reviewed implementation.
+- The original Codex and Claude Fable 5.1 reviews assessed all nine criteria against both issue requirements and design. The focused independent Codex follow-up below assessed the fix delta and updated design against the same ground truths without seeing earlier reviewer output. Claude was not rerun and its original REQUEST_CHANGES verdict is not represented as a new approval.
+
+# Focused independent review of fixes
+
+Review input is the delta from `211ebd6c1d426932d2a2146e62a8ba6748931956` to the frozen implementation, excluding review artifacts. Reviewer: fresh-context Codex CLI 0.153.4, actual `gpt-6-astra`, reasoning effort `high`, read-only. Evidence:
+
+```json
+{
+  "repository": "TE-ToshiakiTanaka2/tarnished",
+  "issue_number": 316,
+  "reviewed_head": "ccd9a4e90b264f5e16509b7f128d5fdebd4f9273",
+  "compared_from": "211ebd6c1d426932d2a2146e62a8ba6748931956",
+  "base_ref": "develop",
+  "base_commit": "c78bb7afd71e029503262dcf3d30f8d5e6ae4e4b",
+  "merge_base": "c78bb7afd71e029503262dcf3d30f8d5e6ae4e4b",
+  "issue_body_sha256": "09c92d33ac68e638bfd1cc05fc682c8a8b8a60e05398b5dd1d03345b4ca897e7",
+  "timestamp": "2026-09-05T14:06:19.384801+00:00",
+  "reviewer_model": "gpt-6-astra",
+  "reviewer_reasoning_effort": "high"
+}
+```
+
+## Original focused reviewer output (verbatim)
+
+## Review Summary
+
+**Overall**: APPROVE
+
+Reviewed committed delta `211ebd6..ccd9a4e` against the full raw Issue #316 requirements and current design, assessing all nine criteria. No verified, concrete defects found in the changed scope.
+
+Positive assessment: content rechecks and installed-byte verification strengthen provenance handling. Regression tests cover concurrent edits, filename escaping, host aliases, portable utilities, overlay recovery, and monorepo preservation. Documentation clarifies migration and recovery.
+
+Validation passed: syntax checks for all five changed shell files, `git diff --check`, focused read-only hash/path/NOOP checks, and all mirror comparisons. Mirror verification ran with temporary diagnostic writes suppressed in memory.
+
+Limits: Bats fixtures were inspected but not executed because they create files. Native BSD/macOS and Bash 4.4 execution were not verified. No files were modified, setup was not run against `/workspace`, and excluded review artifacts were not read.
+
+## Critical Issues
+
+None.
+
+## Major Issues
+
+None.
+
+## Minor Issues
+
+None.
+
+## Suggestions
+
+None.
+
+## Final orchestrator disposition
+
+**APPROVE / complete** for the verified implementation. The focused review raised no remaining defects; all confirmed earlier findings are resolved with the verification above. No merge was performed.
