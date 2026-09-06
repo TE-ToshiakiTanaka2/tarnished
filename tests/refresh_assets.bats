@@ -1201,3 +1201,25 @@ MOCK
     cmp "$SCRATCH/state" "$PROJECT/.tarnished/refresh-state.json"
     [[ -z "$(find "$SCRATCH/outside" -mindepth 1 -print -quit)" ]]
 }
+
+@test "upstream-listed candidates cannot read backups through a broad overlay" {
+    local rel='backups/refresh.old/.codex/config.toml'
+    mkdir -p "$UPSTREAM_WORK/broad/$(dirname "$rel")" \
+        "$PROJECT/.tarnished/$(dirname "$rel")" "$PROJECT/.claude/skills/$(dirname "$rel")"
+    echo distributed > "$UPSTREAM_WORK/broad/$rel"
+    echo private-settings > "$PROJECT/.tarnished/$rel"
+    echo existing-live > "$PROJECT/.claude/skills/$rel"
+    jq '.managed_paths = [{src:"broad",dst:".claude/skills",overlay:".tarnished"}]' \
+        "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    run local_refresh --config "$SCRATCH/config"
+    assert_success
+    assert_output --partial 'reserved backup overlay'
+    assert_equal "$(cat "$PROJECT/.claude/skills/$rel")" existing-live
+    assert_equal "$(cat "$PROJECT/.tarnished/$rel")" private-settings
+    run jq -e --arg path ".claude/skills/$rel" '.entries | has($path)' "$PROJECT/.tarnished/refresh-state.json"
+    assert_failure
+    rm "$PROJECT/.claude/skills/$rel"
+    run local_refresh --config "$SCRATCH/config"
+    assert_success
+    [[ ! -e "$PROJECT/.claude/skills/$rel" ]]
+}

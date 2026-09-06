@@ -459,6 +459,14 @@ reconcile_file() {
             return
             ;;
     esac
+    # Upstream inventory can select a relative path beneath a broad overlay
+    # even when backup directories were excluded from overlay enumeration.
+    case "$overlay" in
+        "$PROJECT_ROOT/.tarnished/backups"|"$PROJECT_ROOT/.tarnished/backups/"*)
+            UNSAFE=$((UNSAFE + 1))
+            warn "reserved backup overlay for $path; choose a customization outside .tarnished/backups"
+            return ;;
+    esac
     target=$(safe_join "$PROJECT_ROOT" "$path") || { UNSAFE=$((UNSAFE + 1)); warn "unsafe destination $path; repair symlink/type conflict"; return; }
     if ! ordinary_path "$base" || { [[ -n "$overlay" ]] && ! ordinary_path "$overlay"; }; then
         UNSAFE=$((UNSAFE + 1))

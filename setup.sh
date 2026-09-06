@@ -1767,7 +1767,10 @@ run_refresh() {
     [[ ! -f "$config" ]] || config_start_hash=$(sha256_file "$config") || return 1
     local updater="$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
     if [[ ! -f "$config" ]]; then
-        candidate=$(cat "$default_catalog")
+        candidate=$(jq --slurpfile legacy "$legacy" '
+            if (has("use_default_managed_paths") | not) and
+                (.managed_paths as $paths | any($legacy[0].managed_path_catalogs[]; . == $paths))
+            then .use_default_managed_paths = true else . end' "$default_catalog") || return 1
         print_info "Install default refresh configuration: $config"
     elif jq -e --slurpfile legacy "$legacy" \
         '(has("use_default_managed_paths") | not) and (.managed_paths as $paths | any($legacy[0].managed_path_catalogs[]; . == $paths))' "$config" >/dev/null; then
@@ -1875,8 +1878,13 @@ run_refresh() {
         MANIFEST_TRACKED["$rel"]="$desired_hash"
         opts=$(jq -c '.scaffold_options // empty' <<< "$old_manifest")
         [[ -n "$opts" ]] || opts=$(infer_scaffold_options "$root" "$(if detect_existing_monorepo "$root"; then echo true; else echo false; fi)")
-        version=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo local)
-        commit=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        if [[ "$UPGRADE_MODE" == true ]]; then
+            version="$UPSTREAM_VERSION"
+            commit="$UPSTREAM_COMMIT"
+        else
+            version=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo local)
+            commit=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        fi
         manifest_write "$root" "$version" "$commit" "$opts" || return 1
     fi
 }
@@ -2168,6 +2176,14 @@ stage_distribution() {
             _stage_plugin_run_for_module "$4" "$5" "$6" "$7"
         else
             _stage_plugin_run "$4" "$5"
+        fi
+        # Upgrades must never install an old refresher, even if a later helper
+        # or module fails before root AI maintenance. Historical bootstrap still
+        # compares the selected distribution bytes without this substitution.
+        refresh_rel=".devcontainer/scripts/refresh-assets.sh"
+        if [[ "$UPGRADE_MODE" == true && -f "$5/$refresh_rel" ]]; then
+            manifest_safe_path "$5" "$refresh_rel"
+            cp -p "$SCRIPT_DIR/templates/core/$refresh_rel" "$5/$refresh_rel"
         fi
         manifest_walk_directory "$5" > "$8"
     ' bash "$SCRIPT_DIR/setup.sh" "$state" "$mode" "$upstream" "$stage" "$lang" "$module" "$inventory"; then

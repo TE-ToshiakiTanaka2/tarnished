@@ -637,6 +637,15 @@ MOCK
     cmp .codex/config.toml "$SCRATCH/expected-settings"
     cmp .devcontainer/scripts/refresh-assets.sh "$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
     assert_equal "$(cat "$(find .tarnished/backups -path '*/.codex/config.toml')")" '# old settings'
+    assert_equal "$(jq -r '.tarnished_version' .tarnished-manifest.json)" "$ref"
+    assert_equal "$(jq -r '.tarnished_commit' .tarnished-manifest.json)" "$(git -C "$SCRIPT_DIR" rev-parse "$ref")"
+    local manifest_before
+    manifest_before=$(sha256sum .tarnished-manifest.json)
+    git add -A
+    git commit -qm pinned-upgrade
+    run bash "$SETUP_SH" --upgrade --target-version "$ref" -y --prune
+    assert_success
+    assert_equal "$(sha256sum .tarnished-manifest.json)" "$manifest_before"
 }
 
 @test "clean successful module-only upgrade preserves root AI settings and backup tree" {
@@ -656,4 +665,39 @@ MOCK
     assert_success
     assert_equal "$(sha256sum .claude/settings.json .claude/skills/issue/SKILL.md .tarnished/refresh.json)" "$before"
     [[ ! -e .tarnished/backups ]]
+}
+
+@test "failed pinned legacy helper upgrade never installs its destructive refresher" {
+    local ref=46f7be7
+    git -C "$SCRIPT_DIR" cat-file -e "$ref^{commit}" || skip 'historical distribution unavailable in shallow checkout'
+    seed_scaffold
+    bootstrap_and_commit
+    local before
+    before=$(sha256sum .tarnished-manifest.json)
+    mkdir mock-bin
+    cat > mock-bin/mv <<'MOCK'
+#!/bin/bash
+if [[ "${@: -1}" == "$SCRATCH/.devcontainer/scripts/setup_plugins.sh" ]]; then
+    exit 1
+fi
+exec /usr/bin/mv "$@"
+MOCK
+    chmod +x mock-bin/mv
+    run env PATH="$SCRATCH/mock-bin:$PATH" bash "$SETUP_SH" --upgrade --target-version "$ref" -y
+    assert_failure
+    assert_output --partial 'manifest_apply failed for: .devcontainer/scripts/setup_plugins.sh'
+    cmp .devcontainer/scripts/refresh-assets.sh "$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
+    assert_equal "$(sha256sum .tarnished-manifest.json)" "$before"
+}
+
+@test "historical bootstrap still compares the actual historical refresher bytes" {
+    local ref=46f7be7 rel='.devcontainer/scripts/refresh-assets.sh' hash
+    git -C "$SCRIPT_DIR" cat-file -e "$ref^{commit}" || skip 'historical distribution unavailable in shallow checkout'
+    seed_scaffold
+    git -C "$SCRIPT_DIR" show "$ref:templates/core/$rel" > "$rel"
+    hash="sha256:$(sha256sum "$rel" | cut -d ' ' -f 1)"
+    run bash "$SETUP_SH" --create-manifest --from-version "$ref" -y
+    assert_success
+    assert_equal "$(jq -r --arg rel "$rel" '.files[$rel]' .tarnished-manifest.json)" "$hash"
+    assert_equal "sha256:$(sha256sum "$rel" | cut -d ' ' -f 1)" "$hash"
 }

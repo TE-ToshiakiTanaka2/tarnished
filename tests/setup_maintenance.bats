@@ -573,3 +573,21 @@ MOCK
     assert_success
     cmp "$PROJECT/.claude/settings.json" "$PROJECT/.claude/full-settings.local.json"
 }
+
+@test "missing refresh configuration at pre-opt-in ref installs both pinned settings on first run" {
+    local ref=46f7be7
+    git -C "$REPO_ROOT" cat-file -e "$ref^{commit}" || skip 'historical distribution unavailable in shallow checkout'
+    rm "$PROJECT/.tarnished/refresh.json"
+    cp "$PROJECT/.codex/config.toml" "$SCRATCH/codex-before"
+    cp "$PROJECT/.claude/settings.json" "$SCRATCH/claude-before"
+    run bash "$REPO_ROOT/setup.sh" --upgrade --target-version "$ref" -y --prune
+    assert_failure # helper manifest is still absent
+    assert_output --partial 'Runtime helpers skipped'
+    jq -e '.use_default_managed_paths == true' "$PROJECT/.tarnished/refresh.json"
+    git -C "$REPO_ROOT" show "$ref:templates/codex/.codex/config.toml" > "$SCRATCH/pinned-codex"
+    git -C "$REPO_ROOT" show "$ref:templates/claude/.claude/settings.json" > "$SCRATCH/pinned-claude"
+    cmp "$PROJECT/.codex/config.toml" "$SCRATCH/pinned-codex"
+    cmp "$PROJECT/.claude/settings.json" "$SCRATCH/pinned-claude"
+    cmp "$(find "$PROJECT/.tarnished/backups" -path '*/.codex/config.toml')" "$SCRATCH/codex-before"
+    cmp "$(find "$PROJECT/.tarnished/backups" -path '*/.claude/settings.json')" "$SCRATCH/claude-before"
+}
