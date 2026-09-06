@@ -376,20 +376,21 @@ seed_tarnished_scaffold() {
     # Pre-condition: the seeded tree is fully rendered.
     ! grep -rq '{{' .tarnished/
     local before
-    before=$(sha256sum .tarnished/workflows/*.md .tarnished/agent-profile.json)
+    before=$(sha256sum .tarnished/agent-profile.json)
 
     run bash "$SETUP_SH" --upgrade -y
     [[ "$status" -eq 0 ]]
 
-    # Shared workflows are AI-refresh assets; helper upgrade leaves them alone.
-    grep -q "stale marker" .tarnished/workflows/README.md
+    # Root upgrades now replace distributed workflows with verified backups.
+    ! grep -q "stale marker" .tarnished/workflows/README.md
+    grep -rq "stale marker" .tarnished/backups
 
     # The whole point: no placeholder token survives the upgrade.
-    run grep -rl '{{' .tarnished/
+    run grep -rl '{{' .tarnished/workflows .tarnished/agent-profile.json
     [[ "$status" -ne 0 ]]
 
-    # Helper maintenance preserves shared contracts and project profile bytes.
-    [[ "$(sha256sum .tarnished/workflows/*.md .tarnished/agent-profile.json)" == "$before" ]]
+    # Profile choices remain project-owned.
+    [[ "$(sha256sum .tarnished/agent-profile.json)" == "$before" ]]
     run jq -r '.ai_profile' .tarnished/agent-profile.json
     [[ "$output" == "claude-main" ]]
 }
@@ -500,7 +501,7 @@ YML
     assert_success
 }
 
-@test "#316 trusted helper updates while project settings and seeds remain byte identical" {
+@test "#318 trusted helper and AI settings update while application settings and seeds remain byte identical" {
     seed_scaffold
     bootstrap_and_commit
     printf 'older shipped helper\n' > .devcontainer/scripts/refresh-assets.sh
@@ -508,11 +509,11 @@ YML
     hash="sha256:$(sha256sum .devcontainer/scripts/refresh-assets.sh | cut -d' ' -f1)"
     jq --arg hash "$hash" '.files[".devcontainer/scripts/refresh-assets.sh"] = $hash' .tarnished-manifest.json > manifest.tmp
     mv manifest.tmp .tarnished-manifest.json
-    before=$(sha256sum docker/Dockerfile.dev docker-compose.yml .devcontainer/devcontainer.json .claude/settings.json CLAUDE.md README.md)
+    before=$(sha256sum docker/Dockerfile.dev docker-compose.yml .devcontainer/devcontainer.json CLAUDE.md README.md)
     run bash "$SETUP_SH" --upgrade --force -y
     assert_success
     cmp .devcontainer/scripts/refresh-assets.sh "$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
-    [[ "$(sha256sum docker/Dockerfile.dev docker-compose.yml .devcontainer/devcontainer.json .claude/settings.json CLAUDE.md README.md)" == "$before" ]]
+    [[ "$(sha256sum docker/Dockerfile.dev docker-compose.yml .devcontainer/devcontainer.json CLAUDE.md README.md)" == "$before" ]]
 }
 
 @test "#316 conflict and removed helper baselines survive until successful prune" {
@@ -621,4 +622,82 @@ MOCK
         assert_success
         [[ ! -e "$rel" ]]
     done
+}
+
+@test "root upgrade at preceding distribution updates AI settings and retains current installed updater" {
+    local ref=f136b29
+    git -C "$SCRIPT_DIR" cat-file -e "$ref^{commit}" || skip 'historical distribution unavailable in shallow checkout'
+    seed_scaffold
+    mkdir .codex
+    echo '# old settings' > .codex/config.toml
+    bootstrap_and_commit
+    run bash "$SETUP_SH" --upgrade --target-version "$ref" -y --prune
+    assert_success
+    git -C "$SCRIPT_DIR" show "$ref:templates/codex/.codex/config.toml" > "$SCRATCH/expected-settings"
+    cmp .codex/config.toml "$SCRATCH/expected-settings"
+    cmp .devcontainer/scripts/refresh-assets.sh "$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
+    assert_equal "$(cat "$(find .tarnished/backups -path '*/.codex/config.toml')")" '# old settings'
+    assert_equal "$(jq -r '.tarnished_version' .tarnished-manifest.json)" "$ref"
+    assert_equal "$(jq -r '.tarnished_commit' .tarnished-manifest.json)" "$(git -C "$SCRIPT_DIR" rev-parse "$ref")"
+    local manifest_before
+    manifest_before=$(sha256sum .tarnished-manifest.json)
+    git add -A
+    git commit -qm pinned-upgrade
+    run bash "$SETUP_SH" --upgrade --target-version "$ref" -y --prune
+    assert_success
+    assert_equal "$(sha256sum .tarnished-manifest.json)" "$manifest_before"
+}
+
+@test "clean successful module-only upgrade preserves root AI settings and backup tree" {
+    mkdir "$SCRATCH/project"
+    cd "$SCRATCH/project"
+    bash "$SETUP_SH" --monorepo --module backend:python -y project >/dev/null
+    git init -q
+    git config user.name test
+    git config user.email test@example.com
+    printf 'root custom skill\n' > .claude/skills/issue/SKILL.md
+    printf '{"custom":"root"}\n' > .claude/settings.json
+    git add -A
+    git commit -qm baseline
+    local before
+    before=$(sha256sum .claude/settings.json .claude/skills/issue/SKILL.md .tarnished/refresh.json)
+    run bash "$SETUP_SH" --upgrade --module backend -y --prune
+    assert_success
+    assert_equal "$(sha256sum .claude/settings.json .claude/skills/issue/SKILL.md .tarnished/refresh.json)" "$before"
+    [[ ! -e .tarnished/backups ]]
+}
+
+@test "failed pinned legacy helper upgrade never installs its destructive refresher" {
+    local ref=46f7be7
+    git -C "$SCRIPT_DIR" cat-file -e "$ref^{commit}" || skip 'historical distribution unavailable in shallow checkout'
+    seed_scaffold
+    bootstrap_and_commit
+    local before
+    before=$(sha256sum .tarnished-manifest.json)
+    mkdir mock-bin
+    cat > mock-bin/mv <<'MOCK'
+#!/bin/bash
+if [[ "${@: -1}" == "$SCRATCH/.devcontainer/scripts/setup_plugins.sh" ]]; then
+    exit 1
+fi
+exec /usr/bin/mv "$@"
+MOCK
+    chmod +x mock-bin/mv
+    run env PATH="$SCRATCH/mock-bin:$PATH" bash "$SETUP_SH" --upgrade --target-version "$ref" -y
+    assert_failure
+    assert_output --partial 'manifest_apply failed for: .devcontainer/scripts/setup_plugins.sh'
+    cmp .devcontainer/scripts/refresh-assets.sh "$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
+    assert_equal "$(sha256sum .tarnished-manifest.json)" "$before"
+}
+
+@test "historical bootstrap still compares the actual historical refresher bytes" {
+    local ref=46f7be7 rel='.devcontainer/scripts/refresh-assets.sh' hash
+    git -C "$SCRIPT_DIR" cat-file -e "$ref^{commit}" || skip 'historical distribution unavailable in shallow checkout'
+    seed_scaffold
+    git -C "$SCRIPT_DIR" show "$ref:templates/core/$rel" > "$rel"
+    hash="sha256:$(sha256sum "$rel" | cut -d ' ' -f 1)"
+    run bash "$SETUP_SH" --create-manifest --from-version "$ref" -y
+    assert_success
+    assert_equal "$(jq -r --arg rel "$rel" '.files[$rel]' .tarnished-manifest.json)" "$hash"
+    assert_equal "sha256:$(sha256sum "$rel" | cut -d ' ' -f 1)" "$hash"
 }

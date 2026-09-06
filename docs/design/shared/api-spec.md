@@ -36,9 +36,9 @@ Top-level scaffold and maintenance entry point.
 | --- | --- | --- |
 | Initial single/monorepo | No Tarnished installation marker; existing scaffold flags | Creates project-owned seeds and foundation assets |
 | Add-module | Explicit `--add-module` | Intended extension of an existing monorepo |
-| Refresh | `--refresh` or bare existing-project rerun | Current updater/source safely refreshes AI assets; preserves application/settings/profile |
+| Refresh | `--refresh` or bare existing-project rerun | Current updater/source safely refreshes AI assets; backs up and replaces distributed AI settings/assets; preserves application/profile and native local settings |
 | Create-manifest | `--create-manifest` | Matches eligible staged distribution candidates; never inventories arbitrary project files |
-| Upgrade | `--upgrade` | Updates only trusted runtime helpers; no real-target post-copy or seed/configuration changes |
+| Upgrade | `--upgrade` | Updates trusted runtime helpers and root-scope AI assets/settings with backups; no application re-scaffolding; module-only retains scope |
 
 Explicit scaffold flags against a recognized existing Tarnished target fail with maintenance/add-module guidance. `--refresh` accepts dry-run/yes and rejects scaffold and upgrade-only options. `--force` never bypasses ownership checks.
 
@@ -85,8 +85,8 @@ Mutually-exclusive combinations rejected with exit 1:
 | `--upgrade --module foo:python` (#265) | In upgrade mode, `--module` takes a name only |
 | `--upgrade --module foo` against single-mode target (#265) | `--module` is monorepo-only |
 | `--upgrade --module unknown` (#265) | Module not in target's `modules.json` |
-| `--upgrade` against project without `.tarnished-manifest.json` (#265) | Run `--create-manifest` first |
-| `--upgrade` against dirty git tree (no `--force`) (#265) | Commit/stash first, or use `--force` |
+| `--upgrade` against project without `.tarnished-manifest.json` (#265) | Root AI refresh runs; helpers skipped with nonzero result and `--create-manifest` guidance |
+| `--upgrade` against dirty git tree (no `--force`) (#265) | Root AI refresh runs; helpers skipped with nonzero result; commit/stash or use helper-only `--force` bypass |
 
 Examples:
 
@@ -569,13 +569,13 @@ refresh-assets.sh [--config PATH] [--project-root PATH] [--source-dir PATH]
                   [--dry-run] [--force-pull] [--quiet]
 ```
 
-Explicit source is read-only and bypasses cache fetching; explicit root avoids targeting the setup checkout. Validate arguments, mappings, source/destination/state symlink boundaries and cache origin/cleanliness/project separation. Enumerate upstream/overlay files plus prior provenance; never mirror-delete destination trees. Unknown/edited/deleted files remain intact. Manifest v2 retains missing legacy helper deletion intent in optional `deleted_paths`, separately from trusted `files` hashes, until exact restored distribution bytes are adopted. Safe upstream updates/removals use last-installed hashes, and overlay-origin content is never pruned. State persistence is atomic and only successful/exactly matched entries advance. Reconcile even at unchanged SHA.
+Explicit source is read-only and bypasses cache fetching; explicit root avoids targeting the setup checkout. Validate arguments, mappings, source/destination/state symlink boundaries and cache origin/cleanliness/project separation. Enumerate upstream/overlay files plus prior provenance; never mirror-delete destination trees. Unknown siblings remain intact. Currently distributed edited/unknown files require verified backups before replacement; deleted distributed targets are restored. Manifest v2 retains missing legacy helper deletion intent in optional `deleted_paths`, separately from trusted `files` hashes, until exact restored distribution bytes are adopted. Safe upstream removals require unchanged last-installed hashes, and overlay-origin content is never pruned. State persistence is atomic and only successful/exactly matched entries advance. Reconcile even at unchanged SHA.
 
-Dry-run prints concrete file decisions with no target/persistent-cache writes; unavailable source is an explicitly incomplete preview. Warn with recovery hints on runtime failures and return 0; only unknown CLI flags return 1. Summaries distinguish applied, unchanged, preserved conflicts/unknowns, removals and failures.
+Dry-run prints concrete file decisions with no target/persistent-cache writes; unavailable source is an explicitly incomplete preview. Warn with recovery hints on runtime failures and return 0; only unknown CLI flags return 1. Summaries distinguish installed, backed-up, unchanged, preserved/unsafe, removals and failures, and report backup locations.
 
 ### `templates/agent-workflows/.tarnished/refresh.json`
 
-Project-owned schema 1, with optional `use_default_managed_paths`. See data-model.md for the full ownership/state contract. Defaults cover Claude assets, applicable Codex skills, shared lifecycle contract files and the erd projection, with nonoverlapping destination mappings and matching `.local` sidecars. The template/workspace copies and manifest exclusion lists remain synchronized. Runtime never rewrites project config/profile. Setup migrates only missing or exactly recognized legacy default catalogs; custom/empty mappings remain explicit project choices.
+Project-owned schema 1, with optional `use_default_managed_paths`. See data-model.md for the full ownership/state contract. Defaults cover Claude assets/settings, applicable Codex skills/settings, shared lifecycle contract files and the erd projection, with nonoverlapping destination mappings and matching `.local` sidecars. The template/workspace copies and manifest exclusion lists remain synchronized. Runtime never rewrites project config/profile. Setup migrates only missing or exactly recognized legacy default catalogs; custom/empty mappings remain explicit project choices.
 
 ### `templates/core/plugin.sh::plugin_post_copy` — refresh-assets wiring (#279)
 
@@ -715,3 +715,7 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 ### Host maintenance boundary (#316)
 
 Setup and refresh require Bash 4.4+; BSD-like utilities are supported via portable root resolution/renames and a `shasum -a 256` fallback. Explicit project/source/staging/cache roots may resolve host ancestor aliases once, but symlink root leaves and all symlinks below each physical root are rejected. State/config paths are checked below that root, never individually canonicalized to bypass protection. Compare physical source/target roots before setup refresh writes. Check expected-current hashes immediately before mutation and verify installed ordinary-file bytes before recording success. Dry-run Git checks suppress optional index/lock writes.
+
+### AI backup replacement interface
+
+`run_refresh(root, source = invoked checkout)` uses the current updater with selected source bytes. Before atomic replacement of differing distributed AI files, verify a private backup at `.tarnished/backups/<run>/<relative-path>`. Report that path and backup/install counts; dry-run reports plans without target mutations. Full `.claude/settings.json` and applicable `.codex/config.toml` are catalog targets; native local settings and profile files stay project-owned. See [#318 design](../%23318/design.md) for failure and root-upgrade composition.

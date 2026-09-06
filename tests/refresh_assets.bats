@@ -446,20 +446,20 @@ local_refresh() {
     "$SUT" --project-root "$PROJECT" --source-dir "$UPSTREAM_WORK" "$@"
 }
 
-@test "unknown custom files and first-run collisions are never owned" {
+@test "first-run distributed collisions are backed up and custom siblings remain unowned" {
     mkdir -p "$PROJECT/.claude/skills"
     echo developer > "$PROJECT/.claude/skills/issue.md"
     echo custom > "$PROJECT/.claude/skills/custom.md"
     run local_refresh
     assert_success
-    assert_output --partial 'conflict: preserve'
-    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" developer
+    assert_output --partial '1 backed-up'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v1-skill
     assert_equal "$(cat "$PROJECT/.claude/skills/custom.md")" custom
-    run jq -e '.entries | has(".claude/skills/issue.md") or has(".claude/skills/custom.md")' "$PROJECT/.tarnished/refresh-state.json"
+    run jq -e '.entries | has(".claude/skills/custom.md")' "$PROJECT/.tarnished/refresh-state.json"
     assert_failure
 }
 
-@test "edited owned files retain baseline and user deletions are not resurrected" {
+@test "edited distributed files are backed up and user deletions are restored" {
     local_refresh >/dev/null
     cp "$PROJECT/.tarnished/refresh-state.json" "$SCRATCH/before.json"
     echo developer > "$PROJECT/.claude/skills/issue.md"
@@ -467,10 +467,9 @@ local_refresh() {
     echo changed > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
     run local_refresh
     assert_success
-    assert_output --partial 'preserve user deletion'
-    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" developer
-    assert [ ! -e "$PROJECT/.claude/commands/erd/brainstorm.md" ]
-    cmp "$SCRATCH/before.json" "$PROJECT/.tarnished/refresh-state.json"
+    assert_output --partial '1 backed-up'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" changed
+    assert [ -f "$PROJECT/.claude/commands/erd/brainstorm.md" ]
 }
 
 @test "same size and timestamp upstream changes update by hash" {
@@ -496,7 +495,7 @@ local_refresh() {
     assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v1-skill
 }
 
-@test "overlay-only file is preserved after sidecar removal and live edits conflict" {
+@test "overlay-only file is preserved after sidecar removal and live edits are backed up" {
     mkdir -p "$PROJECT/.claude/skills.local"
     echo customization > "$PROJECT/.claude/skills.local/extra.md"
     local_refresh >/dev/null
@@ -506,8 +505,8 @@ local_refresh() {
     echo edited > "$PROJECT/.claude/skills/issue.md"
     echo overlay > "$PROJECT/.claude/skills.local/issue.md"
     run local_refresh
-    assert_output --partial 'conflict: preserve'
-    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" edited
+    assert_output --partial '1 backed-up'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" overlay
 }
 
 @test "upstream removal preserves edited asset, custom sibling and overlay projection" {
@@ -517,6 +516,7 @@ local_refresh() {
     mkdir -p "$PROJECT/.claude/commands.local/erd"
     echo override > "$PROJECT/.claude/commands.local/erd/brainstorm.md"
     local_refresh >/dev/null
+    echo edited > "$PROJECT/.claude/skills/issue.md"
     rm "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md" "$UPSTREAM_WORK/templates/claude/.claude/commands/erd/brainstorm.md"
     commit_upstream
     local_refresh >/dev/null
@@ -752,10 +752,10 @@ MOCK
 }
 
 @test "explicit mapping cannot install or overwrite project configuration or sidecars" {
-    jq '.managed_paths = [{src:"templates/claude/.claude/skills/issue.md",dst:".codex/config.toml"}]' "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    jq '.managed_paths = [{src:"templates/claude/.claude/skills/issue.md",dst:".claude/settings.local.json"}]' "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
     run local_refresh --config "$SCRATCH/config"
     assert_output --partial 'preserve developer-owned configuration'
-    assert [ ! -e "$PROJECT/.codex/config.toml" ]
+    assert [ ! -e "$PROJECT/.claude/settings.local.json" ]
 }
 
 @test "cache pointing to updater source checkout is never fetched or reset" {
@@ -981,12 +981,12 @@ MOCK
     cp "$PROJECT/.claude/skills/issue.md" "$PROJECT/.claude/skills.local/issue.md"
     cp "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md" "$PROJECT/.claude/skills/issue.md"
     run local_refresh
-    assert_output --partial 'explicitly copy effective overlay'
-    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" upstream-b
+    assert_output --partial '1 backed-up'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" project-c
     cp "$PROJECT/.claude/skills.local/issue.md" "$PROJECT/.claude/skills/issue.md"
     run local_refresh
     assert_success
-    assert_output --partial '1 adopted'
+    assert_output --partial '3 unchanged'
     assert_output --partial '0 conflicts'
     assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" project-c
     run local_refresh
@@ -1027,7 +1027,7 @@ MOCK
     chmod +x "$SCRATCH/bin/cp"
     run env PATH="$SCRATCH/bin:$PATH" "$SUT" --source-dir "$UPSTREAM_WORK"
     assert_success
-    assert_output --partial '0 installed, 0 removed, 2 unchanged, 1 adopted, 2 preserved: 1 conflicts, 1 unknown; 1 unsafe, 1 failures'
+    assert_output --partial '0 installed, 0 backed-up, 0 removed, 2 unchanged, 1 adopted, 0 preserved: 0 conflicts, 0 unknown; 1 unsafe, 3 failures'
 }
 
 @test "portable rename directory race never advances installed baseline" {
@@ -1063,4 +1063,163 @@ MOCK
     assert_success
     assert_output --partial 'refresh.json missing or unsafe'
     assert [ ! -e "$PROJECT/.claude" ]
+}
+
+@test "replacement backups retain exact binary bytes and unique runs while repeats are no-ops" {
+    mkdir -p "$PROJECT/.claude/skills"
+    printf 'old\000bytes\377\n' > "$PROJECT/.claude/skills/issue.md"
+    cp "$PROJECT/.claude/skills/issue.md" "$SCRATCH/original"
+    run local_refresh
+    assert_success
+    assert_output --partial 'restore with: cp --'
+    local backup first_count
+    backup=$(find "$PROJECT/.tarnished/backups" -type f)
+    cmp "$backup" "$SCRATCH/original"
+    [[ "$(stat -c %a "$(dirname "$(dirname "$(dirname "$backup")")")")" == 700 ]]
+    first_count=$(find "$PROJECT/.tarnished/backups" -type f | wc -l)
+    run local_refresh
+    assert_output --partial '0 backed-up'
+    [[ "$(find "$PROJECT/.tarnished/backups" -type f | wc -l)" == "$first_count" ]]
+    echo next > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
+    local_refresh >/dev/null
+    [[ "$(find "$PROJECT/.tarnished/backups" -mindepth 1 -maxdepth 1 -type d | wc -l)" == 2 ]]
+    cmp "$backup" "$SCRATCH/original"
+}
+
+@test "backup dry-run reports replacement and leaves existing content baseline and backups unchanged" {
+    local_refresh >/dev/null
+    echo edited > "$PROJECT/.claude/skills/issue.md"
+    cp "$PROJECT/.tarnished/refresh-state.json" "$SCRATCH/state"
+    run local_refresh --dry-run
+    assert_success
+    assert_output --partial '[dry-run] backup'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" edited
+    cmp "$SCRATCH/state" "$PROJECT/.tarnished/refresh-state.json"
+    [[ ! -e "$PROJECT/.tarnished/backups" ]]
+}
+
+@test "backup root symlink or file prevents replacement and preserves prior baseline" {
+    local_refresh >/dev/null
+    cp "$PROJECT/.tarnished/refresh-state.json" "$SCRATCH/state"
+    echo changed > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
+    mkdir "$SCRATCH/outside"
+    ln -s "$SCRATCH/outside" "$PROJECT/.tarnished/backups"
+    run local_refresh
+    assert_success
+    assert_output --partial 'backup failed'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v1-skill
+    cmp "$SCRATCH/state" "$PROJECT/.tarnished/refresh-state.json"
+    [[ -z "$(find "$SCRATCH/outside" -mindepth 1 -print -quit)" ]]
+    rm "$PROJECT/.tarnished/backups"
+    echo obstruction > "$PROJECT/.tarnished/backups"
+    run local_refresh
+    assert_output --partial 'backup failed'
+    cmp "$SCRATCH/state" "$PROJECT/.tarnished/refresh-state.json"
+}
+
+@test "backup copy failure and concurrent live edit abort replacement without advancing state" {
+    local_refresh >/dev/null
+    cp "$PROJECT/.tarnished/refresh-state.json" "$SCRATCH/state"
+    echo changed > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
+    mkdir "$SCRATCH/bin"
+    cat > "$SCRATCH/bin/cp" <<'MOCK'
+#!/bin/bash
+target="${@: -1}"
+if [[ "$target" == */.tarnished/backups/* ]]; then exit 1; fi
+exec /usr/bin/cp "$@"
+MOCK
+    chmod +x "$SCRATCH/bin/cp"
+    run env PATH="$SCRATCH/bin:$PATH" "$SUT" --source-dir "$UPSTREAM_WORK"
+    assert_output --partial 'backup failed'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v1-skill
+    cmp "$SCRATCH/state" "$PROJECT/.tarnished/refresh-state.json"
+    cat > "$SCRATCH/bin/cp" <<'MOCK'
+#!/bin/bash
+/usr/bin/cp "$@" || exit
+if [[ "${@: -1}" == */.tarnished/backups/* ]]; then
+    printf 'concurrent edit\n' > "$PROJECT/.claude/skills/issue.md"
+fi
+MOCK
+    run env PATH="$SCRATCH/bin:$PATH" "$SUT" --source-dir "$UPSTREAM_WORK"
+    assert_output --partial 'backup failed or target changed'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" 'concurrent edit'
+    cmp "$SCRATCH/state" "$PROJECT/.tarnished/refresh-state.json"
+}
+
+@test "backup content or parent changed after copy cannot authorize replacement" {
+    local_refresh >/dev/null
+    cp "$PROJECT/.tarnished/refresh-state.json" "$SCRATCH/state"
+    echo changed > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
+    mkdir "$SCRATCH/bin"
+    cat > "$SCRATCH/bin/cp" <<'MOCK'
+#!/bin/bash
+/usr/bin/cp "$@" || exit
+target="${@: -1}"
+if [[ "$target" == */.tarnished/backups/* ]]; then printf 'damaged\n' > "$target"; fi
+MOCK
+    chmod +x "$SCRATCH/bin/cp"
+    run env PATH="$SCRATCH/bin:$PATH" "$SUT" --source-dir "$UPSTREAM_WORK"
+    assert_output --partial 'backup failed'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v1-skill
+    cmp "$SCRATCH/state" "$PROJECT/.tarnished/refresh-state.json"
+}
+
+@test "reserved backup destinations and overlays cannot be refreshed even by broad mappings" {
+    mkdir -p "$UPSTREAM_WORK/broad/backups/refresh.old" "$PROJECT/.tarnished/backups/refresh.old"
+    echo upstream > "$UPSTREAM_WORK/broad/backups/refresh.old/saved"
+    echo original > "$PROJECT/.tarnished/backups/refresh.old/saved"
+    jq '.managed_paths = [{src:"broad",dst:".tarnished"}]' "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    run local_refresh --config "$SCRATCH/config"
+    assert_equal "$(cat "$PROJECT/.tarnished/backups/refresh.old/saved")" original
+    jq '.managed_paths = [{src:"broad",dst:".claude/skills",overlay:".tarnished/backups/refresh.old"}]' "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    run local_refresh --config "$SCRATCH/config"
+    assert_output --partial 'reserved backup overlay'
+    [[ ! -e "$PROJECT/.claude/skills/saved" ]]
+    run bash -c 'source "$1"; _manifest_path_excluded .tarnished/backups/refresh.old/saved' _ "$COMMON_SH"
+    assert_success
+}
+
+@test "backup parent symlink introduced after copying preserves live file and baseline" {
+    local_refresh >/dev/null
+    cp "$PROJECT/.tarnished/refresh-state.json" "$SCRATCH/state"
+    echo changed > "$UPSTREAM_WORK/templates/claude/.claude/skills/issue.md"
+    mkdir "$SCRATCH/bin" "$SCRATCH/outside"
+    cat > "$SCRATCH/bin/cp" <<'MOCK'
+#!/bin/bash
+/usr/bin/cp "$@" || exit
+target="${@: -1}"
+if [[ "$target" == */.tarnished/backups/* ]]; then
+    parent="${target%/*}"
+    /usr/bin/mv "$parent" "$parent.saved"
+    /usr/bin/ln -s "$SCRATCH/outside" "$parent"
+fi
+MOCK
+    chmod +x "$SCRATCH/bin/cp"
+    run env PATH="$SCRATCH/bin:$PATH" "$SUT" --source-dir "$UPSTREAM_WORK"
+    assert_output --partial 'backup failed'
+    assert_equal "$(cat "$PROJECT/.claude/skills/issue.md")" v1-skill
+    cmp "$SCRATCH/state" "$PROJECT/.tarnished/refresh-state.json"
+    [[ -z "$(find "$SCRATCH/outside" -mindepth 1 -print -quit)" ]]
+}
+
+@test "upstream-listed candidates cannot read backups through a broad overlay" {
+    local rel='backups/refresh.old/.codex/config.toml'
+    mkdir -p "$UPSTREAM_WORK/broad/$(dirname "$rel")" \
+        "$PROJECT/.tarnished/$(dirname "$rel")" "$PROJECT/.claude/skills/$(dirname "$rel")"
+    echo distributed > "$UPSTREAM_WORK/broad/$rel"
+    echo private-settings > "$PROJECT/.tarnished/$rel"
+    echo existing-live > "$PROJECT/.claude/skills/$rel"
+    jq '.managed_paths = [{src:"broad",dst:".claude/skills",overlay:".tarnished"}]' \
+        "$PROJECT/.tarnished/refresh.json" > "$SCRATCH/config"
+    run local_refresh --config "$SCRATCH/config"
+    assert_success
+    assert_output --partial 'reserved backup overlay'
+    assert_equal "$(cat "$PROJECT/.claude/skills/$rel")" existing-live
+    assert_equal "$(cat "$PROJECT/.tarnished/$rel")" private-settings
+    run jq -e --arg path ".claude/skills/$rel" '.entries | has($path)' "$PROJECT/.tarnished/refresh-state.json"
+    assert_failure
+    rm "$PROJECT/.claude/skills/$rel"
+    run local_refresh --config "$SCRATCH/config"
+    assert_success
+    [[ ! -e "$PROJECT/.claude/skills/$rel" ]]
 }

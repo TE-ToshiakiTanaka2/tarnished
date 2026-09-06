@@ -194,15 +194,15 @@ Options:
     --celery            Include Celery task queue (auto-enables Redis, requires Python)
     --github-actions    Include GitHub Project integration (requires erd CLI)
     --overwrite         Overwrite existing files without confirmation
-    --refresh           Maintain AI skills and workflows, preserving project edits.
+    --refresh           Update distributed AI assets/settings with verified backups.
                         A bare rerun in an existing Tarnished project does this.
     --create-manifest   Adopt exact delivered runtime-helper matches into a v2
                         provenance manifest. Project source/settings are not owned.
     --from-version <ref>
                         Compare actual distribution bytes at this reference.
                         Default: the invoked checkout. Only with --create-manifest.
-    --upgrade           Upgrade proven runtime helpers, excluding post.sh.
-                        Preserves project seeds, settings and local changes.
+    --upgrade           Update root AI assets/settings and proven runtime helpers.
+                        Backs up replaced AI files; preserves application files.
     --target-version <ref>
                         Target git ref (tag, branch, or commit) of upstream
                         tarnished for --upgrade. When omitted: under remote
@@ -1743,7 +1743,7 @@ validate_maintenance_target() {
 
 # Use this checkout's safe updater, even when the installed helper is legacy.
 run_refresh() {
-    local root="$1"
+    local root="$1" source="${2:-$SCRIPT_DIR}"
     root=$(manifest_physical_root "$root") || { print_error "Unsafe project root; use an ordinary project directory"; return 1; }
     # Reject a self-hosted or nested source before config migration and helper
     # installation. Runtime's nonfatal rejection cannot guard subsequent setup writes.
@@ -1751,28 +1751,36 @@ run_refresh() {
         print_error "Refresh source/target overlap: $SCRIPT_DIR and $root; invoke a separate Tarnished checkout from the downstream project"
         return 1
     fi
+    source=$(manifest_physical_root "$source") || return 1
+    if [[ ! -d "$source" || "$root" == "$source" || "$root" == "$source/"* || "$source" == "$root/"* ]]; then
+        print_error "Refresh source/target overlap or unavailable source: $source"
+        return 1
+    fi
     validate_maintenance_target "$root" || return 1
     local old_manifest='{}'
     if manifest_exists "$root"; then
         old_manifest=$(manifest_read "$root") || return 1
     fi
-    local defaults="$SCRIPT_DIR/templates/agent-workflows/.tarnished/refresh.json"
+    local default_catalog="$source/templates/agent-workflows/.tarnished/refresh.json"
     local legacy="$SCRIPT_DIR/scripts/lib/refresh-legacy.json"
     local config="$root/.tarnished/refresh.json" candidate temp_config="" config_start_hash=""
     [[ ! -f "$config" ]] || config_start_hash=$(sha256_file "$config") || return 1
     local updater="$SCRIPT_DIR/templates/core/.devcontainer/scripts/refresh-assets.sh"
     if [[ ! -f "$config" ]]; then
-        candidate=$(cat "$defaults")
+        candidate=$(jq --slurpfile legacy "$legacy" '
+            if (has("use_default_managed_paths") | not) and
+                (.managed_paths as $paths | any($legacy[0].managed_path_catalogs[]; . == $paths))
+            then .use_default_managed_paths = true else . end' "$default_catalog") || return 1
         print_info "Install default refresh configuration: $config"
     elif jq -e --slurpfile legacy "$legacy" \
         '(has("use_default_managed_paths") | not) and (.managed_paths as $paths | any($legacy[0].managed_path_catalogs[]; . == $paths))' "$config" >/dev/null; then
-        candidate=$(jq --slurpfile defaults "$defaults" \
+        candidate=$(jq --slurpfile defaults "$default_catalog" \
             '.use_default_managed_paths = true | .managed_paths = $defaults[0].managed_paths' "$config")
         print_info "Adopt current default AI catalog; preserve project upstream/cache choices: $config"
     else
         candidate=""
         if ! jq -e '.use_default_managed_paths == true' "$config" >/dev/null; then
-            print_info "Preserving custom managed_paths in $config; add mappings from $defaults or explicitly set use_default_managed_paths to true to adopt future defaults"
+            print_info "Preserving custom managed_paths in $config; add mappings from $default_catalog or explicitly set use_default_managed_paths to true to adopt future defaults"
         fi
     fi
     if [[ -n "$candidate" ]]; then
@@ -1798,7 +1806,7 @@ run_refresh() {
             fi
         fi
     fi
-    local -a args=(--project-root "$root" --source-dir "$SCRIPT_DIR" --config "$config")
+    local -a args=(--project-root "$root" --source-dir "$source" --config "$config")
     [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
     local rc=0
     bash "$updater" "${args[@]}" || rc=$?
@@ -1870,8 +1878,13 @@ run_refresh() {
         MANIFEST_TRACKED["$rel"]="$desired_hash"
         opts=$(jq -c '.scaffold_options // empty' <<< "$old_manifest")
         [[ -n "$opts" ]] || opts=$(infer_scaffold_options "$root" "$(if detect_existing_monorepo "$root"; then echo true; else echo false; fi)")
-        version=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo local)
-        commit=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        if [[ "$UPGRADE_MODE" == true ]]; then
+            version="$UPSTREAM_VERSION"
+            commit="$UPSTREAM_COMMIT"
+        else
+            version=$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || echo local)
+            commit=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        fi
         manifest_write "$root" "$version" "$commit" "$opts" || return 1
     fi
 }
@@ -2164,6 +2177,14 @@ stage_distribution() {
         else
             _stage_plugin_run "$4" "$5"
         fi
+        # Upgrades must never install an old refresher, even if a later helper
+        # or module fails before root AI maintenance. Historical bootstrap still
+        # compares the selected distribution bytes without this substitution.
+        refresh_rel=".devcontainer/scripts/refresh-assets.sh"
+        if [[ "$UPGRADE_MODE" == true && -f "$5/$refresh_rel" ]]; then
+            manifest_safe_path "$5" "$refresh_rel"
+            cp -p "$SCRIPT_DIR/templates/core/$refresh_rel" "$5/$refresh_rel"
+        fi
         manifest_walk_directory "$5" > "$8"
     ' bash "$SCRIPT_DIR/setup.sh" "$state" "$mode" "$upstream" "$stage" "$lang" "$module" "$inventory"; then
         print_error "Staging failed; no maintenance ownership decisions were applied"
@@ -2424,21 +2445,6 @@ run_upgrade() {
     UPGRADE_TARGET_DIR="$target_dir"
     validate_maintenance_target "$target_dir" || return 1
 
-    if ! manifest_exists "$target_dir"; then
-        print_error "no .tarnished-manifest.json at $target_dir"
-        print_error "Run 'setup.sh --create-manifest' first to bootstrap the manifest."
-        return 1
-    fi
-
-    if ! check_git_clean "$target_dir"; then
-        return 1
-    fi
-
-    if ! resolve_target_version; then
-        return 1
-    fi
-    trap cleanup_upstream_dir EXIT
-
     local is_monorepo=false
     if detect_existing_monorepo "$target_dir"; then
         is_monorepo=true
@@ -2451,6 +2457,41 @@ run_upgrade() {
 
     if [[ ${#UPGRADE_MODULES[@]} -gt 0 ]] && [[ "$is_monorepo" != true ]]; then
         print_error "--module is monorepo-only; this target has no modules.json"
+        return 1
+    fi
+
+    # Validate explicit scopes before any root AI/config/helper mutation.
+    local req process_root=true helper_ready=true
+    for req in "${UPGRADE_MODULES[@]}"; do
+        if ! jq -e --arg name "$req" 'any(.modules[]; .name == $name)' "$target_dir/modules.json" >/dev/null; then
+            print_error "module '$req' not found in modules.json"
+            return 1
+        fi
+    done
+    if [[ ${#UPGRADE_MODULES[@]} -gt 0 && "$SHARED_ONLY" != true ]]; then
+        process_root=false
+    fi
+    # Capture helper eligibility before AI maintenance can dirty tracked files.
+    if ! manifest_exists "$target_dir"; then
+        print_error "no .tarnished-manifest.json at $target_dir"
+        print_error "Run 'setup.sh --create-manifest' first to bootstrap the manifest."
+        helper_ready=false
+    elif ! check_git_clean "$target_dir"; then
+        helper_ready=false
+    fi
+    resolve_target_version || return 1
+    trap cleanup_upstream_dir EXIT
+    if [[ "$process_root" == true ]] &&
+        [[ "$target_dir" == "$SCRIPT_DIR" || "$target_dir" == "$SCRIPT_DIR/"* || "$SCRIPT_DIR" == "$target_dir/"* ||
+           "$target_dir" == "$UPSTREAM_DIR" || "$target_dir" == "$UPSTREAM_DIR/"* || "$UPSTREAM_DIR" == "$target_dir/"* ]]; then
+        print_error "Refresh source/target overlap; invoke a separate Tarnished checkout from the downstream project"
+        return 1
+    fi
+    if [[ "$helper_ready" != true ]]; then
+        if [[ "$process_root" == true ]]; then
+            print_warning "Runtime helpers skipped because manifest/clean-tree prerequisites failed; continuing distributed AI refresh. Overall upgrade remains unsuccessful; resolve the helper diagnostic and retry."
+            run_refresh "$target_dir" "$UPSTREAM_DIR" || return 1
+        fi
         return 1
     fi
 
@@ -2576,6 +2617,10 @@ run_upgrade() {
         local rc=$?
         rm -rf "$(dirname "$stage_dir")" 2>/dev/null || true
         [[ $rc -eq 0 ]] || return 1
+    fi
+
+    if [[ "$process_root" == true ]]; then
+        run_refresh "$target_dir" "$UPSTREAM_DIR" || return 1
     fi
 
     {

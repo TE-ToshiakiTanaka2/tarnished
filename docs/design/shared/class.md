@@ -147,6 +147,12 @@ classDiagram
     class RefreshState {
         +schema_version
     }
+    class ReplacementBackup {
+        +run_directory
+        +original_relative_path
+        +verified_original_bytes
+    }
+    DownstreamProject --> ReplacementBackup : retains privately
     class InstalledAsset {
         +destination
         +mapping_src
