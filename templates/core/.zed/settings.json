@@ -1,0 +1,14 @@
+{
+  "terminal": {
+    "shell": {
+      "program": "bash"
+    }
+  },
+  "file_scan_exclusions": [
+    "**/node_modules",
+    "**/target",
+    "**/dist",
+    "**/coverage",
+    "..."
+  ]
+}

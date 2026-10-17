@@ -1,0 +1,14 @@
+{
+  "file_scan_exclusions": [
+    "**/target"
+  ],
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "check": {
+          "command": "clippy"
+        }
+      }
+    }
+  }
+}

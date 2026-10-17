@@ -1,0 +1,17 @@
+{
+  "file_scan_exclusions": [
+    "**/.intermediates",
+    "**/output"
+  ],
+  "lsp": {
+    "texlab": {
+      "settings": {
+        "texlab": {
+          "build": {
+            "onSave": false
+          }
+        }
+      }
+    }
+  }
+}
