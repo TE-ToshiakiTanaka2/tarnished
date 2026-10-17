@@ -700,20 +700,35 @@ merge_devcontainer_json() {
         return 1
     fi
 
-    # Merge preserving all base fields and merging features/customizations
-    # First merge all fields from base, then selectively merge features, extensions, and settings
+    # Merge preserving all base fields and merging features/customizations.
+    # First merge all fields from base, then selectively merge features,
+    # extensions, and settings. customizations.zed is carried through but
+    # emitted only when the base or the overlay declares it, so a run with no
+    # Zed input anywhere produces byte-identical output to before #323.
     if ! jq -s '
         .[0] as $base | .[1] as $overlay |
+        ($base.customizations.zed // null) as $base_zed |
+        ($overlay.customizations.zed // null) as $overlay_zed |
         ($base | del(.features, .customizations)) *
         ($overlay | del(.features, .customizations)) *
         {
             features: (($base.features // {}) * ($overlay.features // {})),
-            customizations: {
-                vscode: {
-                    extensions: (($base.customizations.vscode.extensions // []) + ($overlay.customizations.vscode.extensions // []) | unique),
-                    settings: (($base.customizations.vscode.settings // {}) * ($overlay.customizations.vscode.settings // {}))
+            customizations: (
+                {
+                    vscode: {
+                        extensions: (($base.customizations.vscode.extensions // []) + ($overlay.customizations.vscode.extensions // []) | unique),
+                        settings: (($base.customizations.vscode.settings // {}) * ($overlay.customizations.vscode.settings // {}))
+                    }
                 }
-            }
+                + (if $base_zed == null and $overlay_zed == null then
+                    {}
+                  else
+                    {
+                        zed: (($base_zed // {}) * ($overlay_zed // {})
+                              | .extensions = ((($base_zed // {}).extensions // []) + (($overlay_zed // {}).extensions // []) | unique))
+                    }
+                  end)
+            )
         }
     ' "$base_json" "$overlay_json" > "$output_file"; then
         print_error "Failed to merge devcontainer JSON files"
@@ -797,6 +812,127 @@ merge_claude_settings_hooks() {
         print_error "Failed to merge Claude settings hooks"
         return 1
     fi
+}
+
+# Merge Zed project settings (.zed/settings.json) with deep object merge and
+# set-union array merge. Inputs may be strict JSON or JSONC (// and /* */);
+# the merged output is strict JSON and comments are not preserved.
+# Usage: merge_zed_settings <base_file> <overlay_file> <output_file>
+# Returns: 0 on success; 1 on missing base, unparseable input, or jq failure.
+merge_zed_settings() {
+    local base_file="$1"
+    local overlay_file="$2"
+    local output_file="$3"
+
+    if [[ ! -f "$base_file" ]]; then
+        print_error "Base file not found: $base_file"
+        rm -f "$output_file"
+        return 1
+    fi
+
+    if [[ ! -f "$overlay_file" ]]; then
+        cp "$base_file" "$output_file"
+        return 0
+    fi
+
+    local base_json
+    local overlay_json
+    if ! base_json="$(mktemp)"; then
+        print_error "Failed to create temporary file for Zed settings merge"
+        rm -f "$output_file"
+        return 1
+    fi
+    if ! overlay_json="$(mktemp)"; then
+        print_error "Failed to create temporary file for Zed settings merge"
+        rm -f "$base_json" "$output_file"
+        return 1
+    fi
+
+    if ! _jsonc_to_json_file "$base_file" "$base_json"; then
+        rm -f "$base_json" "$overlay_json" "$output_file"
+        return 1
+    fi
+
+    if ! _jsonc_to_json_file "$overlay_file" "$overlay_json"; then
+        rm -f "$base_json" "$overlay_json" "$output_file"
+        return 1
+    fi
+
+    # Recursive deep merge: objects merge key-wise, arrays become a unique
+    # (sorted) union, and scalars or mismatched types take the overlay.
+    if ! jq -s '
+        def zedmerge($a; $b):
+            if ($a | type) == "object" and ($b | type) == "object" then
+                reduce (($a | keys_unsorted) + ($b | keys_unsorted))[] as $k
+                    ({};
+                     .[$k] = (if ($a | has($k)) and ($b | has($k)) then zedmerge($a[$k]; $b[$k])
+                              elif ($a | has($k)) then $a[$k]
+                              else $b[$k] end))
+            elif ($a | type) == "array" and ($b | type) == "array" then
+                ($a + $b | unique)
+            else
+                $b
+            end;
+        zedmerge(.[0]; .[1])
+    ' "$base_json" "$overlay_json" > "$output_file"; then
+        print_error "Failed to merge Zed settings files"
+        rm -f "$base_json" "$overlay_json" "$output_file"
+        return 1
+    fi
+
+    rm -f "$base_json" "$overlay_json"
+}
+
+# Install one template flavor's Zed contributions into the target project.
+# No-op unless Zed support is enabled for this run and the flavor ships a
+# .zed/ directory. Always returns 0: a Zed failure must never abort a
+# scaffold, and it must never damage the live files.
+# Usage: apply_zed_assets <target_dir> <plugin_dir>
+apply_zed_assets() {
+    local target_dir="$1"
+    local plugin_dir="$2"
+
+    [[ "${ZED_ENABLED:-false}" == true ]] || return 0
+    [[ -d "${plugin_dir}/.zed" ]] || return 0
+
+    local overlay="${plugin_dir}/.zed/devcontainer.json"
+    local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
+    local temp_file
+
+    if [[ -f "$overlay" ]] && [[ -f "$target_devcontainer" ]]; then
+        print_info "Merging Zed devcontainer customizations..."
+        temp_file="${target_devcontainer}.zed.tmp"
+        if merge_devcontainer_json "$target_devcontainer" "$overlay" "$temp_file"; then
+            mv "$temp_file" "$target_devcontainer"
+            print_success "Zed devcontainer customizations merged"
+        else
+            rm -f "$temp_file"
+            print_warning "Failed to merge Zed devcontainer customizations; left $target_devcontainer unchanged"
+        fi
+    fi
+
+    local fragment="${plugin_dir}/.zed/settings.json"
+    local target_settings="${target_dir}/.zed/settings.json"
+
+    if [[ -f "$fragment" ]]; then
+        mkdir -p "${target_dir}/.zed"
+        if [[ -f "$target_settings" ]]; then
+            print_info "Merging Zed project settings..."
+            temp_file="${target_settings}.tmp"
+            if merge_zed_settings "$target_settings" "$fragment" "$temp_file"; then
+                mv "$temp_file" "$target_settings"
+                print_success "Zed project settings merged"
+            else
+                rm -f "$temp_file"
+                print_warning "Failed to merge Zed project settings; left $target_settings unchanged"
+            fi
+        else
+            copy_with_confirm "$fragment" "$target_settings"
+            print_success "Created .zed/settings.json"
+        fi
+    fi
+
+    return 0
 }
 
 # =============================================================================
