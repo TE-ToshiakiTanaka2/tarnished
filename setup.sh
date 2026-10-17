@@ -2865,7 +2865,7 @@ main() {
             CODEX_ENABLED=false
         fi
         if [[ "$ZED_ENABLED" == true ]]; then
-            print_warning "--zed is ignored in add-module mode (Zed assets were set up by the original --monorepo init)"
+            print_warning "--zed is ignored in add-module mode (already set up by --monorepo init)"
             ZED_ENABLED=false
         fi
         if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then

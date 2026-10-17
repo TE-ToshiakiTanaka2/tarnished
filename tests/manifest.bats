@@ -386,7 +386,7 @@ apply_fixture() {
     for options in '{"languages":["../../../../tmp/evil"]}' \
         '{"services":["../../custom"]}' '{"languages":["unknown"]}' \
         '{"ai_profile":"injected"}' '{"monorepo":"false"}' \
-        '{"codex_enabled":null}' '{"services":null}'; do
+        '{"codex_enabled":null}' '{"services":null}' '{"zed_enabled":"yes"}'; do
         jq -n --argjson options "$options" '{manifest_version:1,
             tarnished_version:"v1",tarnished_commit:"abc",created_at:"2026-01-01",
             scaffold_options:$options,files:{}}' > "$SCRATCH/.tarnished-manifest.json"

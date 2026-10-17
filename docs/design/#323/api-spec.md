@@ -248,7 +248,7 @@ apply_zed_assets() {
             print_success "Zed devcontainer customizations merged"
         else
             rm -f "$temp_file"
-            print_warning "Failed to merge Zed devcontainer customizations; left $target_devcontainer unchanged"
+            print_warning "Zed devcontainer merge failed; $target_devcontainer unchanged"
         fi
     fi
 
@@ -265,11 +265,28 @@ apply_zed_assets() {
                 print_success "Zed project settings merged"
             else
                 rm -f "$temp_file"
-                print_warning "Failed to merge Zed project settings; left $target_settings unchanged"
+                print_warning "Zed settings merge failed; $target_settings unchanged"
             fi
         else
-            copy_with_confirm "$fragment" "$target_settings"
-            print_success "Created .zed/settings.json"
+            # Normalize the fragment through a self-merge (merging a document
+            # with itself is a no-op on content but sorts and dedups its
+            # arrays) before installing it, so a later plugin_post_copy
+            # re-run that merges the same fragment again produces identical
+            # bytes. Falls back to a raw copy if normalization fails.
+            local normalized="${target_settings}.seed.tmp"
+            local seeded=false
+            if merge_zed_settings "$fragment" "$fragment" "$normalized"; then
+                copy_with_confirm "$normalized" "$target_settings" && seeded=true
+                rm -f "$normalized"
+            else
+                rm -f "$normalized"
+                copy_with_confirm "$fragment" "$target_settings" && seeded=true
+            fi
+            if [[ "$seeded" == true ]]; then
+                print_success "Created .zed/settings.json"
+            else
+                print_warning "Failed to create $target_settings"
+            fi
         fi
     fi
 
@@ -283,7 +300,18 @@ Contract notes:
   plugin in isolation (as `tests/plugin_idempotency.bats` does) behaves as
   Zed-off without `set -u` trouble.
 - `mkdir -p` is required: `copy_with_confirm` does not create parents.
-- The first contributor creates the file by copy; later contributors merge.
+- The first contributor does not copy the fragment's raw bytes: it
+  self-merges the fragment through `merge_zed_settings` first (sorting and
+  deduplicating its arrays) and installs that normalized result, so a second
+  `plugin_post_copy` run — which merges the same fragment again — produces
+  byte-identical output instead of reordering arrays on every run. The raw
+  copy is only a fallback, taken if the self-merge itself fails. Later
+  contributors merge their fragment into this normalized file.
+- `copy_with_confirm`'s return value is checked on both the normalized path
+  and the raw-copy fallback. A bare, unchecked call is a statement under
+  `setup.sh`'s `set -e`, so a failure (unsafe destination, non-regular
+  source, `cp` error) would otherwise abort the whole scaffold; checking it
+  instead prints a warning naming the target and returns 0.
 - Returns 0 unconditionally, matching the non-fatal convention used across
   plugin hooks.
 

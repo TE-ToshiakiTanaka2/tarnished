@@ -318,6 +318,21 @@ JSON
     [[ ! -e "$SCRATCH/target/.zed/settings.json.tmp" ]]
 }
 
+@test "apply_zed_assets leaves the live devcontainer unchanged when the overlay is unparseable" {
+    seed_target_devcontainer
+    mkdir -p "$SCRATCH/plugin/.zed"
+    echo '{ "unterminated":' > "$SCRATCH/plugin/.zed/devcontainer.json"
+    export ZED_ENABLED=true
+
+    run apply_zed_assets "$SCRATCH/target" "$SCRATCH/plugin"
+    assert_success
+
+    run cat "$SCRATCH/target/.devcontainer/devcontainer.json"
+    assert_output '{}'
+
+    [[ ! -e "$SCRATCH/target/.devcontainer/devcontainer.json.zed.tmp" ]]
+}
+
 @test "apply_zed_assets skips the devcontainer step when the target devcontainer is absent" {
     mkdir -p "$SCRATCH/target"
     seed_plugin_zed_dir

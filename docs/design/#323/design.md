@@ -235,9 +235,16 @@ on either side, so it emits none. The generated tree is byte-identical to
 today's (NFR-1).
 
 The ordering `core` → languages → services matters only for aesthetics: core
-creates `.zed/settings.json` by copy, later flavors merge. If core is absent
+creates `.zed/settings.json` by self-merging its own fragment through
+`merge_zed_settings` (sorting and deduplicating its arrays) and then
+`copy_with_confirm`-ing the normalized result, rather than copying the
+fragment's raw, as-authored bytes. This makes a second `plugin_post_copy` run
+byte-stable: merging the same fragment again produces the same sorted order
+the first contributor already wrote, so there is no spurious diff. The raw
+copy is only a fallback, taken if the self-merge fails for any reason. Later
+flavors merge their fragment into this normalized file. If core is absent
 from the run (add-module mode) Zed is off anyway, so the "first contributor
-copies, the rest merge" rule never degrades into "a language fragment becomes
+seeds, the rest merge" rule never degrades into "a language fragment becomes
 the whole file" in practice. The branch is kept for robustness, and
 `apply_zed_assets` is correct in either order.
 
@@ -285,7 +292,14 @@ two new rows above.
    `file_scan_exclusions` the order carries no meaning, and the sentinel
    `"..."` sorts *after* the `**/`-prefixed globs (`*` = 0x2A < `.` = 0x2E),
    so it stays at the end where it was authored. Sorting is also what makes
-   repeated merges byte-stable.
+   repeated merges byte-stable — which is why the first contributor's write
+   path self-merges its own fragment (`merge_zed_settings "$fragment"
+   "$fragment"`) before `copy_with_confirm`, instead of copying the fragment's
+   raw bytes: without that normalization pass, the array order a developer
+   happened to author would differ from the order any later
+   `plugin_post_copy` re-run produces by merging the same fragment again,
+   which would be a spurious (non-content) diff on every idempotent re-run.
+   The raw copy is kept only as a fallback if the self-merge fails.
 4. **`merge_zed_settings` accepts JSONC.** Zed's own settings files are
    canonically comment-bearing, and the repository already has the
    normalization primitives (`_jsonc_to_json_file`) plus tests for them. A

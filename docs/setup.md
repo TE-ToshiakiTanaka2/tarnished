@@ -127,8 +127,9 @@ To open the generated project in Zed:
 2. Accept the "Open in Container" prompt (or run "Project: Open Remote" from
    the command palette)
 
-Requires Docker or Podman on `PATH` (Podman needs `"use_podman": true` in
-`devcontainer.json`).
+Requires Docker or Podman on `PATH`. If you use Podman, set `"use_podman": true`
+in Zed's own user `settings.json` — this is a Zed user setting, not a key in
+the generated `devcontainer.json`.
 
 Caveats:
 

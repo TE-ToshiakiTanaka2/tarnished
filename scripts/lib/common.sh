@@ -725,7 +725,11 @@ merge_devcontainer_json() {
                   else
                     {
                         zed: (($base_zed // {}) * ($overlay_zed // {})
-                              | .extensions = ((($base_zed // {}).extensions // []) + (($overlay_zed // {}).extensions // []) | unique))
+                              | .extensions = (
+                                    (($base_zed // {}).extensions // [])
+                                    + (($overlay_zed // {}).extensions // [])
+                                    | unique
+                                ))
                     }
                   end)
             )
@@ -861,6 +865,8 @@ merge_zed_settings() {
     # Recursive deep merge: objects merge key-wise, arrays become a unique
     # (sorted) union, and scalars or mismatched types take the overlay.
     if ! jq -s '
+        # Arrays are sets: sorted and deduped. An order-sensitive list must
+        # ship a single positive entry.
         def zedmerge($a; $b):
             if ($a | type) == "object" and ($b | type) == "object" then
                 reduce (($a | keys_unsorted) + ($b | keys_unsorted))[] as $k
@@ -907,7 +913,7 @@ apply_zed_assets() {
             print_success "Zed devcontainer customizations merged"
         else
             rm -f "$temp_file"
-            print_warning "Failed to merge Zed devcontainer customizations; left $target_devcontainer unchanged"
+            print_warning "Zed devcontainer merge failed; $target_devcontainer unchanged"
         fi
     fi
 
@@ -924,7 +930,7 @@ apply_zed_assets() {
                 print_success "Zed project settings merged"
             else
                 rm -f "$temp_file"
-                print_warning "Failed to merge Zed project settings; left $target_settings unchanged"
+                print_warning "Zed settings merge failed; $target_settings unchanged"
             fi
         else
             # Normalize the fragment through the same unique/sort pass a
@@ -935,16 +941,23 @@ apply_zed_assets() {
             # second plugin_post_copy run produces by merging the same
             # fragment again, which is a spurious (non-content) change that
             # breaks idempotency. Falls back to a raw copy if normalization
-            # fails for any reason.
+            # fails for any reason. Either copy can fail (unsafe destination,
+            # non-regular source, `cp` error); check it so a failure warns
+            # instead of aborting the scaffold under `set -e`.
             local normalized="${target_settings}.seed.tmp"
+            local seeded=false
             if merge_zed_settings "$fragment" "$fragment" "$normalized"; then
-                copy_with_confirm "$normalized" "$target_settings"
+                copy_with_confirm "$normalized" "$target_settings" && seeded=true
                 rm -f "$normalized"
             else
                 rm -f "$normalized"
-                copy_with_confirm "$fragment" "$target_settings"
+                copy_with_confirm "$fragment" "$target_settings" && seeded=true
             fi
-            print_success "Created .zed/settings.json"
+            if [[ "$seeded" == true ]]; then
+                print_success "Created .zed/settings.json"
+            else
+                print_warning "Failed to create $target_settings"
+            fi
         fi
     fi
 
