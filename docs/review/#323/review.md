@@ -5,7 +5,7 @@ repository: TE-ToshiakiTanaka2/tarnished
 issue_number: 323
 review_status: complete
 reviewed_head: a0321b230a3a9ef860da34b6484ddac2eeb7b69e
-verified_head: 8d15678a4667af7e81d6669791e27dbccbb0e011
+verified_head: 47a6794eea61adb343cdc6faff64808e7c6bf65c
 base_ref: develop
 base_commit: 0860b09decdf69c80dcf4cc4487be7a1e160fc18
 merge_base: 0860b09decdf69c80dcf4cc4487be7a1e160fc18
@@ -104,3 +104,7 @@ Fix commit: `8d15678a4667af7e81d6669791e27dbccbb0e011` (`fix: address review fee
 | S5 | No change | Accepted in design review; consistent with sibling prompts |
 
 Deferred: none. Critical/Major findings: none.
+
+## CI fix after review
+
+Commit `47a6794eea61adb343cdc6faff64808e7c6bf65c` (`fix: satisfy clippy assert_is_empty in tag_config tests`) was added during `/pr` because the Clippy job failed on a lint new in Rust 1.99 (`clippy::assert_is_empty`) against pre-existing test code in `src/tag_config.rs`; the #323 branch touches no Rust code. The orchestrator reviewed the six-assertion rewrite directly and verified it with `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` (124 tests passing). `verified_head` advanced to that commit; no #323 finding is affected.
