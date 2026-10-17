@@ -927,7 +927,23 @@ apply_zed_assets() {
                 print_warning "Failed to merge Zed project settings; left $target_settings unchanged"
             fi
         else
-            copy_with_confirm "$fragment" "$target_settings"
+            # Normalize the fragment through the same unique/sort pass a
+            # later merge would apply (self-merge: merging a document with
+            # itself is a no-op on content but sorts and dedups its arrays)
+            # before installing it. Without this, the first contributor's
+            # raw, as-authored array order would differ from the order any
+            # second plugin_post_copy run produces by merging the same
+            # fragment again, which is a spurious (non-content) change that
+            # breaks idempotency. Falls back to a raw copy if normalization
+            # fails for any reason.
+            local normalized="${target_settings}.seed.tmp"
+            if merge_zed_settings "$fragment" "$fragment" "$normalized"; then
+                copy_with_confirm "$normalized" "$target_settings"
+                rm -f "$normalized"
+            else
+                rm -f "$normalized"
+                copy_with_confirm "$fragment" "$target_settings"
+            fi
             print_success "Created .zed/settings.json"
         fi
     fi
