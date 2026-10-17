@@ -1,0 +1,23 @@
+{
+  "terminal": {
+    "shell": {
+      "program": "bash"
+    }
+  },
+  "file_scan_exclusions": [
+    "**/coverage",
+    "**/dist",
+    "**/node_modules",
+    "**/target",
+    "..."
+  ],
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "check": {
+          "command": "clippy"
+        }
+      }
+    }
+  }
+}
