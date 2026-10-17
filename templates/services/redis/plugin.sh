@@ -142,6 +142,9 @@ plugin_post_copy() {
         print_success "Redis devcontainer customizations merged"
     fi
 
+    # Zed editor assets (no-op: redis ships no .zed/ directory)
+    apply_zed_assets "$target_dir" "$PLUGIN_DIR"
+
     # -------------------------------------------------------------------------
     # Add REDIS_URL to docker-compose app service environment (scoped to app service)
     # -------------------------------------------------------------------------

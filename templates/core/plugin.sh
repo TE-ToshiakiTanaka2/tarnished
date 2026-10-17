@@ -104,6 +104,9 @@ fi
 EOF
         print_success "Tarnished asset refresh integrated into post.sh"
     fi
+
+    # Zed editor assets (no-op unless --zed was selected)
+    apply_zed_assets "$target_dir" "$PLUGIN_DIR"
 }
 
 # Monorepo registry helpers (#263). Invoked directly by setup.sh after the
