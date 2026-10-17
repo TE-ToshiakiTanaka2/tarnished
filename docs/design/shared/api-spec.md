@@ -55,6 +55,10 @@ Flags (additions in #263 / #265 marked):
                                     Disambiguated from #263 by the absence of `:lang`.
 --add-module <name>          [#263] Add a module to an existing monorepo. Pair with --lang.
 --codex                      Include OpenAI Codex CLI integration
+--zed                        [#323] Add Zed editor support (customizations.zed +
+                                    .zed/settings.json) alongside the VS Code setup.
+                                    Additive: customizations.vscode is always kept.
+                                    Ignored with a warning in --add-module mode.
 --postgresql                 Include PostgreSQL service
 --mysql                      Include MySQL service
 --redis                      Include Redis service
@@ -94,6 +98,9 @@ Examples:
 # Single (existing behavior)
 ./setup.sh --lang rust -y
 ./setup.sh --lang python --postgresql -y
+
+# Optional Zed editor support (#323) — openable in VS Code or Zed
+./setup.sh --lang rust --zed -y
 
 # Monorepo init (#263)
 ./setup.sh                                                              # interactive
@@ -280,6 +287,8 @@ Composite actions (`dtolnay/rust-toolchain@stable`, `taiki-e/install-action@*`) 
 
 See "CLI Surface :: `setup.sh`" above for flags and modes (#263). The completion message is unchanged from #246. Per #279, `setup.sh`'s `--upgrade` mode automatically excludes the always-latest path whitelist via the `MANIFEST_EXCLUDE_GLOBS` extension — no new flags or modes are required, and the eight-case `manifest_decide` state machine is unchanged. Pre-#279 manifests that contain hashes for now-excluded paths become inert; the next `--create-manifest` produces a clean manifest.
 
+Per #323, `scaffold_options` gains the optional boolean `zed_enabled`, produced by `infer_scaffold_options` from the presence of `<scope>/.zed/settings.json` and restored into `ZED_ENABLED` by `populate_setup_state_from_manifest` so an `--upgrade` staging run reproduces the same tree it would have scaffolded. Because `.zed/settings.json` is outside `_manifest_path_eligible` (only `.devcontainer/scripts/*.sh` other than `post.sh` is maintenance-eligible), that fidelity affects staging only: `--create-manifest` never hashes the file, `--upgrade` never decides on it, and `--upgrade --prune` cannot delete it. No `MANIFEST_EXCLUDE_GLOBS` entry is needed.
+
 ### `setup.sh::derive_agent_names()` (#308)
 
 Signature: `derive_agent_names <ai_profile>`. Sets the globals `AI_PRIMARY_AGENT` and `AI_REVIEW_AGENT` from an `ai_profile` value (`claude-main` / `codex-main` / `dual`), with `claude-main` as the fallback for an unrecognized value. Extracted from the previously inline case block so the scaffold path and the upgrade path share exactly one mapping.
@@ -305,11 +314,13 @@ Preserve existing copy/confirmation interface. Record only successful eligible w
 ### `scripts/lib/common.sh::merge_devcontainer_json()`
 
 Signature: `merge_devcontainer_json <base_file> <overlay_file> <output_file>`.
-Merges devcontainer JSON files with special handling for `features` and
-`customizations.vscode`. Inputs may be strict JSON or JSON with `//` and
-`/* */` comments. The helper normalizes each input to strict JSON in private
-temp files before invoking `jq`; the merged output is strict JSON and comments
-are not preserved.
+Merges devcontainer JSON files with special handling for `features`,
+`customizations.vscode` and (since #323) `customizations.zed`. Inputs may be
+strict JSON or JSON with `//` and `/* */` comments. The helper normalizes each
+input to strict JSON in private temp files before invoking `jq`; the merged
+output is strict JSON and comments are not preserved. The function reads **no**
+globals: Zed emission is gated by key presence, not by a flag, which keeps it
+unit-testable and makes the non-Zed output byte-identical to pre-#323.
 
 Merge semantics:
 
@@ -317,8 +328,10 @@ Merge semantics:
 | --- | --- |
 | Other top-level keys | Deep-merged with overlay values taking precedence. |
 | `features` | Object merge: base feature map overlaid by plugin feature map. |
-| `customizations.vscode.extensions` | Base and overlay arrays concatenated and de-duplicated with `unique`. |
-| `customizations.vscode.settings` | Object merge: base settings overlaid by plugin settings. |
+| `customizations.vscode.extensions` | Base and overlay arrays concatenated and de-duplicated with `unique`. Always emitted. |
+| `customizations.vscode.settings` | Object merge: base settings overlaid by plugin settings. Always emitted. |
+| `customizations.zed` | (#323) Emitted **only if** the base or the overlay has a non-null `customizations.zed`. When emitted: object merge of both sides, with `extensions` replaced by the `unique` union of both sides' `extensions`. A `zed` subtree present only in the base survives, so a non-Zed overlay cannot erase it. |
+| other `customizations.*` namespaces (e.g. `codespaces`) | Still dropped by the rebuild. |
 
 Private helpers:
 
@@ -340,6 +353,77 @@ Failure behavior:
 Scope boundary: direct plugin mutations that invoke `jq` themselves, such as
 service plugins appending to `runServices`, remain strict JSON until they opt
 into a shared devcontainer-filter helper.
+
+### `scripts/lib/common.sh::merge_zed_settings()` (#323)
+
+Signature: `merge_zed_settings <base_file> <overlay_file> <output_file>`.
+Deep merge for Zed project settings (`.zed/settings.json`). Inputs may be
+strict JSON or comment-bearing JSONC — Zed's own settings files are
+canonically commented — normalized through the same `_jsonc_to_json_file`
+primitives `merge_devcontainer_json` uses; the output is strict JSON and
+comments are not preserved.
+
+| Input pair | Behavior |
+| --- | --- |
+| object / object | Recursive key-wise merge. Base key order preserved; overlay-only keys appended. |
+| array / array | `unique` union — de-duplicated and sorted. Arrays are treated as sets, which is correct for `file_scan_exclusions` and `language_servers`. |
+| scalar, or mismatched types | Overlay wins. |
+| key only in base | Preserved untouched — developer-authored settings survive re-runs. |
+
+Failure behavior: missing base → `print_error` + return 1; missing overlay →
+`cp base output` + return 0 (same accommodation as `merge_claude_settings`);
+unparseable input or jq failure → temps and the caller-provided output path
+removed, return 1. Idempotent by construction, so a repeated merge of the same
+overlay produces identical bytes.
+
+### `scripts/lib/common.sh::apply_zed_assets()` (#323)
+
+Signature: `apply_zed_assets <target_dir> <plugin_dir>`. Installs one template
+flavor's Zed contributions. The **only** reader of `ZED_ENABLED` in the
+repository (via `${ZED_ENABLED:-false}`), so plugins carry no Zed conditional
+and sourcing a plugin in isolation behaves as Zed-off.
+
+1. Return 0 immediately unless `ZED_ENABLED == true` **and**
+   `<plugin_dir>/.zed/` exists.
+2. If `<plugin_dir>/.zed/devcontainer.json` and the target
+   `.devcontainer/devcontainer.json` both exist, merge the former into the
+   latter with `merge_devcontainer_json` (temp + `mv`).
+3. If `<plugin_dir>/.zed/settings.json` exists, `mkdir -p <target_dir>/.zed`
+   and either `copy_with_confirm` it (no target file yet — the first
+   contributor, in practice `core`) or merge it with `merge_zed_settings`.
+
+Contract: always returns 0 — a Zed failure must neither abort a scaffold nor
+damage a live file. Each failing branch removes its temp file, emits
+`print_warning` and leaves the target exactly as it was. `mkdir -p` is
+required because `copy_with_confirm` does not create parent directories.
+
+Call sites, one line each and never conditional:
+`templates/core/plugin.sh::plugin_post_copy`;
+`templates/languages/<lang>/plugin.sh::plugin_post_copy_shared` (immediately
+after the existing devcontainer merge, because all six language hooks can
+`return` early from their `post.sh` marker branch; and never from
+`plugin_post_copy_module`, since `.zed/` is a root asset);
+`templates/services/{postgresql,mysql,redis}/plugin.sh::plugin_post_copy`.
+
+### `templates/<flavor>/.zed/` directory contract (#323)
+
+A new permitted template subdirectory (`AGENTS.md` §4), and the only one that
+is **not** copied verbatim into the target.
+
+| File | Role |
+| --- | --- |
+| `devcontainer.json` | Devcontainer **merge overlay** whose only content is `customizations.zed.extensions`. Must never reach the target. May carry `//` comments. |
+| `settings.json` | Fragment installed/merged as `<target>/.zed/settings.json`. Strict JSON. |
+
+Shipped extension IDs — all verified to exist in `zed-industries/extensions`
+(`extensions.toml` + `api.zed.dev/extensions`): `core` → `dockerfile`;
+`languages/rust` and `languages/python` → `toml`; `languages/node` → `biome`;
+`languages/deno` → `deno`; `languages/latex` → `latex`;
+`services/postgresql` and `services/mysql` → `sql`. `languages/go` ships a
+settings fragment only, and `services/redis` ships no `.zed/` at all. Rust,
+Python, Go, TypeScript/JavaScript, JSON, YAML, Markdown and Git are built into
+Zed and get no extension. Rationale and rejected candidates:
+`docs/design/#323/research.md`.
 
 ### `scripts/lib/manifest.sh` — manifest module (#265)
 
@@ -641,14 +725,14 @@ plugin_post_copy_module(target_dir, module_name)
 
 | Hook | Arguments | What it MAY touch | What it MUST NOT touch |
 | --- | --- | --- | --- |
-| `plugin_post_copy_shared` | `target_dir` (= project root) | `target_dir/.devcontainer/`, `target_dir/.claude/`, marker-guarded blocks in `target_dir/docker/Dockerfile.dev` and `target_dir/.devcontainer/scripts/post.sh` | Module sub-directories |
-| `plugin_post_copy_module` | `target_dir` (= `<root>/<module>` in monorepo mode, `<root>` in single mode), `module_name` | Files inside `target_dir`: `pyproject.toml`/`Cargo.toml`/`package.json`, lint config (`ruff.toml`, `biome.json`, etc.), `src/<module_name>/`, `tests/`, language-specific `.gitignore`, `CLAUDE.md` for the module | `target_dir/.devcontainer/`, `target_dir/.claude/`, `target_dir/docker/`, root `docker-compose.yml` |
+| `plugin_post_copy_shared` | `target_dir` (= project root) | `target_dir/.devcontainer/`, `target_dir/.claude/`, `target_dir/.zed/` via `apply_zed_assets` (#323), marker-guarded blocks in `target_dir/docker/Dockerfile.dev` and `target_dir/.devcontainer/scripts/post.sh` | Module sub-directories |
+| `plugin_post_copy_module` | `target_dir` (= `<root>/<module>` in monorepo mode, `<root>` in single mode), `module_name` | Files inside `target_dir`: `pyproject.toml`/`Cargo.toml`/`package.json`, lint config (`ruff.toml`, `biome.json`, etc.), `src/<module_name>/`, `tests/`, language-specific `.gitignore`, `CLAUDE.md` for the module | `target_dir/.devcontainer/`, `target_dir/.claude/`, `target_dir/.zed/`, `target_dir/docker/`, root `docker-compose.yml` |
 
 Both functions MUST be **idempotent** — re-running `setup.sh --add-module` for an already-registered language is a no-op for shared assets and obeys `--overwrite` for module assets. Marker-guarded blocks (`# >>> <lang> toolchain >>>` … `<<< <lang> toolchain <<<`) in `Dockerfile.dev` and `post.sh` provide block-level idempotency analogous to the gitignore policy (#259).
 
 ### Non-language plugin contract (`templates/{core,claude,codex,services/<svc>,github-actions/<wf>}/plugin.sh`)
 
-Unchanged. These plugins implement only `plugin_post_copy(target_dir)` and operate on `target_dir = project root` in both single and monorepo modes. Service plugins remain mode-agnostic because their existing `{{PROJECT_NAME}}-<svc>` naming convention naturally produces monorepo-correct service names (e.g., `myapp-db` in single mode, `elsur-db` in monorepo mode for project `elsur`).
+Unchanged in shape. These plugins implement only `plugin_post_copy(target_dir)` and operate on `target_dir = project root` in both single and monorepo modes. Since #323, `core` and the three service plugins also call `apply_zed_assets "$target_dir" "$PLUGIN_DIR"` once — a no-op unless `--zed` was selected and the flavor ships a `.zed/` directory. Service plugins remain mode-agnostic because their existing `{{PROJECT_NAME}}-<svc>` naming convention naturally produces monorepo-correct service names (e.g., `myapp-db` in single mode, `elsur-db` in monorepo mode for project `elsur`).
 
 `templates/core/plugin.sh::plugin_post_copy` gains an internal monorepo-mode branch (#263) gated on `${MONOREPO_MODE}` that writes `modules.json` from the registered `MODULES` array and writes `<module>/CLAUDE.md` per module — internal logic, not a contract change.
 
@@ -686,6 +770,11 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 | `claude plugins list` query failure | shell warning, `return 0` | `setup_plugins.sh` if-guarded command substitution (#273 review); symmetric with marketplace failure path so a degraded `claude` CLI cannot trip `set -e` in `post.sh` |
 | `update_gitignore` write failure | shell error (propagates under `set -euo pipefail`) | `${target_dir}/.gitignore` not writable |
 | Devcontainer JSON comment normalization failure | shell error, non-zero helper return | `merge_devcontainer_json` receives malformed comments or JSON invalid after comment stripping |
+| Zed devcontainer overlay merge failure | shell warning, `apply_zed_assets` returns 0 (#323) | A flavor's `.zed/devcontainer.json` is unparseable; temp removed, the live `.devcontainer/devcontainer.json` is left unchanged |
+| Zed project settings merge failure | shell warning, `apply_zed_assets` returns 0 (#323) | The developer's `.zed/settings.json` is invalid even after comment stripping, or jq failed; temp removed, the live file is left unchanged |
+| `--zed` in `--add-module` mode | shell warning, flag reset to `false` (#323) | Mirrors `--codex`: root assets were installed by the original init |
+| `--zed` against an existing Tarnished project | shell error, exit 1 (#323) | `scaffold_flags_supplied` counts `--zed` as a scaffold selection, so the existing "use --refresh / --add-module" guidance fires instead of a silent refresh |
+| `scaffold_options.zed_enabled` present but not boolean | shell error, exit 1 (#323) | `manifest_options_valid` rejects it → `manifest_read` "Invalid manifest scaffold options" |
 | Mutually-exclusive setup.sh flags | shell error, exit 1 | `--monorepo --add-module`, `--module --add-module`, `--monorepo --lang` (no `--module`) (#263); `--upgrade --monorepo`, `--upgrade --add-module`, `--upgrade --create-manifest`, `--create-manifest --monorepo`, `--create-manifest --add-module` (#265) |
 | `--add-module` outside monorepo | shell error, exit 1 | CWD lacks `modules.json` (#263) |
 | Unknown `--module` language | shell error, exit 1 | `--module name:foo` where `foo` ∉ `AVAILABLE_LANGUAGES` (#263) |

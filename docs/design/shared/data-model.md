@@ -22,6 +22,7 @@ This is the cumulative project-wide data model. Per-issue deltas may add or modi
 | `Manifest` (logical) | downstream `<scope>/.tarnished-manifest.json` (#265) | Installed-baseline manifest of eligible runtime helper files for one upgrade scope (root or per-module) — `{ manifest_version, tarnished_version, tarnished_commit, created_at, scaffold_options, files: { path: "sha256:<hex>" } }` |
 | `LifecycleDecision` (internal) | `scripts/lib/manifest.sh` (#265) | Pure enum used by `manifest_decide` to tag each file's upgrade outcome — `NOOP \| UPDATE \| SKIP_EDITED \| NEW \| SKIP_NEW_CONFLICT \| LEAVE_REMOVED \| PRUNE \| SKIP_USER_DELETED` |
 | `RefreshConfig` (logical) | downstream `<project>/.tarnished/refresh.json` (#279) | Always-latest sync whitelist + overlay declaration — `{ schema_version, upstream: { repo_url, branch }, clone_dir, managed_paths: [{ src, dst, overlay }] }` |
+| `ZedProjectSettings` (logical) | downstream `<project>/.zed/settings.json` (#323) | Zed project settings generated when Zed support is enabled — `terminal.shell`, `file_scan_exclusions`, `languages.<Lang>`, `lsp.<server>`. Developer-owned: not an AI asset, not manifest-eligible |
 
 ## Type Definitions
 
@@ -191,6 +192,7 @@ erDiagram
         bool github_actions_enabled
         bool auto_tag_enabled
         bool codex_enabled
+        bool zed_enabled
         bool monorepo
     }
     ManifestFileEntry {
@@ -240,6 +242,9 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `MANIFEST_EXCLUDE_GLOBS` (`scripts/lib/common.sh:126`) | Extended with always-latest `.claude/{commands,skills,scripts}` directories, file-managed `.claude/rules/shell.md`, and their `.local` overlay sidecars. Excludes always-latest paths from manifest tracking — keeps `--create-manifest` from hashing them and keeps `--upgrade` from applying lifecycle decisions to them. Pre-#279 manifests that already contain hashes for these paths become inert; the next `--create-manifest` produces a clean manifest. | #279, #281 |
 | `MANIFEST_EXCLUDE_GLOBS` (`scripts/lib/common.sh:126`) | Further extended with directory-managed `.github{,/*}` so CI workflow / GitHub-side configuration files (`.github/project.yml`, `.github/versioning.yml`, `.github/workflows/*.yml` including the per-language `*-quality-check.yml`) are user-owned: scaffold still emits them, but `--upgrade` never records, decides, or prunes them. `apply_decisions_for_scope` (`setup.sh`) gains a defensive filter on `OLD_HASHES` that drops excluded paths before the lifecycle loop, so pre-#286 manifests still listing `.github/*` are migrated silently on the first post-#286 `--upgrade` (the new manifest written at end-of-scope no longer lists them). | #286 |
 | `.claude/settings.json` + `.claude/scripts/deny-check.sh` (workspace + `templates/claude` + `templates/languages/*`) | Hook/permission repair: `deny-check.sh` reads the Bash command from the hook's stdin JSON (`.tool_input.command`) instead of the nonexistent `CLAUDE_BASH_COMMAND` env var; language-template PostToolUse hooks move file patterns from `matcher` (tool-name-only per Claude Code docs) to per-handler `if` rules and read the file path from stdin JSON (quoted) instead of the nonexistent `$CLAUDE_FILE_PATH`; deny rules normalized to canonical `Bash(prefix:*)` form and aligned with the script's regex list (`git config` deny narrowed to `--global`, `apt-get` / `sudo rm -rf` added); PreToolUse hook path is `$CLAUDE_PROJECT_DIR`-relative; node hook invokes `pnpm exec biome`. Prior to this fix none of the PostToolUse hooks or deny-check patterns had ever fired. | #299 |
+| `<project>/.zed/settings.json` (downstream, optional) | New file introduced by `setup.sh --zed`: Zed project settings assembled from `templates/core/.zed/settings.json` (installed by `copy_with_confirm` — first contributor) plus each selected language's `templates/languages/<lang>/.zed/settings.json` fragment (merged by `merge_zed_settings`). Absent without `--zed`. Developer-owned: no `refresh.json` mapping, no manifest entry (outside `_manifest_path_eligible`), tracked by git (no `update_gitignore` block). | #323 |
+| `<project>/.devcontainer/devcontainer.json :: customizations` | Gains an optional sibling `zed` next to the always-present `vscode`. `merge_devcontainer_json` now carries `customizations.zed` through the merge (`extensions` as a `unique` union, other keys object-merged) and emits the key **only** when the base or the overlay declares one, so output without `--zed` is byte-identical to pre-#323. Other `customizations.*` namespaces (e.g. `codespaces`) are still dropped by the rebuild. | #323 |
+| `scaffold_options.zed_enabled` (manifest) | New optional boolean, absent in every pre-#323 manifest and read as `// false`. Inferred by `infer_scaffold_options` from the existence of `<scope>/.zed/settings.json`, not from the CLI flag, so removing the file correctly flips the record at the next `--create-manifest`. `manifest_options_valid` validates its type when present; no migration is required. | #323 |
 | `templates/languages/latex/.claude/rules/latex.md` (downstream LaTeX scaffold) | New rules file — LaTeX gains `rules/latex.md` for parity with the other five languages; `latex/plugin.sh::plugin_post_copy_shared` copies the rules dir like the rust/node plugins. Also: `setup.sh::load_selected_plugins` warns when `node` and `deno` are both selected (their `*.ts`/`*.tsx` format hooks compete), and all `templates/**/plugin.sh` file modes normalized to 644 (they are sourced, never executed). | #301 |
 
 No SQL, no database migrations — config files, the JSON modules registry, and the seeded `.gitignore` are the only schemas.
@@ -253,6 +258,43 @@ The default catalog covers Claude commands/skills/scripts/agents and shared shel
 Refresh enumerates source and overlay regular files plus prior state and installs currently distributed AI targets even when their live content is unknown, edited or previously deleted. Differing existing bytes require a verified backup in a unique private `.tarnished/backups/refresh.XXXXXX/` run, retaining original relative paths, before replacement; this includes custom keys in distributed settings files. Backups are reported and never automatically deleted. Matching bytes can establish a baseline without mutation. Failed backups or detected concurrent changes preserve the live file and prior baseline. Project-only siblings and configured sidecars are preserved. Removal requires a trusted upstream-origin baseline, unchanged current bytes and proven upstream disappearance; unknown/edited obsolete files and overlay-origin content are preserved. Same-SHA invocations still reconcile local state/config/overlays. Dry-run never writes target files, configuration, state, backups or persistent cache. Runtime errors warn and exit 0 except unknown CLI flags.
 
 Existing refresh configuration is never refresh-overwritten. Current setup can create missing config or migrate an exactly recognized old default mapping list with no explicit opt-in value while preserving other fields. Explicit custom/empty lists and false opt-in values remain authoritative. Legacy differing active AI targets use verified backup-before-replacement without one-time conflict adoption. Current setup supplies the trusted updater even when candidate bytes come from an older selected ref; recognized installed legacy updaters can migrate safely, while edited/unrecognized helpers require explicit review and migration before container start.
+
+### `.zed/settings.json` schema (Zed project settings, #323)
+
+Present only in projects scaffolded with `setup.sh --zed`. Strict JSON as
+generated; Zed itself also accepts JSONC, and `merge_zed_settings` tolerates
+comments on input (they are not preserved). Every key is optional from Zed's
+perspective; Tarnished writes only the ones below.
+
+| Key | Type | Written by | Purpose |
+| --- | --- | --- | --- |
+| `terminal.shell.program` | string (`"bash"`) | `templates/core` | Integrated terminal shell inside the container |
+| `file_scan_exclusions` | array of glob strings, with the sentinel `"..."` preserving Zed's defaults | `core` + every language | Keep build/cache directories out of the file tree, finder and search |
+| `languages.<Lang>.formatter` | `"language_server"` or `{"language_server": {"name": "<lsp>"}}` | python (`ruff`), node (`biome`), deno/go (`language_server`) | Format-on-save tool per language |
+| `languages.<Lang>.format_on_save` | `"on"` / `"off"` | python, node, deno, go | Enables the format pipeline |
+| `languages.<Lang>.code_actions_on_format` | object of action → bool | python (`source.organizeImports.ruff`), node (`source.fixAll.biome`, `source.organizeImports.biome`) | Phase 1 of Zed's two-phase format pipeline |
+| `languages.<Lang>.language_servers` | array of names, `!name` to disable | deno | Replaces the built-in TS servers with `deno` |
+| `lsp.<server>.initialization_options` | object passed to the LSP | rust (`rust-analyzer.check.command = "clippy"`), go (`gopls.staticcheck = true`) | Per-language diagnostics behavior |
+| `lsp.<server>.settings` | object | deno (`deno.enable`), latex (`texlab.build.onSave = false`) | Per-language-server settings |
+
+**Ownership**: developer-owned. The file has no `.tarnished/refresh.json`
+mapping (it is not an AI asset), and it falls outside
+`_manifest_path_eligible`, which admits only `.devcontainer/scripts/*.sh`
+other than `post.sh`. Consequently `--create-manifest` does not hash it,
+`--upgrade` never decides on it, `--upgrade --prune` cannot delete it, and no
+`MANIFEST_EXCLUDE_GLOBS` entry is required. It is tracked by git —
+`update_gitignore` has no `.zed/` block, which is intended for a shared
+project setting.
+
+**Composition**: the first contributing flavor installs its fragment by
+`copy_with_confirm` (in practice `core`, which always runs first); every later
+flavor merges through `merge_zed_settings` — objects key-wise, arrays as
+`unique` unions, scalars overlay-wins. Repeated merges are byte-stable, which
+is what makes an `--add-module` or staged `--upgrade` re-run a no-op.
+
+**Forward compatibility**: unknown keys are ignored by Zed, and
+`merge_zed_settings` preserves any key present only in the developer's file,
+so hand-added settings survive re-runs.
 
 ### `.codex/config.toml` schema (project-level Codex CLI config, #261)
 

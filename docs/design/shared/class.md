@@ -147,6 +147,13 @@ classDiagram
     class RefreshState {
         +schema_version
     }
+    class ZedProjectSettings {
+        +terminal_shell
+        +file_scan_exclusions
+        +languages
+        +lsp
+    }
+    DownstreamProject --> ZedProjectSettings : owns outright (#323)
     class ReplacementBackup {
         +run_directory
         +original_relative_path
@@ -175,3 +182,4 @@ classDiagram
 - `BranchPrefixes` is the canonical internal struct; `VersioningSection` (Format B) deserializes directly into it, while a custom deserializer collapses Format A (`branches: [{prefix, bump}]`) into the same shape (#228).
 - `BumpType::Rc` is the default when no branch prefix matches.
 - `IssueCommands::link_issue_to_project` accepts a `ProjectConfig` so it can be reused for both default and label-routed links (#230 refactor).
+- `ZedProjectSettings` (`<project>/.zed/settings.json`, #323) is drawn as a direct child of `DownstreamProject` with no edge to `ManifestV2`, `RefreshConfig` or `RefreshState`: it is written once at scaffold time by `apply_zed_assets` and then wholly developer-owned — not an AI asset (no `refresh.json` mapping) and outside `_manifest_path_eligible`, so no maintenance path reads, rewrites or prunes it. The absence of those edges is the ownership statement.
