@@ -121,6 +121,7 @@ declare -A SERVICE_DISPLAY_NAMES=(
 GITHUB_ACTIONS_ENABLED=false
 AUTO_TAG_ENABLED=false
 CODEX_ENABLED=false
+ZED_ENABLED=false
 AI_PROFILE="claude-main"
 AI_PROFILE_SET=false
 AI_PRIMARY_AGENT="Claude Code"
@@ -185,6 +186,8 @@ Options:
     --add-module <name> Add a single module to an existing monorepo. Pair with --lang.
                         Auto-detected when CWD already contains modules.json. (#263)
     --codex             Include OpenAI Codex CLI integration (code review)
+    --zed               Add Zed editor support (customizations.zed +
+                        .zed/settings.json) alongside the VS Code setup
     --ai-profile <profile>
                         Select AI workflow profile:
                         claude-main (default), codex-main, or dual
@@ -248,6 +251,7 @@ Examples:
     ./setup.sh --lang go --github-actions   # Go with GitHub Project integration
     ./setup.sh --ai-profile codex-main      # Codex primary + Claude reviewer
     ./setup.sh --codex                      # Claude primary + Codex reviewer
+    ./setup.sh --lang rust --zed            # Rust, openable in VS Code or Zed
     ./setup.sh my-project --lang rust -y    # Non-interactive mode
 
     # Monorepo mode (#263)
@@ -947,6 +951,10 @@ parse_arguments() {
                 ;;
             --codex)
                 CODEX_ENABLED=true
+                shift
+                ;;
+            --zed)
+                ZED_ENABLED=true
                 shift
                 ;;
             --ai-profile)
@@ -1670,10 +1678,11 @@ infer_scaffold_options() {
         fi
     fi
 
-    local gha=false ata=false codex=false ai_profile="claude-main"
+    local gha=false ata=false codex=false zed=false ai_profile="claude-main"
     [[ -f "$target_dir/.github/workflows/project-integration.yml" ]] && gha=true
     [[ -f "$target_dir/.github/workflows/auto-tag.yml" ]] && ata=true
     [[ -f "$target_dir/.codex/config.toml" ]] && codex=true
+    [[ -f "$target_dir/.zed/settings.json" ]] && zed=true
     if [[ -f "$target_dir/.tarnished/agent-profile.json" ]]; then
         ai_profile=$(jq -r '.ai_profile // "claude-main"' "$target_dir/.tarnished/agent-profile.json" 2>/dev/null || echo "claude-main")
     fi
@@ -1685,6 +1694,7 @@ infer_scaffold_options() {
         --argjson gha "$gha" \
         --argjson ata "$ata" \
         --argjson codex "$codex" \
+        --argjson zed "$zed" \
         --argjson monorepo "$monorepo_flag" \
         '{
             languages: $languages,
@@ -1693,6 +1703,7 @@ infer_scaffold_options() {
             auto_tag_enabled: $ata,
             ai_profile: $ai_profile,
             codex_enabled: $codex,
+            zed_enabled: $zed,
             monorepo: $monorepo
         }'
 }
@@ -1701,7 +1712,7 @@ infer_scaffold_options() {
 scaffold_flags_supplied() {
     [[ -n "$PROJECT_NAME" || "$MONOREPO_MODE" == true || ${#MODULES[@]} -gt 0 ||
         ${#SELECTED_LANGUAGES[@]} -gt 0 || ${#SELECTED_SERVICES[@]} -gt 0 ||
-        "$CODEX_ENABLED" == true || "$AI_PROFILE_SET" == true ||
+        "$CODEX_ENABLED" == true || "$ZED_ENABLED" == true || "$AI_PROFILE_SET" == true ||
         "$GITHUB_ACTIONS_ENABLED" == true || "$AUTO_TAG_ENABLED" == true || "$OVERWRITE_ALL" == true ]]
 }
 
@@ -2656,6 +2667,7 @@ populate_setup_state_from_manifest() {
     GITHUB_ACTIONS_ENABLED=false
     AUTO_TAG_ENABLED=false
     CODEX_ENABLED=false
+    ZED_ENABLED=false
     AI_PROFILE="claude-main"
     AI_PROFILE_SET=false
     AI_PRIMARY_AGENT="Claude Code"
@@ -2686,6 +2698,7 @@ populate_setup_state_from_manifest() {
     AUTO_TAG_ENABLED=$(echo "$manifest_json" | jq -r '.scaffold_options.auto_tag_enabled // false')
     AI_PROFILE=$(echo "$manifest_json" | jq -r '.scaffold_options.ai_profile // "claude-main"')
     CODEX_ENABLED=$(echo "$manifest_json" | jq -r '.scaffold_options.codex_enabled // false')
+    ZED_ENABLED=$(echo "$manifest_json" | jq -r '.scaffold_options.zed_enabled // false')
     MONOREPO_MODE=$(echo "$manifest_json" | jq -r '.scaffold_options.monorepo // false')
     configure_ai_profile
 
@@ -2831,6 +2844,17 @@ main() {
                 AUTO_TAG_ENABLED=true
             fi
         fi
+
+        # Ask about Zed editor support (independent from the AI profile)
+        if [[ "$ZED_ENABLED" != true ]]; then
+            echo "" > /dev/tty
+            echo -n "Enable Zed editor support? (y/n) [n]: " > /dev/tty
+            local zed_response
+            read -r zed_response < /dev/tty
+            if [[ "$zed_response" == "y" || "$zed_response" == "Y" ]]; then
+                ZED_ENABLED=true
+            fi
+        fi
     fi
 
     # Same reasoning for the explicit CLI flags — emit a one-time warning if
@@ -2839,6 +2863,10 @@ main() {
         if [[ "$CODEX_ENABLED" == true ]]; then
             print_warning "--codex is ignored in add-module mode (Codex was set up by the original --monorepo init)"
             CODEX_ENABLED=false
+        fi
+        if [[ "$ZED_ENABLED" == true ]]; then
+            print_warning "--zed is ignored in add-module mode (Zed assets were set up by the original --monorepo init)"
+            ZED_ENABLED=false
         fi
         if [[ "$GITHUB_ACTIONS_ENABLED" == true ]]; then
             print_warning "--github-actions is ignored in add-module mode (already installed by the original --monorepo init)"
@@ -2874,6 +2902,7 @@ main() {
     echo "Primary Agent:        $AI_PRIMARY_AGENT"
     echo "Review Agent:         $AI_REVIEW_AGENT"
     echo "Codex CLI:            $CODEX_ENABLED"
+    echo "Zed:                  $ZED_ENABLED"
     echo "Project Integration:  $GITHUB_ACTIONS_ENABLED"
     echo "Auto-Tag:             $AUTO_TAG_ENABLED"
     echo "Overwrite:            $OVERWRITE_ALL"
@@ -2987,6 +3016,17 @@ main() {
     echo "Next steps:"
     echo "  1. Open in VS Code: code ."
     echo "  2. Reopen in Container: F1 > Dev Containers: Reopen in Container"
+    if [[ "$ZED_ENABLED" == true ]]; then
+        echo ""
+        echo "Or open in Zed:"
+        echo "  1. zed ."
+        echo "  2. Accept the \"Open in Container\" prompt"
+        echo "     (or run \"Project: Open Remote\" from the command palette)"
+        echo ""
+        echo "  Zed notes: restart the container manually after editing"
+        echo "  devcontainer.json, and do not run VS Code and Zed on the"
+        echo "  same project at the same time."
+    fi
     echo ""
     echo "AI workflow profile: $AI_PROFILE"
     echo "  Primary: $AI_PRIMARY_AGENT"
