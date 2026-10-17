@@ -1,0 +1,31 @@
+{
+  "file_scan_exclusions": [
+    "**/coverage"
+  ],
+  "lsp": {
+    "deno": {
+      "settings": {
+        "deno": {
+          "enable": true
+        }
+      }
+    }
+  },
+  "languages": {
+    "JavaScript": {
+      "language_servers": ["deno", "!typescript-language-server", "!vtsls", "!eslint"],
+      "formatter": "language_server",
+      "format_on_save": "on"
+    },
+    "TypeScript": {
+      "language_servers": ["deno", "!typescript-language-server", "!vtsls", "!eslint"],
+      "formatter": "language_server",
+      "format_on_save": "on"
+    },
+    "TSX": {
+      "language_servers": ["deno", "!typescript-language-server", "!vtsls", "!eslint"],
+      "formatter": "language_server",
+      "format_on_save": "on"
+    }
+  }
+}

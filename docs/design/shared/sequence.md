@@ -568,10 +568,68 @@ sequenceDiagram
     Setup-->>User: completion: "Module 'anisette' added"
 ```
 
+## `setup.sh --zed` — optional Zed editor assets (#323)
+
+Additive editor flavor. One global (`ZED_ENABLED`) and one shared helper
+(`common.sh::apply_zed_assets`) carry all four artifact groups;
+`customizations.vscode` is always kept, so the generated project opens in
+either editor. Without `--zed` every `apply_zed_assets` call returns at its
+first guard and `merge_devcontainer_json` emits no `zed` key, so the generated
+tree is byte-identical to a pre-#323 run. The helper's internal branching is
+in `docs/design/#323/flowchart.md`.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Setup as setup.sh
+    participant Core as core plugin
+    participant Lang as language plugin (e.g. rust)
+    participant Svc as service plugin (e.g. postgresql)
+    participant Common as common.sh::apply_zed_assets
+    participant DC as <target>/.devcontainer/devcontainer.json
+    participant Zed as <target>/.zed/settings.json
+    participant Manifest as <target>/.tarnished-manifest.json
+
+    User->>Setup: ./setup.sh --lang rust --postgresql --zed -y
+    Setup->>Setup: parse_arguments → ZED_ENABLED=true
+    Note over Setup: interactive runs instead ask<br/>"Enable Zed editor support? (y/n) [n]";<br/>add-module mode warns and forces false
+    Setup->>Setup: Setup Configuration prints "Zed: true"
+
+    Setup->>Core: plugin_copy(root)
+    Core->>DC: copy templates/core/.devcontainer verbatim (no zed keys)
+
+    Setup->>Core: plugin_post_copy(root)
+    Core->>Common: apply_zed_assets(root, templates/core)
+    Common->>DC: merge_devcontainer_json(DC, core/.zed/devcontainer.json)
+    Note over Common,DC: customizations.zed.extensions = ["dockerfile"];<br/>customizations.vscode untouched
+    Common->>Zed: .zed/ absent → mkdir + copy_with_confirm(core/.zed/settings.json)
+
+    Setup->>Lang: plugin_post_copy_shared(root)
+    Lang->>DC: merge_devcontainer_json(DC, rust/.devcontainer/devcontainer.json)
+    Note over Lang,DC: vscode extensions/settings + features;<br/>base customizations.zed carried through
+    Lang->>Common: apply_zed_assets(root, templates/languages/rust)
+    Common->>DC: merge → zed.extensions = ["dockerfile","toml"] (unique union)
+    Common->>Zed: merge_zed_settings(Zed, rust/.zed/settings.json)
+    Note over Common,Zed: + lsp.rust-analyzer.check.command=clippy<br/>+ file_scan_exclusions ∪ ["**/target"]
+
+    Setup->>Svc: plugin_post_copy(root)
+    Svc->>Common: apply_zed_assets(root, templates/services/postgresql)
+    Common->>DC: merge → zed.extensions ∪ ["sql"]
+
+    Setup->>Setup: infer_scaffold_options(root) → zed_enabled: true<br/>(evidence = .zed/settings.json exists)
+    Setup->>Manifest: manifest_write(scaffold_options incl. zed_enabled)
+    Note over Setup,Manifest: .zed/settings.json itself is NOT hashed —<br/>outside _manifest_path_eligible, so --upgrade/--prune never touch it
+    Setup-->>User: Next steps — VS Code steps + "Or open in Zed" steps
+```
+
+A merge failure on either file is non-fatal: the helper removes its temp file,
+emits `print_warning` and leaves the live file untouched, then returns 0.
+
 ## Devcontainer JSON merge with comment normalization
 
 Language and service plugins call `merge_devcontainer_json` to merge
-devcontainer features, VS Code extensions, and VS Code settings. The helper
+devcontainer features, VS Code extensions, VS Code settings, and — when
+either side declares it (#323) — the `customizations.zed` subtree. The helper
 accepts strict JSON or comment-bearing devcontainer JSON, normalizes comments
 away in private temp files, and then runs the structural `jq` merge. The output
 is strict JSON.

@@ -120,6 +120,9 @@ plugin_post_copy() {
         print_success "PostgreSQL devcontainer features merged"
     fi
 
+    # Zed editor assets (no-op unless --zed was selected)
+    apply_zed_assets "$target_dir" "$PLUGIN_DIR"
+
     # -------------------------------------------------------------------------
     # Add DATABASE_URL to docker-compose app service environment
     # -------------------------------------------------------------------------

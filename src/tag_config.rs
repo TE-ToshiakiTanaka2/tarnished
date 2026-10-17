@@ -194,9 +194,18 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert!(config.versioning.branch_prefixes.major.is_empty());
-        assert!(config.versioning.branch_prefixes.minor.is_empty());
-        assert!(config.versioning.branch_prefixes.patch.is_empty());
+        assert_eq!(
+            config.versioning.branch_prefixes.major,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            config.versioning.branch_prefixes.minor,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            config.versioning.branch_prefixes.patch,
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -366,7 +375,10 @@ branches:
         let config = config.normalize();
         // Canonical has major but not minor — legacy should NOT be applied
         assert_eq!(config.versioning.branch_prefixes.major, vec!["major/"]);
-        assert!(config.versioning.branch_prefixes.minor.is_empty());
+        assert_eq!(
+            config.versioning.branch_prefixes.minor,
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -382,8 +394,14 @@ branches:
         let config = config.normalize();
         assert_eq!(config.versioning.branch_prefixes.minor, vec!["release/"]);
         // "foobar" bump type should be skipped
-        assert!(config.versioning.branch_prefixes.major.is_empty());
-        assert!(config.versioning.branch_prefixes.patch.is_empty());
+        assert_eq!(
+            config.versioning.branch_prefixes.major,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            config.versioning.branch_prefixes.patch,
+            Vec::<String>::new()
+        );
     }
 
     #[test]

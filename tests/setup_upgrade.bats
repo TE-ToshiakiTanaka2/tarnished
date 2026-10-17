@@ -701,3 +701,21 @@ MOCK
     assert_equal "$(jq -r --arg rel "$rel" '.files[$rel]' .tarnished-manifest.json)" "$hash"
     assert_equal "sha256:$(sha256sum "$rel" | cut -d ' ' -f 1)" "$hash"
 }
+
+# #323: .zed/settings.json is developer-owned (not manifest-tracked), so
+# --upgrade must reproduce it byte-for-byte while still restoring
+# ZED_ENABLED from the manifest for its own staging run.
+@test "#323: --upgrade over a --zed scaffold leaves .zed/settings.json byte-unchanged" {
+    run bash "$SETUP_SH" --lang rust --zed -y zed-upgrade-proj
+    assert_success
+    [[ -f .zed/settings.json ]]
+    git add -A
+    git commit -qm 'zed scaffold'
+    local before
+    before=$(sha256sum .zed/settings.json)
+
+    run bash "$SETUP_SH" --upgrade -y
+    assert_success
+    assert_equal "$(sha256sum .zed/settings.json)" "$before"
+    assert_equal "$(jq -r '.scaffold_options.zed_enabled' .tarnished-manifest.json)" "true"
+}

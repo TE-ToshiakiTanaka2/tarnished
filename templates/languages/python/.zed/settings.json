@@ -1,0 +1,22 @@
+{
+  "file_scan_exclusions": [
+    "**/__pycache__",
+    "**/.mypy_cache",
+    "**/.pytest_cache",
+    "**/.ruff_cache",
+    "**/*.egg-info"
+  ],
+  "languages": {
+    "Python": {
+      "format_on_save": "on",
+      "formatter": {
+        "language_server": {
+          "name": "ruff"
+        }
+      },
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true
+      }
+    }
+  }
+}

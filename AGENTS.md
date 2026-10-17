@@ -86,8 +86,9 @@ Each flavor directory (`templates/codex/`, `templates/claude/`, `templates/langu
 - Optional `AGENTS.md` (Codex flavor only — root-level review-agent definition)
 - Optional `.devcontainer/`, `.claude/`, `.codex/`, `.agents/`, `.tarnished/`, `.github/`, `docker/` subdirectories whose contents are copied verbatim into the target by `plugin_copy`
 - Optional `.devcontainer/scripts/<setup>.sh` shell helpers whose functions are sourced into the target's `post.sh` by `plugin_post_copy`
+- Optional `.zed/` subdirectory (#323) — unlike every directory above, it is **not** copied verbatim. `.zed/devcontainer.json` is a devcontainer merge overlay (only top-level key `customizations.zed`) that must never reach the target; only `.zed/settings.json` is installed, as `<target>/.zed/settings.json`. The sole installer is `scripts/lib/common.sh::apply_zed_assets`, gated on `ZED_ENABLED`.
 
-Reviewers should reject changes that violate this shape (e.g., a plugin that puts setup logic outside `plugin_*` functions, a flavor that ships files outside the listed subdirectories, or a `plugin.sh` that calls `setup.sh` machinery directly instead of going through `common.sh`).
+Reviewers should reject changes that violate this shape (e.g., a plugin that puts setup logic outside `plugin_*` functions, a flavor that ships files outside the listed subdirectories, a `plugin.sh` that calls `setup.sh` machinery directly instead of going through `common.sh`, or a `templates/core/.zed/devcontainer.json`-shaped file placed where `plugin_copy`'s verbatim copy would ship it into every generated project).
 
 ### 5. Devcontainer post.sh integration (`templates/<flavor>/.devcontainer/scripts/<setup>.sh` + `plugin_post_copy` hook)
 

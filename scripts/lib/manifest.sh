@@ -74,7 +74,7 @@ manifest_options_valid() {
             (.ai_profile == "claude-main" or .ai_profile == "codex-main" or
                 .ai_profile == "dual")) and
         (. as $options | ["github_actions_enabled", "auto_tag_enabled",
-            "codex_enabled", "monorepo"] | all(.[]; . as $key |
+            "codex_enabled", "zed_enabled", "monorepo"] | all(.[]; . as $key |
                 ($options | has($key) | not) or ($options[$key] | type == "boolean")))
     ' >/dev/null 2>&1
 }

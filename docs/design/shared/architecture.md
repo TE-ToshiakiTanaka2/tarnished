@@ -51,17 +51,24 @@ Design artifacts are split into a shared cumulative layer (this directory) and p
 │   │   ├── module.CLAUDE.md.template # Per-module CLAUDE.md stub (#263, monorepo only)
 │   │   ├── docker-compose.yml        # Dev service `{{PROJECT_NAME}}`
 │   │   ├── docker/Dockerfile.dev     # Base image; language plugins append marker-guarded blocks
+│   │   ├── .zed/                     # Optional Zed editor contribution (#323). NOT copied verbatim:
+│   │   │                             #   devcontainer.json is a merge overlay carrying only
+│   │   │                             #   customizations.zed; settings.json is installed as
+│   │   │                             #   <target>/.zed/settings.json by common.sh::apply_zed_assets
 │   │   └── .devcontainer/scripts/refresh-assets.sh  # Always-latest asset sync (#279): clones
 │   │                                 #   upstream tarnished into /opt/tarnished and safely updates owned
 │   │                                 #   paths on every container start (postStartCommand + first-boot
 │   │                                 #   call from post.sh)
 │   ├── languages/{deno,python,node,latex,rust,go}/
-│   │   └── plugin.sh                 # Implements plugin_post_copy_shared + plugin_post_copy_module
-│   │                                 #   (#263); legacy plugin_post_copy retained as backward-compat shim.
-│   │                                 #   Go (#274) follows the Rust shape: gofmt/golangci-lint/gotestsum,
-│   │                                 #   no auto `go mod init`, .golangci.yml is per-module
+│   │   ├── plugin.sh                 # Implements plugin_post_copy_shared + plugin_post_copy_module
+│   │   │                             #   (#263); legacy plugin_post_copy retained as backward-compat shim.
+│   │   │                             #   Go (#274) follows the Rust shape: gofmt/golangci-lint/gotestsum,
+│   │   │                             #   no auto `go mod init`, .golangci.yml is per-module
+│   │   └── .zed/                     # Per-language Zed extensions + LSP/formatter fragment (#323);
+│   │                                 #   merged at root scope from plugin_post_copy_shared
 │   ├── services/{mysql,redis,celery,postgresql}/
-│   │                                 # docker-compose overlay + plugin.sh.
+│   │                                 # docker-compose overlay + plugin.sh (+ optional .zed/ for
+│   │                                 #   postgresql/mysql, #323).
 │   │                                 #   Service names already use `{{PROJECT_NAME}}-<svc>`
 │   │                                 #   (e.g., `myapp-db`); same convention works for monorepo where
 │   │                                 #   `{{PROJECT_NAME}}` resolves to the monorepo name (#263)
@@ -75,9 +82,13 @@ Design artifacts are split into a shared cumulative layer (this directory) and p
 ├── .codex/config.toml                # Project-level Codex CLI config — workspace dogfooding of templates/codex/ (#261)
 ├── .tarnished/refresh.json           # Workspace dogfooding of templates/agent-workflows/.tarnished/refresh.json (#279)
 ├── AGENTS.md                         # Tarnished-specific Codex review-agent definition (#261)
+├── .zed/settings.json                # Workspace Zed project settings — dogfooding of what
+│                                     #   `setup.sh --lang rust --zed` generates (#323). Developer-owned:
+│                                     #   outside refresh and manifest ownership, tracked by git
 ├── .devcontainer/
 │   ├── devcontainer.json             # Workspace devcontainer (Rust, Claude Code, Node.js LTS for Codex CLI);
-│   │                                 #   postStartCommand invokes refresh-assets.sh (#279)
+│   │                                 #   postStartCommand invokes refresh-assets.sh (#279);
+│   │                                 #   carries customizations.vscode AND customizations.zed (#323)
 │   └── scripts/
 │       ├── post.sh                   # Post-create: git/SSH/Rust/codespell/setup_plugins/setup_codex (#261);
 │       │                             #   plus refresh_assets first-boot call (#279)
@@ -89,7 +100,8 @@ Design artifacts are split into a shared cumulative layer (this directory) and p
 │   └── #{issue}/                     # Per-issue deltas
 ├── docker/, docker-compose.yml       # Dev environment
 ├── scripts/
-│   ├── lib/common.sh                 # Shared shell utilities — output helpers, file copy, JSON merge,
+│   ├── lib/common.sh                 # Shared shell utilities — output helpers, file copy, JSON merge
+│   │                                 #   (incl. merge_zed_settings + apply_zed_assets, #323),
 │   │                                 #   docker-compose merge, gitignore seeding (#259), TTY detection,
 │   │                                 #   prompts, modules.json helpers (#263), monorepo prompts (#263),
 │   │                                 #   sha256_file wrapper + manifest-recording extension to
@@ -204,8 +216,9 @@ Template plugins use Bash. Claude/Codex setup uses `claude plugins install -s pr
 - **Idempotency**: All shell setup helpers (`setup_plugins.sh`, `plugin.sh`, marketplace registration, `update_gitignore`) MUST be idempotent. `set -e` in `post.sh` requires careful return-0 on non-fatal failures (#255). Idempotency comes in three flavors:
   1. **Line-level** (`grep -q "^<line>$"` before append, used for single-line cases).
   2. **Block-level** (`grep -q "^<marker>$"` keying off a comment marker that the function itself writes, used for multi-line whitelist blocks — see Gitignore policy below, #259, and the `Dockerfile.dev` / `post.sh` language toolchain blocks introduced by #263).
-  3. **JSON-merge** (`merge_devcontainer_json`, `merge_docker_compose_services`): structural merge that is idempotent by construction.
-- **Devcontainer JSON parsing**: `merge_devcontainer_json` accepts strict JSON plus devcontainer-style comments (`//` and `/* */`) in the target or overlay file, normalizes them to strict JSON in private temp files, then runs the existing `jq` structural merge. The merged output is strict JSON and comments are not preserved. Comment stripping is stateful so URL strings and other string values containing `//` are not corrupted. Generic JSON helpers remain strict JSON unless their own contracts are widened.
+  3. **JSON-merge** (`merge_devcontainer_json`, `merge_docker_compose_services`, `merge_zed_settings` #323): structural merge that is idempotent by construction — arrays become `unique` unions, objects merge key-wise.
+- **Devcontainer JSON parsing**: `merge_devcontainer_json` accepts strict JSON plus devcontainer-style comments (`//` and `/* */`) in the target or overlay file, normalizes them to strict JSON in private temp files, then runs the existing `jq` structural merge. The merged output is strict JSON and comments are not preserved. Comment stripping is stateful so URL strings and other string values containing `//` are not corrupted. Generic JSON helpers remain strict JSON unless their own contracts are widened. `merge_zed_settings` (#323) joins the JSONC-tolerant group, because Zed's own settings files are canonically comment-bearing.
+- **Editor flavors** (#323): the generator targets VS Code by default and Zed additively. `setup.sh --zed` (or the interactive `Enable Zed editor support? (y/n) [n]` prompt) sets the single global `ZED_ENABLED`; `customizations.vscode` is *always* emitted, so a generated project opens in either editor. Zed's contributions are declared per flavor in `templates/<flavor>/.zed/` — `devcontainer.json` (a merge overlay carrying only `customizations.zed`) and `settings.json` (a `<target>/.zed/settings.json` fragment) — and installed by one shared helper, `common.sh::apply_zed_assets <target_dir> <plugin_dir>`, which every participating `plugin.sh` calls exactly once with no conditional of its own. Two properties are load-bearing. First, `.zed/` is the only template subdirectory that is **not** copied verbatim: a Zed key inside `templates/core/.devcontainer/` would reach every generated project, since that directory *is* copied, which is why the overlay lives outside it. Second, `merge_devcontainer_json` stays a pure function of its three arguments — it reads no global and emits `customizations.zed` only when the base or the overlay declares one — so a non-`--zed` run produces byte-identical output and the helper remains unit-testable. The ownership boundary is deliberate: `.zed/settings.json` is a developer-owned scaffold artifact, outside `refresh-assets.sh`/`refresh.json` (not an AI asset) and outside manifest eligibility (`_manifest_path_eligible` admits only `.devcontainer/scripts/*.sh`), so no `MANIFEST_EXCLUDE_GLOBS` entry is needed and `--upgrade`/`--prune` can never rewrite it. Zed honors devcontainer `features`, `remoteUser`, `postCreateCommand` and `postStartCommand`, so the AI-refresh channel keeps working under Zed; it ignores `forwardPorts` (no template sets it), does not rebuild on `devcontainer.json` changes, and derives the Compose project name differently from VS Code — with `container_name:` pinned in `docker-compose.yml`, the two editors must not run the same project simultaneously. Those three are documented caveats, not code.
 - **Plugin failures**: Wrapped per-plugin so one failure does not abort the whole setup (#255). On a fresh devcontainer where `claude` has never been logged in, `setup_plugins.sh` short-circuits via `is_claude_authenticated` — a `[[ -s "$HOME/.claude/.credentials.json" ]]` pre-flight gate added in #273 — that prints guidance and `return 0`s before any `claude plugins …` call. This eliminates the first-run "Warning: failed to register / install" cascade and ensures `post.sh` continues to `setup_codex`. The same gate is applied to BOTH the workspace variant (`/workspace/.devcontainer/scripts/setup_plugins.sh`) AND the template variant (`templates/claude/.devcontainer/scripts/setup_plugins.sh`); #273 also adopts `ensure_claude_marketplace` + `try_install_plugin` isolation in the template variant so the two files are now structurally identical (modulo comments), mirroring the workspace-Codex dogfooding convention from #261. This also includes optional integrations like the GitHub Project Integration plugin, whose `gh` CLI auto-detection helpers always return 0 — failures are surfaced via `print_warning` with a captured first-line gh stderr (held in the per-process tempfile `GH_LAST_ERROR_FILE`, established via `mktemp` at plugin source time so the path is unpredictable and the FS state survives the `$(...)` subshells that callers use), and control falls through to manual prompts (#276). The previous design `var=$(gh ... 2>/dev/null)` under `set -e` was fragile: a `gh` non-zero exit would abort the script before the manual fallback ran. The plugin deliberately does not register an `EXIT` trap on this tempfile — sourcing happens after `setup.sh --upgrade`'s `cleanup_upstream_dir EXIT` trap is set, and an unconditional trap would replace it and leak the upstream clone.
 - **Remote bootstrap stdin invariant** (#276): When `setup.sh` is invoked as `curl -fsSL .../setup.sh | bash`, the bootstrap block (`setup.sh:29-69`) clones the repo and `exec bash "$TEMP/setup.sh" "$@" < /dev/null`. The `< /dev/null` is required: without it, the outer curl write pipe is inherited across `exec` and the residual write fails with EPIPE, printing a spurious `curl: (23) Failure writing output to destination` to the user's terminal mid-setup. The redirect makes the new process's stdin `/dev/null`; curl finishes cleanly. Local `./setup.sh` invocations skip the bootstrap block and are unaffected.
 - **GitHub API**: All calls go through `github/client.rs`. Rate-limit errors propagate as `GitHubClientError`. Non-fatal issues (e.g., a label-routed project not found) are logged as warnings (#230).

@@ -184,6 +184,10 @@ plugin_post_copy_shared() {
         print_success "Python devcontainer features merged"
     fi
 
+    # Zed editor assets (no-op unless --zed was selected). Placed before the
+    # post.sh marker branch below, which can `return` early on a re-run.
+    apply_zed_assets "$target_dir" "$PLUGIN_DIR"
+
     # Merge Claude settings hooks
     local target_settings="${target_dir}/.claude/settings.json"
     local plugin_settings="${PLUGIN_DIR}/.claude/settings.json"

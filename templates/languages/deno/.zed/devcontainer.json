@@ -1,0 +1,9 @@
+{
+  "customizations": {
+    "zed": {
+      "extensions": [
+        "deno"
+      ]
+    }
+  }
+}

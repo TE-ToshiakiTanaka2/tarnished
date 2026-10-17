@@ -303,3 +303,141 @@ JSON
     assert_success
     assert_output "1"
 }
+
+# NFR-1 (#323): with no customizations.zed anywhere, the merged output must
+# not grow a "zed" key.
+@test "merge_devcontainer_json omits customizations.zed when neither input declares it" {
+    local base_file="$SCRATCH/base.json"
+    local overlay_file="$SCRATCH/overlay.json"
+    local output_file="$SCRATCH/output.json"
+
+    cat > "$base_file" <<'JSON'
+{
+  "features": {},
+  "customizations": {
+    "vscode": { "extensions": ["rust-lang.rust-analyzer"], "settings": {} }
+  }
+}
+JSON
+    cat > "$overlay_file" <<'JSON'
+{
+  "features": {},
+  "customizations": {
+    "vscode": { "extensions": ["vadimcn.vscode-lldb"], "settings": {} }
+  }
+}
+JSON
+
+    run merge_devcontainer_json "$base_file" "$overlay_file" "$output_file"
+    assert_success
+
+    run jq '.customizations | has("zed")' "$output_file"
+    assert_success
+    assert_output "false"
+
+    run jq -Sc '.customizations.vscode.extensions' "$output_file"
+    assert_success
+    assert_output '["rust-lang.rust-analyzer","vadimcn.vscode-lldb"]'
+}
+
+@test "merge_devcontainer_json merges customizations.zed.extensions with unique semantics" {
+    local base_file="$SCRATCH/base.json"
+    local overlay_file="$SCRATCH/overlay.json"
+    local output_file="$SCRATCH/output.json"
+
+    cat > "$base_file" <<'JSON'
+{ "customizations": { "zed": { "extensions": ["dockerfile"] } } }
+JSON
+    cat > "$overlay_file" <<'JSON'
+{ "customizations": { "zed": { "extensions": ["toml", "dockerfile"] } } }
+JSON
+
+    run merge_devcontainer_json "$base_file" "$overlay_file" "$output_file"
+    assert_success
+
+    run jq -Sc '.customizations.zed.extensions' "$output_file"
+    assert_success
+    assert_output '["dockerfile","toml"]'
+}
+
+@test "merge_devcontainer_json preserves base customizations.zed when the overlay has none" {
+    local base_file="$SCRATCH/base.json"
+    local overlay_file="$SCRATCH/overlay.json"
+    local output_file="$SCRATCH/output.json"
+
+    cat > "$base_file" <<'JSON'
+{ "customizations": { "zed": { "extensions": ["dockerfile"] } } }
+JSON
+    cat > "$overlay_file" <<'JSON'
+{ "features": {} }
+JSON
+
+    run merge_devcontainer_json "$base_file" "$overlay_file" "$output_file"
+    assert_success
+
+    run jq -Sc '.customizations.zed.extensions' "$output_file"
+    assert_success
+    assert_output '["dockerfile"]'
+}
+
+@test "merge_devcontainer_json keeps customizations.vscode when only zed is in the overlay" {
+    local base_file="$SCRATCH/base.json"
+    local overlay_file="$SCRATCH/overlay.json"
+    local output_file="$SCRATCH/output.json"
+
+    cat > "$base_file" <<'JSON'
+{ "customizations": { "vscode": { "extensions": ["rust-lang.rust-analyzer"], "settings": {} } } }
+JSON
+    cat > "$overlay_file" <<'JSON'
+{ "customizations": { "zed": { "extensions": ["toml"] } } }
+JSON
+
+    run merge_devcontainer_json "$base_file" "$overlay_file" "$output_file"
+    assert_success
+
+    run jq -Sc '.customizations.vscode.extensions' "$output_file"
+    assert_success
+    assert_output '["rust-lang.rust-analyzer"]'
+
+    run jq -Sc '.customizations.zed.extensions' "$output_file"
+    assert_success
+    assert_output '["toml"]'
+}
+
+@test "merge_devcontainer_json remains idempotent with customizations.zed" {
+    local base_file="$SCRATCH/base.json"
+    local overlay_file="$SCRATCH/overlay.json"
+    local first_output="$SCRATCH/first.json"
+    local second_output="$SCRATCH/second.json"
+
+    cat > "$base_file" <<'JSON'
+{
+  "customizations": {
+    "vscode": { "extensions": ["rust-lang.rust-analyzer"], "settings": {} },
+    "zed": { "extensions": ["dockerfile"] }
+  }
+}
+JSON
+    cat > "$overlay_file" <<'JSON'
+{
+  "customizations": {
+    "vscode": { "extensions": ["vadimcn.vscode-lldb"], "settings": {} },
+    "zed": { "extensions": ["toml"] }
+  }
+}
+JSON
+
+    run merge_devcontainer_json "$base_file" "$overlay_file" "$first_output"
+    assert_success
+
+    run merge_devcontainer_json "$first_output" "$overlay_file" "$second_output"
+    assert_success
+
+    run jq -S . "$first_output"
+    assert_success
+    local first_sorted="$output"
+
+    run jq -S . "$second_output"
+    assert_success
+    assert_output "$first_sorted"
+}

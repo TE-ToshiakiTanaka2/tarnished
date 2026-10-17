@@ -105,6 +105,10 @@ assert_plugin_post_copy_idempotent() {
     assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/core/plugin.sh"
 }
 
+@test "post_copy idempotent: languages/go" {
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/go/plugin.sh"
+}
+
 @test "post_copy idempotent: github-actions/auto-tag" {
     assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/github-actions/auto-tag/plugin.sh"
 }
@@ -144,4 +148,54 @@ assert_plugin_post_copy_idempotent() {
 @test "post_copy idempotent: services/redis (skipped — known pre-existing bug)" {
     skip "tracked as #265 follow-up: redis merge is non-idempotent"
     assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/services/redis/plugin.sh"
+}
+
+# #323: apply_zed_assets is called from every plugin above the services
+# block. These re-run the same idempotency check with ZED_ENABLED=true so a
+# second plugin_post_copy (the --upgrade FR-5 re-run) does not duplicate or
+# corrupt .zed/settings.json or customizations.zed. The bare tests above
+# (ZED_ENABLED unset) already prove the Zed-off path is untouched.
+#
+# rust/python/node/deno/latex's plugin_post_copy_shared only marker-guards
+# its post.sh append in monorepo / add-module mode (single-mode byte
+# compatibility, predating #323 — see each plugin's own comment on
+# use_marker). Running plugin_post_copy twice in single mode therefore
+# duplicates that block regardless of Zed, which is a pre-existing,
+# unrelated limitation, not a #323 regression (core and go already guard
+# unconditionally). MONOREPO_MODE=true routes around it so these five
+# isolate exactly what #323 added: apply_zed_assets's own idempotency.
+
+@test "post_copy idempotent with ZED_ENABLED: core" {
+    export ZED_ENABLED=true
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/core/plugin.sh"
+}
+
+@test "post_copy idempotent with ZED_ENABLED: languages/rust" {
+    export ZED_ENABLED=true MONOREPO_MODE=true
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/rust/plugin.sh"
+}
+
+@test "post_copy idempotent with ZED_ENABLED: languages/python" {
+    export ZED_ENABLED=true MONOREPO_MODE=true
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/python/plugin.sh"
+}
+
+@test "post_copy idempotent with ZED_ENABLED: languages/node" {
+    export ZED_ENABLED=true MONOREPO_MODE=true
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/node/plugin.sh"
+}
+
+@test "post_copy idempotent with ZED_ENABLED: languages/deno" {
+    export ZED_ENABLED=true MONOREPO_MODE=true
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/deno/plugin.sh"
+}
+
+@test "post_copy idempotent with ZED_ENABLED: languages/go" {
+    export ZED_ENABLED=true
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/go/plugin.sh"
+}
+
+@test "post_copy idempotent with ZED_ENABLED: languages/latex" {
+    export ZED_ENABLED=true MONOREPO_MODE=true
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/latex/plugin.sh"
 }

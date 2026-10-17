@@ -47,6 +47,12 @@
           "**/target": true
         }
       }
+    },
+    "zed": {
+      "extensions": [
+        "dockerfile",
+        "toml"
+      ]
     }
   }
 }
