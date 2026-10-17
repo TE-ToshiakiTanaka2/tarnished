@@ -105,3 +105,44 @@ scaffold inside the module directory; the shared `docker/Dockerfile.dev`
 contains the union of every module's language toolchain. Subsequent
 `setup.sh --add-module` invocations are idempotent against the shared root
 files (marker-guarded blocks).
+
+## Zed editor support
+
+Pass `--zed` (or answer "y" to the "Enable Zed editor support?" prompt) to
+add [Zed](https://zed.dev) support alongside the VS Code setup. This adds:
+
+- `customizations.zed.extensions` in the generated `.devcontainer/devcontainer.json`
+  — `customizations.vscode` is always kept, so the project opens in either
+  editor
+- `.zed/settings.json`, seeded by the core template and merged with
+  per-language LSP/formatter settings for each selected language
+
+```bash
+./setup.sh --lang rust --zed
+```
+
+To open the generated project in Zed:
+
+1. `zed .`
+2. Accept the "Open in Container" prompt (or run "Project: Open Remote" from
+   the command palette)
+
+Requires Docker or Podman on `PATH` (Podman needs `"use_podman": true` in
+`devcontainer.json`).
+
+Caveats:
+
+- **No automatic rebuild.** Zed does not rebuild or reload the container when
+  `devcontainer.json` changes; stop the container and reopen after editing
+  it.
+- **Do not run VS Code and Zed on the same project at the same time.** The
+  two editors derive different Compose project names while
+  `docker-compose.yml` pins `container_name`, so the second editor to start
+  collides with the first.
+- **`forwardPorts` is ignored by Zed.** No generated file sets it today, so
+  this only matters if you add the key by hand later.
+- Extensions declared under `customizations.zed.extensions` are also
+  installed into your local Zed, not just the container.
+
+`.zed/settings.json` is developer-owned: it is not an AI asset, so it is
+never touched by `refresh-assets.sh` or `setup.sh --upgrade`.

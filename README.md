@@ -11,7 +11,7 @@ mkdir my-project && cd my-project
 curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develop/setup.sh | bash
 ```
 
-Follow the prompts, then open the folder in VS Code and choose **Reopen in Container**. See the [setup reference](docs/setup.md) for AI profiles, Codex workflow invocation and monorepos.
+Follow the prompts, then open the folder in VS Code and choose **Reopen in Container**. Pass `--zed` (or answer the prompt) to also open the project in [Zed](https://zed.dev)'s dev container mode. See the [setup reference](docs/setup.md) for AI profiles, Codex workflow invocation, monorepos and Zed editor support.
 
 ## Update an existing project
 
