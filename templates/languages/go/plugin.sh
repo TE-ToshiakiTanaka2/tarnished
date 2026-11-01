@@ -4,7 +4,7 @@
 # This file is meant to be sourced by setup.sh, not executed directly.
 # =============================================================================
 # This plugin provides Go development environment features including:
-# - Go stable (latest) devcontainer feature
+# - Go (pinned release), declared in mise.toml (no devcontainer feature)
 # - gofmt formatter (standard, included with the toolchain)
 # - golangci-lint linter (installed in post.sh)
 # - gotestsum test runner (installed in post.sh)
@@ -80,18 +80,24 @@ plugin_copy() {
 plugin_post_copy_shared() {
     local target_dir="$1"
 
-    # Merge devcontainer.json features and extensions
+    # Runtime versions live in mise.toml (#325). Existing entries are never
+    # changed. Runs before any early return below so re-runs and --add-module
+    # stay idempotent.
+    mise_toml_ensure "${target_dir}/mise.toml" tools go '"1.27.3"' \
+        || print_warning "Could not add tools.go to mise.toml"
+
+    # Merge devcontainer.json customizations (extensions and settings)
     local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
     local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
 
     if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
-        print_info "Merging Go devcontainer features..."
+        print_info "Merging Go devcontainer customizations..."
         local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
 
         merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
         mv "$temp_file" "$target_devcontainer"
 
-        print_success "Go devcontainer features merged"
+        print_success "Go devcontainer customizations merged"
     fi
 
     # Zed editor assets (no-op unless --zed was selected). Placed before the
@@ -155,6 +161,9 @@ if command -v go &> /dev/null; then
         echo "  - Installing golangci-lint..."
         go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
     fi
+
+    # Give freshly installed binaries a mise shim
+    command -v mise &> /dev/null && mise reshim || true
 
     echo "Go development tools installed."
 fi

@@ -4,8 +4,9 @@
 # This file is meant to be sourced by setup.sh, not executed directly.
 # =============================================================================
 # This plugin provides Python development environment features including:
-# - Python 3.12 devcontainer feature
-# - uv package manager (fast, Rust-based)
+# - Python 3.12 and the uv package manager (fast, Rust-based), declared in
+#   mise.toml (no devcontainer feature, no Dockerfile.dev edits; the former
+#   Dockerfile ENV block now lives in mise.toml [env])
 # - VS Code extensions for Python development
 # - ruff linter and formatter configuration
 # - mypy type checker configuration
@@ -22,10 +23,9 @@
 # Get the directory where this plugin is located
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Markers for idempotent inserts (#263). Plain assignments because plugins
+# Marker for idempotent inserts (#263). Plain assignments because plugins
 # may be sourced multiple times by setup.sh — `readonly` would fail on
 # the second source.
-PYTHON_DOCKERFILE_MARKER="# >>> python (uv) toolchain >>>"
 PYTHON_POSTSH_MARKER="# >>> python (uv) post-create >>>"
 
 # =============================================================================
@@ -78,90 +78,6 @@ plugin_copy() {
     fi
 }
 
-# Append Python/uv ENV variables to Dockerfile.dev. In monorepo / add-module
-# mode the inserted block is wrapped with marker comments so re-runs are
-# idempotent (#263). In single mode the legacy unmarkered insertion is
-# preserved verbatim so output stays byte-identical to pre-#263 (NFR-1).
-plugin_dockerfile() {
-    local target_dir="$1"
-    local dockerfile="${target_dir}/docker/Dockerfile.dev"
-
-    if [[ ! -f "$dockerfile" ]]; then
-        print_warning "Dockerfile.dev not found, skipping Python Dockerfile configuration"
-        return
-    fi
-
-    local use_marker=false
-    if [[ "${MONOREPO_MODE:-false}" == true ]] || [[ "${IS_ADD_MODULE_MODE:-false}" == true ]]; then
-        use_marker=true
-        if grep -qF "$PYTHON_DOCKERFILE_MARKER" "$dockerfile"; then
-            print_info "Python toolchain block already present in Dockerfile, skipping"
-            return
-        fi
-    fi
-
-    print_info "Adding Python/uv environment variables to Dockerfile..."
-
-    local temp_file="${dockerfile}.tmp"
-
-    if [[ "$use_marker" == true ]]; then
-        awk -v marker_open="$PYTHON_DOCKERFILE_MARKER" \
-            -v marker_close="# <<< python (uv) toolchain <<<" '
-        /^SHELL / && !inserted {
-            print ""
-            print marker_open
-            print "# Python/uv environment configuration"
-            print "ENV PYTHONDONTWRITEBYTECODE=1"
-            print "ENV PYTHONUNBUFFERED=1"
-            print "ENV UV_HOME=\"/opt/uv\""
-            print "ENV PATH=\"$UV_HOME/bin:$PATH\""
-            print "ENV UV_COMPILE_BYTECODE=1"
-            print "ENV UV_LINK_MODE=copy"
-            print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
-            print marker_close
-            print ""
-            inserted=1
-        }
-        { print }
-        END {
-            if (!inserted) {
-                print ""
-                print marker_open
-                print "ENV PYTHONDONTWRITEBYTECODE=1"
-                print "ENV PYTHONUNBUFFERED=1"
-                print "ENV UV_HOME=\"/opt/uv\""
-                print "ENV PATH=\"$UV_HOME/bin:$PATH\""
-                print "ENV UV_COMPILE_BYTECODE=1"
-                print "ENV UV_LINK_MODE=copy"
-                print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
-                print marker_close
-            }
-        }
-        ' "$dockerfile" > "$temp_file"
-    else
-        # Pre-#263 single-mode insertion (no markers) — preserves NFR-1.
-        awk '
-        /^SHELL / && !inserted {
-            print ""
-            print "# Python/uv environment configuration"
-            print "ENV PYTHONDONTWRITEBYTECODE=1"
-            print "ENV PYTHONUNBUFFERED=1"
-            print "ENV UV_HOME=\"/opt/uv\""
-            print "ENV PATH=\"$UV_HOME/bin:$PATH\""
-            print "ENV UV_COMPILE_BYTECODE=1"
-            print "ENV UV_LINK_MODE=copy"
-            print "ENV UV_CACHE_DIR=/home/vscode/.cache/uv"
-            print ""
-            inserted=1
-        }
-        { print }
-        ' "$dockerfile" > "$temp_file"
-    fi
-
-    mv "$temp_file" "$dockerfile"
-    print_success "Python/uv environment variables added to Dockerfile"
-}
-
 # -----------------------------------------------------------------------------
 # Shared (root) post-copy hook (#263).
 # Called once per loaded plugin in monorepo mode; in single mode invoked via
@@ -170,18 +86,36 @@ plugin_dockerfile() {
 plugin_post_copy_shared() {
     local target_dir="$1"
 
-    # Merge devcontainer.json features and extensions
+    # Runtime versions live in mise.toml (#325). Existing entries are never
+    # changed. Runs before any early return below so re-runs and --add-module
+    # stay idempotent.
+    mise_toml_ensure "${target_dir}/mise.toml" tools python '"3.12"' \
+        || print_warning "Could not add tools.python to mise.toml"
+    mise_toml_ensure "${target_dir}/mise.toml" tools uv '"0.13.6"' \
+        || print_warning "Could not add tools.uv to mise.toml"
+    mise_toml_ensure "${target_dir}/mise.toml" env UV_PYTHON '{ value = "{{ tools.python.path }}", tools = true }' \
+        || print_warning "Could not add env.UV_PYTHON to mise.toml"
+    mise_toml_ensure "${target_dir}/mise.toml" env PYTHONDONTWRITEBYTECODE '"1"' \
+        || print_warning "Could not add env.PYTHONDONTWRITEBYTECODE to mise.toml"
+    mise_toml_ensure "${target_dir}/mise.toml" env PYTHONUNBUFFERED '"1"' \
+        || print_warning "Could not add env.PYTHONUNBUFFERED to mise.toml"
+    mise_toml_ensure "${target_dir}/mise.toml" env UV_COMPILE_BYTECODE '"1"' \
+        || print_warning "Could not add env.UV_COMPILE_BYTECODE to mise.toml"
+    mise_toml_ensure "${target_dir}/mise.toml" env UV_LINK_MODE '"copy"' \
+        || print_warning "Could not add env.UV_LINK_MODE to mise.toml"
+
+    # Merge devcontainer.json customizations (extensions and settings)
     local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
     local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
 
     if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
-        print_info "Merging Python devcontainer features..."
+        print_info "Merging Python devcontainer customizations..."
         local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
 
         merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
         mv "$temp_file" "$target_devcontainer"
 
-        print_success "Python devcontainer features merged"
+        print_success "Python devcontainer customizations merged"
     fi
 
     # Zed editor assets (no-op unless --zed was selected). Placed before the
