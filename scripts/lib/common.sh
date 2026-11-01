@@ -660,7 +660,10 @@ merge_json_files() {
     fi
 }
 
-# Merge devcontainer.json files with special handling for features and extensions
+# Merge devcontainer.json files with special handling for customizations
+# (extensions, settings, Zed). Generated projects carry no `features` key (#325);
+# if a base or overlay does declare one it is deep-merged like any other
+# top-level key, so a developer's own features survive add-module runs.
 # Usage: merge_devcontainer_json <base_file> <overlay_file> <output_file>
 merge_devcontainer_json() {
     local base_file="$1"
@@ -700,19 +703,18 @@ merge_devcontainer_json() {
         return 1
     fi
 
-    # Merge preserving all base fields and merging features/customizations.
-    # First merge all fields from base, then selectively merge features,
-    # extensions, and settings. customizations.zed is carried through but
+    # Merge preserving all base fields and merging customizations. First deep
+    # merge all other fields, then selectively merge extensions and settings.
+    # customizations.zed is carried through but
     # emitted only when the base or the overlay declares it, so a run with no
     # Zed input anywhere produces byte-identical output to before #323.
     if ! jq -s '
         .[0] as $base | .[1] as $overlay |
         ($base.customizations.zed // null) as $base_zed |
         ($overlay.customizations.zed // null) as $overlay_zed |
-        ($base | del(.features, .customizations)) *
-        ($overlay | del(.features, .customizations)) *
+        ($base | del(.customizations)) *
+        ($overlay | del(.customizations)) *
         {
-            features: (($base.features // {}) * ($overlay.features // {})),
             customizations: (
                 {
                     vscode: {
@@ -816,6 +818,294 @@ merge_claude_settings_hooks() {
         print_error "Failed to merge Claude settings hooks"
         return 1
     fi
+}
+
+# =============================================================================
+# Install-contract helpers (#325): mise.toml, Dockerfile OS packages, post.sh
+# =============================================================================
+
+# Header written when mise_toml_ensure has to create mise.toml itself. Kept in
+# sync with templates/core/mise.toml.
+readonly MISE_TOML_HEADER='# Runtime versions for this project, managed by mise (https://mise.jdx.dev).
+# Edit a version, then run `mise install` (or rebuild the container).
+# Setup never overwrites an entry you have changed.'
+
+# Ensure `key = value` exists in a section of mise.toml without a TOML parser.
+# An existing key is never modified (whatever its value or spelling): bare or
+# quoted key inside [section], a [section.key] table, or a top-level
+# `section.key =` line all count as the developer's choice.
+# Usage: mise_toml_ensure <mise_toml> <section> <key> <toml_value>
+# Returns: 0 on success or when the key already exists; 1 on invalid
+# arguments or a write failure (file left untouched).
+mise_toml_ensure() {
+    local mise_toml="${1:-}"
+    local section="${2:-}"
+    local key="${3:-}"
+    local value="${4:-}"
+
+    if [[ -z "$mise_toml" ]]; then
+        print_error "mise_toml_ensure: missing mise.toml path"
+        return 1
+    fi
+    case "$section" in
+        tools|env|settings) ;;
+        *)
+            print_error "mise_toml_ensure: unsupported section '${section}' (tools, env or settings)"
+            return 1
+            ;;
+    esac
+    if [[ ! "$key" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]; then
+        print_error "mise_toml_ensure: invalid key '${key}'"
+        return 1
+    fi
+    if [[ -z "$value" ]] || [[ "$value" == *$'\n'* ]]; then
+        print_error "mise_toml_ensure: value for '${key}' must be a non-empty single line"
+        return 1
+    fi
+
+    if [[ ! -f "$mise_toml" ]]; then
+        if ! printf '%s\n' "$MISE_TOML_HEADER" > "$mise_toml"; then
+            print_error "Failed to create ${mise_toml}"
+            return 1
+        fi
+    fi
+
+    local temp_file
+    if ! temp_file="$(mktemp "${mise_toml}.XXXXXX")"; then
+        print_error "Failed to create a temporary file next to ${mise_toml}"
+        return 1
+    fi
+
+    local rc=0
+    awk -v section="$section" -v key="$key" -v value="$value" '
+        function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+        {
+            line = $0
+            lines[NR] = line
+            plain = line
+            sub(/\r$/, "", plain)
+            if (plain ~ /^[ \t]*\[\[/) {
+                cur = "[[array]]"
+                next
+            }
+            if (plain ~ /^[ \t]*\[[^][]+\][ \t]*(#.*)?$/) {
+                name = plain
+                sub(/^[ \t]*\[/, "", name)
+                sub(/\][ \t]*(#.*)?$/, "", name)
+                name = trim(name)
+                gsub(/"/, "", name)
+                cur = name
+                if (cur == section && !found) {
+                    found = 1
+                }
+                if (cur == section "." key) {
+                    present = 1
+                }
+            } else if (plain ~ /^[ \t]*[^#=[ \t][^=]*=/) {
+                lhs = plain
+                sub(/=.*/, "", lhs)
+                lhs = trim(lhs)
+                gsub(/"/, "", lhs)
+                if (cur == section && lhs == key) {
+                    present = 1
+                }
+                if (cur == "" && lhs == section "." key) {
+                    present = 1
+                }
+            }
+            if (cur == section && plain !~ /^[ \t]*$/) {
+                last = NR
+            }
+        }
+        END {
+            if (present) {
+                exit 3
+            }
+            if (found) {
+                cr = (lines[last] ~ /\r$/) ? "\r" : ""
+                for (i = 1; i <= NR; i++) {
+                    print lines[i]
+                    if (i == last) {
+                        print key " = " value cr
+                    }
+                }
+            } else {
+                for (i = 1; i <= NR; i++) {
+                    print lines[i]
+                }
+                if (NR > 0 && lines[NR] !~ /^[ \t\r]*$/) {
+                    print ""
+                }
+                print "[" section "]"
+                print key " = " value
+            }
+        }
+    ' "$mise_toml" > "$temp_file" || rc=$?
+
+    if [[ $rc -eq 3 ]]; then
+        rm -f "$temp_file"
+        print_info "Kept existing ${section}.${key} in $(basename "$mise_toml")"
+        return 0
+    fi
+    if [[ $rc -ne 0 ]]; then
+        rm -f "$temp_file"
+        print_error "Failed to update ${mise_toml}"
+        return 1
+    fi
+
+    if ! chmod 644 "$temp_file" || ! mv "$temp_file" "$mise_toml"; then
+        rm -f "$temp_file"
+        print_error "Failed to write ${mise_toml}"
+        return 1
+    fi
+    print_success "Added ${section}.${key} to $(basename "$mise_toml")"
+}
+
+# Insert a marker-guarded apt-get block immediately above the first `SHELL`
+# line of docker/Dockerfile.dev. OS packages only: runtimes belong in mise.toml.
+# Usage: dockerfile_add_os_packages <dockerfile> <block_id> <package>...
+# Returns: 0 on success, skip or missing anchor (warning); 1 on bad arguments
+# or a write failure.
+dockerfile_add_os_packages() {
+    local dockerfile="${1:-}"
+    local block_id="${2:-}"
+    shift 2 || true
+    local packages=("$@")
+
+    if [[ ! "$block_id" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || [[ ${#packages[@]} -eq 0 ]]; then
+        print_error "dockerfile_add_os_packages: need a block id ([a-z0-9_-]) and at least one package"
+        return 1
+    fi
+
+    if [[ ! -f "$dockerfile" ]]; then
+        print_warning "Dockerfile not found (${dockerfile}); add these packages manually: ${packages[*]}"
+        return 0
+    fi
+
+    local marker_open="# >>> ${block_id} os-packages >>>"
+    local marker_close="# <<< ${block_id} os-packages <<<"
+
+    if grep -qxF "$marker_open" "$dockerfile"; then
+        print_info "${block_id} OS packages already present in Dockerfile, skipping"
+        return 0
+    fi
+
+    if ! grep -q '^SHELL ' "$dockerfile"; then
+        print_warning "No SHELL line in ${dockerfile}; add these packages to an apt-get install yourself: ${packages[*]}"
+        return 0
+    fi
+
+    local temp_file
+    if ! temp_file="$(mktemp "${dockerfile}.XXXXXX")"; then
+        print_error "Failed to create a temporary file next to ${dockerfile}"
+        return 1
+    fi
+
+    local package_list="" package
+    for package in "${packages[@]}"; do
+        package_list+="${package} "
+    done
+    package_list="${package_list% }"
+
+    if ! awk -v open="$marker_open" -v close_marker="$marker_close" -v pkgs="$package_list" '
+        /^SHELL / && !inserted {
+            n = split(pkgs, list, " ")
+            print ""
+            print open
+            print "RUN apt-get update && apt-get install -y --no-install-recommends \\"
+            for (i = 1; i <= n; i++) {
+                print "    " list[i] " \\"
+            }
+            print "    && rm -rf /var/lib/apt/lists/*"
+            print close_marker
+            print ""
+            inserted = 1
+        }
+        { print }
+    ' "$dockerfile" > "$temp_file" \
+        || ! chmod 644 "$temp_file" \
+        || ! mv "$temp_file" "$dockerfile"; then
+        rm -f "$temp_file"
+        print_error "Failed to update ${dockerfile}"
+        return 1
+    fi
+    print_success "Added ${block_id} OS packages to Dockerfile: ${packages[*]}"
+}
+
+# Add a marker-guarded block to post.sh, keeping the load-bearing order of the
+# install blocks (mise -> Claude Code -> Codex CLI -> Claude Code plugins).
+# The block body is read from stdin. When any <before_marker_line> already
+# exists as an exact line, the block is inserted above the earliest one
+# (including its dashed rule and the blank line above it); otherwise appended.
+# Usage: post_sh_add_block <post_sh> <marker_line> [<before_marker_line>...] <<'EOF'
+# Returns: 0 on success or skip (missing post.sh, marker present); 1 on write failure.
+post_sh_add_block() {
+    local post_sh="${1:-}"
+    local marker_line="${2:-}"
+    shift 2 || true
+    local before_markers=("$@")
+
+    local body
+    body="$(cat)"
+
+    if [[ ! -f "$post_sh" ]]; then
+        return 0
+    fi
+    if [[ -z "$marker_line" ]]; then
+        print_error "post_sh_add_block: missing marker line"
+        return 1
+    fi
+    if grep -qxF "$marker_line" "$post_sh"; then
+        return 0
+    fi
+
+    local rule='# -----------------------------------------------------------------------------'
+
+    # Earliest line number among the "before" markers present in post.sh.
+    local before target_line=0 found_line
+    for before in "${before_markers[@]}"; do
+        found_line="$(grep -nxF -- "$before" "$post_sh" | head -n 1 | cut -d: -f1)"
+        if [[ -n "$found_line" ]] && { [[ $target_line -eq 0 ]] || [[ $found_line -lt $target_line ]]; }; then
+            target_line="$found_line"
+        fi
+    done
+
+    # Move the insertion point above the dashed rule and one blank line.
+    if [[ $target_line -gt 0 ]]; then
+        if [[ $target_line -gt 1 ]] && [[ "$(sed -n "$((target_line - 1))p" "$post_sh")" == "$rule" ]]; then
+            target_line=$((target_line - 1))
+            if [[ $target_line -gt 1 ]] && [[ -z "$(sed -n "$((target_line - 1))p" "$post_sh")" ]]; then
+                target_line=$((target_line - 1))
+            fi
+        fi
+    fi
+
+    local temp_file block_file
+    if ! temp_file="$(mktemp "${post_sh}.XXXXXX")"; then
+        print_error "Failed to create a temporary file next to ${post_sh}"
+        return 1
+    fi
+    block_file="$(mktemp "${post_sh}.XXXXXX")" || { rm -f "$temp_file"; print_error "Failed to create a temporary file next to ${post_sh}"; return 1; }
+    printf '\n%s\n%s\n%s\n%s\n' "$rule" "$marker_line" "$rule" "$body" > "$block_file"
+
+    local ok=true
+    if [[ $target_line -gt 0 ]]; then
+        awk -v p="$target_line" '
+            FNR == NR { block = block $0 "\n"; next }
+            FNR == p { printf "%s", block }
+            { print }
+        ' "$block_file" "$post_sh" > "$temp_file" || ok=false
+    else
+        { cat "$post_sh" && cat "$block_file"; } > "$temp_file" || ok=false
+    fi
+
+    # cat into the existing file keeps its mode (post.sh is executable).
+    if [[ "$ok" != true ]] || ! cat "$temp_file" > "$post_sh"; then
+        rm -f "$temp_file" "$block_file"
+        print_error "Failed to update ${post_sh}"
+        return 1
+    fi
+    rm -f "$temp_file" "$block_file"
 }
 
 # Merge Zed project settings (.zed/settings.json) with deep object merge and
@@ -1248,17 +1538,16 @@ show_interactive_mode_error() {
     echo "To run in non-interactive mode, specify all required options:"
     echo ""
     echo "  curl -fsSL <url>/setup.sh | bash -s -- --lang node my-project -y"
-    echo "  curl -fsSL <url>/setup.sh | bash -s -- --lang python --docker my-app -y"
+    echo "  curl -fsSL <url>/setup.sh | bash -s -- --lang python --postgresql my-app -y"
     echo ""
     echo "Available options:"
-    echo "  --lang <languages>    Select language(s): node, python, rust, deno"
-    echo "  --playwright          Include Playwright E2E testing"
-    echo "  --docker              Include Docker-in-Docker support"
-    echo "  --postgresql          Include PostgreSQL database support"
-    echo "  --mysql               Include MySQL database support"
-    echo "  --neo4j               Include Neo4j graph database support"
-    echo "  --redis               Include Redis cache/session support"
-    echo "  --github-actions      Include GitHub Actions templates"
+    echo "  --lang <language>     Select language(s): rust, python, node, deno, go, latex"
+    echo "  --postgresql          Include PostgreSQL database service"
+    echo "  --mysql               Include MySQL database service"
+    echo "  --redis               Include Redis cache/broker service"
+    echo "  --celery              Include Celery task queue (requires Python)"
+    echo "  --codex               Include OpenAI Codex CLI integration"
+    echo "  --github-actions      Include GitHub Project integration"
     echo "  -y, --yes             Skip confirmation prompts (required for non-interactive)"
     echo ""
     echo "For full options, see: ./setup.sh --help"
