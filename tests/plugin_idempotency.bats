@@ -47,6 +47,7 @@ services:
     image: busybox
     working_dir: /workspace
 EOF
+    printf '[tools]\nnode = "22"\n' > "$SCRATCH/mise.toml"
     : > "$SCRATCH/.devcontainer/scripts/post.sh"
     chmod +x "$SCRATCH/.devcontainer/scripts/post.sh"
     cat > "$SCRATCH/docker/Dockerfile.dev" <<'EOF'
@@ -198,4 +199,103 @@ assert_plugin_post_copy_idempotent() {
 @test "post_copy idempotent with ZED_ENABLED: languages/latex" {
     export ZED_ENABLED=true MONOREPO_MODE=true
     assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/latex/plugin.sh"
+}
+
+# #325: language plugins add their runtimes to mise.toml in
+# plugin_post_copy_shared. A second run (single mode, add-module, --upgrade's
+# FR-5 re-run) must leave mise.toml byte-identical and add every entry once.
+# The single-mode post.sh duplication noted above is unrelated, so these
+# compare mise.toml (and, in monorepo mode, the whole tree).
+
+assert_mise_toml_idempotent() {
+    local plugin_path="$1"
+    # shellcheck disable=SC1090
+    source "$plugin_path"
+
+    plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1 || true
+    local first
+    first=$(cat "$SCRATCH/mise.toml")
+    plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1 || true
+    [[ "$(cat "$SCRATCH/mise.toml")" == "$first" ]]
+}
+
+@test "mise.toml idempotent: languages/python (python, uv, UV_PYTHON, env block once)" {
+    assert_mise_toml_idempotent "${SCRIPT_DIR}/templates/languages/python/plugin.sh"
+    run grep -c '^python = "3.12"$' "$SCRATCH/mise.toml"
+    assert_output "1"
+    run grep -c '^uv = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+    run grep -c '^UV_PYTHON = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+    run grep -c '^\[env\]$' "$SCRATCH/mise.toml"
+    assert_output "1"
+}
+
+@test "mise.toml idempotent: languages/node (pnpm added, core's node untouched)" {
+    assert_mise_toml_idempotent "${SCRIPT_DIR}/templates/languages/node/plugin.sh"
+    run grep -c '^node = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+    run grep -c '^pnpm = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+}
+
+@test "mise.toml idempotent: languages/rust" {
+    assert_mise_toml_idempotent "${SCRIPT_DIR}/templates/languages/rust/plugin.sh"
+    run grep -c '^rust = { version = "stable", components = \["rustfmt", "clippy"\] }$' "$SCRATCH/mise.toml"
+    assert_output "1"
+}
+
+@test "mise.toml idempotent: languages/go" {
+    assert_mise_toml_idempotent "${SCRIPT_DIR}/templates/languages/go/plugin.sh"
+    run grep -c '^go = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+}
+
+@test "mise.toml idempotent: languages/deno" {
+    assert_mise_toml_idempotent "${SCRIPT_DIR}/templates/languages/deno/plugin.sh"
+    run grep -c '^deno = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+}
+
+@test "mise.toml: a language plugin never overwrites a developer-changed version" {
+    printf '[tools]\nnode = "24"\n' > "$SCRATCH/mise.toml"
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/templates/languages/node/plugin.sh"
+    plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1
+    run grep -x 'node = "24"' "$SCRATCH/mise.toml"
+    assert_success
+    run grep -c '^node = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+}
+
+@test "mise.toml: python plugin creates it when a pre-#325 project lacks one" {
+    rm -f "$SCRATCH/mise.toml"
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/templates/languages/python/plugin.sh"
+    plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1
+    run grep -c '^python = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+}
+
+@test "post_copy idempotent in monorepo mode: node and python keep mise.toml and post.sh stable" {
+    export MONOREPO_MODE=true
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/python/plugin.sh"
+}
+
+@test "plugin_dockerfile idempotent: services/postgresql and services/mysql" {
+    local svc
+    for svc in postgresql mysql; do
+        (
+            # shellcheck disable=SC1090
+            source "${SCRIPT_DIR}/templates/services/${svc}/plugin.sh"
+            plugin_dockerfile "$SCRATCH" >/dev/null 2>&1
+            cp "$SCRATCH/docker/Dockerfile.dev" "$SCRATCH/first.dockerfile"
+            plugin_dockerfile "$SCRATCH" >/dev/null 2>&1
+            cmp "$SCRATCH/docker/Dockerfile.dev" "$SCRATCH/first.dockerfile"
+        )
+    done
+    run grep -c 'os-packages >>>$' "$SCRATCH/docker/Dockerfile.dev"
+    assert_output "2"
+    run grep -c '^SHELL ' "$SCRATCH/docker/Dockerfile.dev"
+    assert_output "1"
 }

@@ -184,9 +184,27 @@ parse_service_input() {
     [ -f "${SCRIPT_DIR}/templates/services/postgresql/.devcontainer/devcontainer.json" ]
 }
 
-@test "devcontainer.json contains postgresql-client feature" {
-    run grep "postgresql-client" "${SCRIPT_DIR}/templates/services/postgresql/.devcontainer/devcontainer.json"
+@test "postgresql devcontainer.json declares no features (#325)" {
+    run jq -e 'has("features") | not' "${SCRIPT_DIR}/templates/services/postgresql/.devcontainer/devcontainer.json"
     assert_success
+}
+
+@test "postgresql plugin_dockerfile adds the postgresql-client apt block above SHELL (#325)" {
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    mkdir -p "$temp_dir/docker"
+    printf 'FROM debian:trixie-slim\n\nSHELL ["/bin/bash", "-c"]\n' > "$temp_dir/docker/Dockerfile.dev"
+
+    run bash -c 'source "$1/scripts/lib/common.sh"; source "$1/templates/services/postgresql/plugin.sh"; plugin_dockerfile "$2"; plugin_dockerfile "$2"' _ "${SCRIPT_DIR}" "$temp_dir"
+    assert_success
+
+    run grep -c '^    postgresql-client \\$' "$temp_dir/docker/Dockerfile.dev"
+    assert_output "1"
+    local block shell_line
+    block=$(grep -n '^# >>> postgresql os-packages >>>$' "$temp_dir/docker/Dockerfile.dev" | cut -d: -f1)
+    shell_line=$(grep -n '^SHELL ' "$temp_dir/docker/Dockerfile.dev" | cut -d: -f1)
+    [ "$block" -lt "$shell_line" ]
+    rm -rf "$temp_dir"
 }
 
 @test "devcontainer.json is valid JSON" {
@@ -420,9 +438,27 @@ BASH
     [ -f "${SCRIPT_DIR}/templates/services/mysql/.devcontainer/devcontainer.json" ]
 }
 
-@test "devcontainer.json contains mysql-client feature" {
-    run grep "mysql-client" "${SCRIPT_DIR}/templates/services/mysql/.devcontainer/devcontainer.json"
+@test "mysql devcontainer.json declares no features (#325)" {
+    run jq -e 'has("features") | not' "${SCRIPT_DIR}/templates/services/mysql/.devcontainer/devcontainer.json"
     assert_success
+}
+
+@test "mysql plugin_dockerfile adds the default-mysql-client apt block above SHELL (#325)" {
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    mkdir -p "$temp_dir/docker"
+    printf 'FROM debian:trixie-slim\n\nSHELL ["/bin/bash", "-c"]\n' > "$temp_dir/docker/Dockerfile.dev"
+
+    run bash -c 'source "$1/scripts/lib/common.sh"; source "$1/templates/services/mysql/plugin.sh"; plugin_dockerfile "$2"; plugin_dockerfile "$2"' _ "${SCRIPT_DIR}" "$temp_dir"
+    assert_success
+
+    run grep -c '^    default-mysql-client \\$' "$temp_dir/docker/Dockerfile.dev"
+    assert_output "1"
+    local block shell_line
+    block=$(grep -n '^# >>> mysql os-packages >>>$' "$temp_dir/docker/Dockerfile.dev" | cut -d: -f1)
+    shell_line=$(grep -n '^SHELL ' "$temp_dir/docker/Dockerfile.dev" | cut -d: -f1)
+    [ "$block" -lt "$shell_line" ]
+    rm -rf "$temp_dir"
 }
 
 @test "mysql devcontainer.json is valid JSON" {
