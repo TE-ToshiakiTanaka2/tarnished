@@ -117,14 +117,15 @@ passthrough_yq() {
 @test "failures in any pipeline stage return 1 under set -euo pipefail and leave no temp files" {
     local stage
     for stage in sed1 sed2 yq sed3; do
-        rm -f "${TEST_DIR}"/out.yml*
+        rm -f "${TEST_DIR}"/out.yml* "${TEST_DIR}/yq-called"
         run bash -c '
             set -euo pipefail
             source "$1/scripts/lib/common.sh"
             stage="$4"
             mkdir -p "$3/fb"
-            printf "#!/bin/bash\ncat \"\${@:3}\"\n" > "$3/fb/yq"
-            [[ "$stage" == yq ]] && printf "#!/bin/bash\nexit 1\n" > "$3/fb/yq"
+            printf "#!/bin/bash\ntouch \"$3/yq-called\"\ncat \"\${@:3}\"\n" > "$3/fb/yq"
+            [[ "$stage" == yq ]] && printf "#!/bin/bash\ntouch \"$3/yq-called\"\nexit 1\n" > "$3/fb/yq"
+            chmod +x "$3/fb/yq"
             # sed shim: fail the Nth sed call (1=base, 2=overlay, 3=restore)
             n=0
             sed() {
@@ -139,6 +140,11 @@ passthrough_yq() {
             echo "rc=$?"
         ' _ "$SCRIPT_DIR" x "$TEST_DIR" "$stage"
         assert_output "rc=1"
+        # The yq stub must be on the PATH lookup: the yq pipeline was really taken.
+        case "$stage" in
+            yq|sed3) [[ -f "${TEST_DIR}/yq-called" ]] ;;
+            *) [[ ! -f "${TEST_DIR}/yq-called" ]] ;;
+        esac
         run bash -c "ls '${TEST_DIR}' | grep -c '^out.yml\.'"
         assert_output "0"
     done
