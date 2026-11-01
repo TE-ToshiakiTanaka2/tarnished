@@ -91,6 +91,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # (bash -c, post.sh, editors); `mise activate` serves interactive shells.
 # npm packages installed with `npm install -g` land in the active Node's own
 # prefix under the mise data directory, which vscode owns (no sudo needed).
+RUN mkdir -p /workspace && chown ${USERNAME}:${USERNAME} /workspace
 USER ${USERNAME}
 ENV PATH="/home/${USERNAME}/.local/share/mise/shims:${PATH}" \
     MISE_TRUSTED_CONFIG_PATHS=/workspace
