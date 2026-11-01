@@ -24,6 +24,8 @@ setup_claude() {
     source "${helper_dir}/npm_global_cli.sh"
     install_npm_global_cli "Claude Code" "${CLAUDE_CODE_NPM_PACKAGE:-@anthropic-ai/claude-code}" "claude"
 
-    mkdir -p "$HOME/.claude"
+    if ! mkdir -p "$HOME/.claude" 2>/dev/null; then
+        echo "  [WARN] could not create $HOME/.claude. Create it manually: mkdir -p \"\$HOME/.claude\""
+    fi
     return 0
 }

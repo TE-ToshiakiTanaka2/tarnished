@@ -121,6 +121,23 @@ _assert_mise_entry() {
     assert_success
 }
 
+# redis-tools: one marker block above SHELL; post.sh never calls sudo (NFR-4).
+_assert_redis_tools_block() {
+    local open shell_line
+    open="$(grep -n '^# >>> redis os-packages >>>$' docker/Dockerfile.dev | cut -d: -f1)"
+    shell_line="$(grep -n '^SHELL ' docker/Dockerfile.dev | cut -d: -f1)"
+    [[ -n "$open" ]]
+    [[ "$open" -lt "$shell_line" ]]
+    run grep -c '^# >>> redis os-packages >>>$' docker/Dockerfile.dev
+    assert_output "1"
+    run grep -c '^    redis-tools \\$' docker/Dockerfile.dev
+    assert_output "1"
+    run grep -E '(^|[^[:alnum:]_])sudo([^[:alnum:]_]|$)' .devcontainer/scripts/post.sh
+    assert_failure
+    run bash -n .devcontainer/scripts/post.sh
+    assert_success
+}
+
 @test "deno scaffold: pinned deno" {
     _scaffold --lang deno
     _assert_install_contract
@@ -149,11 +166,10 @@ _assert_mise_entry() {
     assert_output "1"
 }
 
-@test "redis scaffold: core install contract only" {
+@test "redis scaffold: redis-tools is an apt block above SHELL and post.sh has no sudo" {
     _scaffold --redis
     _assert_install_contract
-    run grep -c 'os-packages' docker/Dockerfile.dev
-    assert_output "0"
+    _assert_redis_tools_block
 }
 
 # --celery alone does not add Python non-interactively, so CI passes
@@ -164,6 +180,8 @@ _assert_mise_entry() {
     run grep -x 'python = "3.12"' mise.toml
     assert_success
     _assert_mise_entry uv
+    # --celery auto-enables redis, so the client is installed at image build.
+    _assert_redis_tools_block
 }
 
 @test "latex scaffold keeps its TeX Live apt block above SHELL" {

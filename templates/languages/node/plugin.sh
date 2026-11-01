@@ -155,19 +155,24 @@ if command -v node &> /dev/null; then
     echo "Setting up Node.js development environment..."
 
     # pnpm comes from mise.toml
-    if ! command -v pnpm &> /dev/null; then
+    HAS_PNPM=false
+    if command -v pnpm &> /dev/null; then
+        HAS_PNPM=true
+    else
         echo "  [WARN] pnpm not found - add it to mise.toml and run: mise install"
     fi
 
     # Install dependencies if package.json exists at the project root
-    if [[ -f "package.json" ]]; then
+    if [[ "\$HAS_PNPM" == true ]] && [[ -f "package.json" ]]; then
         echo "  - Installing dependencies with pnpm..."
-        pnpm install
+        pnpm install || echo "  [WARN] pnpm install failed - run it manually"
     fi
 
     echo "Node.js development environment ready."
     echo "  - Node.js: \$(node --version)"
-    echo "  - pnpm: \$(pnpm --version)"
+    if [[ "\$HAS_PNPM" == true ]]; then
+        echo "  - pnpm: \$(pnpm --version)"
+    fi
 fi
 # <<< node (pnpm) post-create <<<
 EOF
@@ -182,19 +187,24 @@ if command -v node &> /dev/null; then
     echo "Setting up Node.js development environment..."
 
     # pnpm comes from mise.toml
-    if ! command -v pnpm &> /dev/null; then
+    HAS_PNPM=false
+    if command -v pnpm &> /dev/null; then
+        HAS_PNPM=true
+    else
         echo "  [WARN] pnpm not found - add it to mise.toml and run: mise install"
     fi
 
     # Install dependencies if package.json exists
-    if [[ -f "package.json" ]]; then
+    if [[ "$HAS_PNPM" == true ]] && [[ -f "package.json" ]]; then
         echo "  - Installing dependencies with pnpm..."
-        pnpm install
+        pnpm install || echo "  [WARN] pnpm install failed - run it manually"
     fi
 
     echo "Node.js development environment ready."
     echo "  - Node.js: $(node --version)"
-    echo "  - pnpm: $(pnpm --version)"
+    if [[ "$HAS_PNPM" == true ]]; then
+        echo "  - pnpm: $(pnpm --version)"
+    fi
 fi
 EOF
         fi

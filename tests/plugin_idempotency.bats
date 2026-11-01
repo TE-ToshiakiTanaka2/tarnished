@@ -299,3 +299,48 @@ assert_mise_toml_idempotent() {
     run grep -c '^SHELL ' "$SCRATCH/docker/Dockerfile.dev"
     assert_output "1"
 }
+
+# The node post.sh block runs under post.sh's `set -e`: a missing pnpm must
+# warn and fall through instead of exiting 127 and skipping later blocks.
+run_node_post_block_without_pnpm() {
+    local mode="$1"
+    local bin="$SCRATCH/fakebin"
+    mkdir -p "$bin" "$SCRATCH/proj"
+    local tool
+    for tool in bash dirname cat grep sed rm env; do
+        ln -s "$(command -v "$tool")" "$bin/$tool"
+    done
+    printf '#!/bin/bash\necho v24.0.0\n' > "$bin/node"
+    chmod +x "$bin/node"
+    echo '{}' > "$SCRATCH/proj/package.json"
+
+    : > "$SCRATCH/.devcontainer/scripts/post.sh"
+    export MONOREPO_MODE="$mode"
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/templates/languages/node/plugin.sh"
+    plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1
+
+    {
+        echo 'set -e'
+        cat "$SCRATCH/.devcontainer/scripts/post.sh"
+        echo 'echo AFTER_NODE_BLOCK'
+    } > "$SCRATCH/block.sh"
+    cd "$SCRATCH/proj"
+    PATH="$bin" run bash "$SCRATCH/block.sh"
+}
+
+@test "node post.sh block (single mode) warns and continues when pnpm is missing" {
+    run_node_post_block_without_pnpm false
+    assert_success
+    assert_output --partial "pnpm not found"
+    assert_output --partial "AFTER_NODE_BLOCK"
+    refute_output --partial "pnpm:"
+}
+
+@test "node post.sh block (monorepo mode) warns and continues when pnpm is missing" {
+    run_node_post_block_without_pnpm true
+    assert_success
+    assert_output --partial "pnpm not found"
+    assert_output --partial "AFTER_NODE_BLOCK"
+    grep -qF 'node (pnpm) post-create' "$SCRATCH/.devcontainer/scripts/post.sh"
+}

@@ -832,8 +832,11 @@ readonly MISE_TOML_HEADER='# Runtime versions for this project, managed by mise 
 
 # Ensure `key = value` exists in a section of mise.toml without a TOML parser.
 # An existing key is never modified (whatever its value or spelling): bare or
-# quoted key inside [section], a [section.key] table, or a top-level
-# `section.key =` line all count as the developer's choice.
+# quoted ("..." or '...') key inside [section], a [section.key] table, or a
+# top-level `section.key =` line all count as the developer's choice. When the
+# section has no header but top-level `section.<k> =` lines exist, the new
+# entry is inserted as a dotted key after the last of them (no [section]
+# header is appended, which would redefine the table and break the TOML).
 # Usage: mise_toml_ensure <mise_toml> <section> <key> <toml_value>
 # Returns: 0 on success or when the key already exists; 1 on invalid
 # arguments or a write failure (file left untouched).
@@ -895,7 +898,7 @@ mise_toml_ensure() {
                 sub(/^[ \t]*\[/, "", name)
                 sub(/\][ \t]*(#.*)?$/, "", name)
                 name = trim(name)
-                gsub(/"/, "", name)
+                gsub(/["\047]/, "", name)
                 cur = name
                 if (cur == section && !found) {
                     found = 1
@@ -907,12 +910,15 @@ mise_toml_ensure() {
                 lhs = plain
                 sub(/=.*/, "", lhs)
                 lhs = trim(lhs)
-                gsub(/"/, "", lhs)
+                gsub(/["\047]/, "", lhs)
                 if (cur == section && lhs == key) {
                     present = 1
                 }
                 if (cur == "" && lhs == section "." key) {
                     present = 1
+                }
+                if (cur == "" && index(lhs, section ".") == 1) {
+                    dotted = NR
                 }
             }
             if (cur == section && plain !~ /^[ \t]*$/) {
@@ -929,6 +935,16 @@ mise_toml_ensure() {
                     print lines[i]
                     if (i == last) {
                         print key " = " value cr
+                    }
+                }
+            } else if (dotted) {
+                # Entries live as top-level dotted keys (no [section] header);
+                # a new [section] table would redefine them (invalid TOML).
+                cr = (lines[dotted] ~ /\r$/) ? "\r" : ""
+                for (i = 1; i <= NR; i++) {
+                    print lines[i]
+                    if (i == dotted) {
+                        print section "." key " = " value cr
                     }
                 }
             } else {

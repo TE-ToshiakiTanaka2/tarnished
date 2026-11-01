@@ -624,3 +624,30 @@ BASH
     # Cleanup
     rm -rf "$temp_dir"
 }
+
+# --- redis (#325: OS packages only in plugin_dockerfile, no sudo in post.sh) ---
+
+@test "redis plugin_dockerfile adds the redis-tools apt block above SHELL, idempotently (#325)" {
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    mkdir -p "$temp_dir/docker"
+    printf 'FROM debian:trixie-slim\n\nSHELL ["/bin/bash", "-c"]\n' > "$temp_dir/docker/Dockerfile.dev"
+
+    run bash -c 'source "$1/scripts/lib/common.sh"; source "$1/templates/services/redis/plugin.sh"; plugin_dockerfile "$2"; plugin_dockerfile "$2"' _ "${SCRIPT_DIR}" "$temp_dir"
+    assert_success
+
+    run grep -c '^    redis-tools \\$' "$temp_dir/docker/Dockerfile.dev"
+    assert_output "1"
+    run grep -c '^# >>> redis os-packages >>>$' "$temp_dir/docker/Dockerfile.dev"
+    assert_output "1"
+    local block shell_line
+    block=$(grep -n '^# >>> redis os-packages >>>$' "$temp_dir/docker/Dockerfile.dev" | cut -d: -f1)
+    shell_line=$(grep -n '^SHELL ' "$temp_dir/docker/Dockerfile.dev" | cut -d: -f1)
+    [ "$block" -lt "$shell_line" ]
+    rm -rf "$temp_dir"
+}
+
+@test "redis plugin source never calls sudo" {
+    run grep -nE '(^|[^[:alnum:]_])sudo([^[:alnum:]_]|$)' "${SCRIPT_DIR}/templates/services/redis/plugin.sh"
+    assert_failure
+}

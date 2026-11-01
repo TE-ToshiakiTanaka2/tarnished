@@ -37,9 +37,9 @@ mise_toml_ensure <mise_toml> <section> <key> <toml_value>
 | --- | --- |
 | 1 | Reject `section` ∉ {`tools`, `env`, `settings`}, `key` not matching `^[A-Za-z0-9_][A-Za-z0-9_.-]*$`, or an empty/multi-line `toml_value` → `print_error`, return 1 |
 | 2 | File missing → create with the standard header comment |
-| 3 | Key present (in `[section]` as bare or quoted key, as a `[section.key]` table, or as top-level `section.key =`) → `print_info "kept existing <section>.<key>"`, return 0, no write |
+| 3 | Key present (in `[section]` as bare or quoted (`"` or `'`) key, as a `[section.key]` table, or as top-level `section.key =`) → `print_info "kept existing <section>.<key>"`, return 0, no write |
 | 4 | Section present → insert `key = toml_value` after the section's last non-blank line |
-| 5 | Section absent → append blank line, `[section]`, `key = toml_value` |
+| 5 | Section absent → if top-level `section.<k> =` lines exist, insert `section.key = toml_value` after the last of them (a new `[section]` table would redefine them and make the TOML invalid); otherwise append blank line, `[section]`, `key = toml_value` |
 | 6 | Write via same-directory `mktemp` + `mv`; failure → remove temp, `print_error`, return 1 |
 
 Callers in plugins use `mise_toml_ensure ... || print_warning "..."` so a

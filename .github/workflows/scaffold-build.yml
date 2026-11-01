@@ -64,11 +64,11 @@ jobs:
             tools: "mise git gh node npm mysql"
           - flavor: redis
             args: "--redis"
-            tools: "mise git gh node npm"
+            tools: "mise git gh node npm redis-cli"
           - flavor: celery
             # --celery alone does not add Python outside the interactive prompt.
             args: "--lang python --celery"
-            tools: "mise git gh node npm python uv"
+            tools: "mise git gh node npm python uv redis-cli"
           - flavor: workspace
             args: ""
             tools: "mise git gh node npm rust cargo uv"
@@ -103,8 +103,14 @@ jobs:
         run: |
           set -euo pipefail
           jq -e 'has("features") | not' .devcontainer/devcontainer.json
-          ! grep -q 'ln -sf /bin/bash /bin/sh' docker/Dockerfile.dev
-          ! grep -qw latest docker/Dockerfile.dev
+          if grep -q 'ln -sf /bin/bash /bin/sh' docker/Dockerfile.dev; then
+            echo "Dockerfile.dev must not relink /bin/sh to bash" >&2
+            exit 1
+          fi
+          if grep -qw latest docker/Dockerfile.dev; then
+            echo "Dockerfile.dev must not use a floating 'latest' version" >&2
+            exit 1
+          fi
 
       - name: Build docker/Dockerfile.dev
         uses: docker/build-push-action@v7

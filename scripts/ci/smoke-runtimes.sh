@@ -13,7 +13,7 @@
 #
 # Usage: smoke-runtimes.sh <tool>...
 #   mise tools: node python uv pnpm go deno rust
-#   other:      mise git gh npm cargo cargo-fmt cargo-clippy psql mysql
+#   other:      mise git gh npm cargo cargo-fmt cargo-clippy psql mysql redis-cli
 # =============================================================================
 
 set -euo pipefail
@@ -110,7 +110,7 @@ main() {
     for tool in "$@"; do
         case "$tool" in
             node | python | uv | pnpm | go | deno | rust) check_mise_tool "$tool" ;;
-            mise | git | gh | npm | cargo | psql | mysql) check_plain_tool "$tool" "${tool} --version" ;;
+            mise | git | gh | npm | cargo | psql | mysql | redis-cli) check_plain_tool "$tool" "${tool} --version" ;;
             cargo-fmt) check_plain_tool "cargo fmt" 'cargo fmt --version' ;;
             cargo-clippy) check_plain_tool "cargo clippy" 'cargo clippy --version' ;;
             *) fail "unknown tool '${tool}'" ;;

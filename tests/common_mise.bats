@@ -52,6 +52,37 @@ teardown() {
     assert_output $'[tools]\nnode = "22"\n\n[env]\nPYTHONUNBUFFERED = "1"'
 }
 
+@test "mise_toml_ensure inserts a dotted key beside top-level dotted siblings" {
+    printf 'tools.node = "24"\n\n[env]\nFOO = "1"\n' > "$TOML"
+    run mise_toml_ensure "$TOML" tools pnpm '"10"'
+    assert_success
+    run cat "$TOML"
+    assert_output $'tools.node = "24"\ntools.pnpm = "10"\n\n[env]\nFOO = "1"'
+    run grep -c '^\[tools\]' "$TOML"
+    assert_output "0"
+    run python3 -I -c 'import tomllib,sys; d=tomllib.loads(open(sys.argv[1]).read()); assert d["tools"]=={"node":"24","pnpm":"10"}' "$TOML"
+    assert_success
+}
+
+@test "mise_toml_ensure treats a literal-quoted key as present" {
+    printf "[tools]\n'node' = \"24\"\n" > "$TOML"
+    cp "$TOML" "$SCRATCH/before"
+    run mise_toml_ensure "$TOML" tools node '"22"'
+    assert_success
+    assert_output --partial "Kept existing"
+    run cmp "$TOML" "$SCRATCH/before"
+    assert_success
+}
+
+@test "mise_toml_ensure treats a literal-quoted dotted key as present" {
+    printf "tools.'node' = \"24\"\n" > "$TOML"
+    cp "$TOML" "$SCRATCH/before"
+    run mise_toml_ensure "$TOML" tools node '"22"'
+    assert_success
+    run cmp "$TOML" "$SCRATCH/before"
+    assert_success
+}
+
 @test "mise_toml_ensure keeps a user-changed value byte-identical" {
     printf '[tools]\nnode = "24"\n' > "$TOML"
     cp "$TOML" "$SCRATCH/before"

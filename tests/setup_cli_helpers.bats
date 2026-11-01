@@ -85,7 +85,7 @@ EOF
 _run_helper() {
     local file="$1"
     shift
-    run env -i HOME="$SCRATCH/home" PATH="$BIN" SCRATCH="$SCRATCH" \
+    run env -i HOME="${TEST_HOME:-$SCRATCH/home}" PATH="$BIN" SCRATCH="$SCRATCH" \
         NPM_INSTALL_OK="${NPM_INSTALL_OK:-1}" NPM_PREFIX="${NPM_PREFIX:-}" \
         MISE_FAIL="${MISE_FAIL:-0}" \
         CLAUDE_CODE_NPM_PACKAGE="${CLAUDE_CODE_NPM_PACKAGE:-}" \
@@ -201,6 +201,17 @@ EOF
     run grep -c 'install -g @anthropic-ai/claude-code' "$SCRATCH/npm.log"
     assert_output "1"
     [[ -d "$SCRATCH/home/.claude" ]]
+}
+
+@test "setup_claude warns and returns 0 when ~/.claude cannot be created" {
+    _mock_cli claude
+    _mock_npm
+    # A regular file as HOME makes mkdir fail even when the tests run as root.
+    : > "$SCRATCH/home-file"
+    TEST_HOME="$SCRATCH/home-file" _run_helper "$CORE_SCRIPTS/setup_claude.sh" setup_claude
+    assert_success
+    assert_output --partial "[WARN] could not create"
+    assert_output --partial "survived-set-e"
 }
 
 @test "setup_claude passes CLAUDE_CODE_NPM_PACKAGE through" {
