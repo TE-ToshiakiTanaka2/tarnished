@@ -1302,23 +1302,44 @@ merge_docker_compose_services() {
     fi
 
     # Check if yq is available for direct YAML processing
+    local use_yq=false
     if command -v yq &> /dev/null; then
+        use_yq=true
+        # The sentinel swap below is only lossless when the inputs never contain
+        # the sentinel text themselves; otherwise use the non-yq merge.
+        if grep -qE 'tarnishedph-|-hptarnished' "$base_file" "$overlay_file" 2> /dev/null; then
+            print_warning "Input already contains the placeholder sentinel; merging compose files without yq"
+            use_yq=false
+        fi
+    fi
+
+    if [[ "$use_yq" == true ]]; then
         # Use yq for YAML merge. Overlays still carry unrendered {{NAME}}
         # placeholders, and a line starting with "{" opens a YAML flow mapping
         # that yq (go-yaml) rejects. Swap each placeholder for a YAML-safe
-        # sentinel in same-directory temp copies, merge those, then restore.
-        local yq_base="${output_file}.yqbase.tmp"
-        local yq_overlay="${output_file}.yqoverlay.tmp"
-        local yq_merged="${output_file}.yqmerged.tmp"
+        # sentinel in private temp copies, merge those, then restore. The
+        # sentinel is delimited by "-", which is outside the NAME class, so a
+        # restore match can never run across adjacent placeholders.
+        local yq_base="" yq_overlay="" yq_merged=""
         local yq_status=0
-        if ! sed -E 's/\{\{([A-Za-z0-9_]+)\}\}/__TARNISHED_PH_\1__/g' "$base_file" > "$yq_base" \
-            || ! sed -E 's/\{\{([A-Za-z0-9_]+)\}\}/__TARNISHED_PH_\1__/g' "$overlay_file" > "$yq_overlay" \
-            || ! yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' "$yq_base" "$yq_overlay" > "$yq_merged" \
-            || ! sed -E 's/__TARNISHED_PH_([A-Za-z0-9_]+)__/{{\1}}/g' "$yq_merged" > "$output_file"; then
-            yq_status=1
+        yq_base=$(mktemp "${output_file}.XXXXXX") \
+            && yq_overlay=$(mktemp "${output_file}.XXXXXX") \
+            && yq_merged=$(mktemp "${output_file}.XXXXXX") || yq_status=2
+        if [[ "$yq_status" -eq 0 ]]; then
+            if ! sed -E 's/\{\{([A-Za-z0-9_]+)\}\}/tarnishedph-\1-hptarnished/g' "$base_file" > "$yq_base" \
+                || ! sed -E 's/\{\{([A-Za-z0-9_]+)\}\}/tarnishedph-\1-hptarnished/g' "$overlay_file" > "$yq_overlay" \
+                || ! yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' "$yq_base" "$yq_overlay" > "$yq_merged" \
+                || ! sed -E 's/tarnishedph-([A-Za-z0-9_]+)-hptarnished/{{\1}}/g' "$yq_merged" > "$output_file"; then
+                yq_status=1
+            fi
         fi
-        rm -f "$yq_base" "$yq_overlay" "$yq_merged"
-        if [[ "$yq_status" -ne 0 ]]; then
+        [[ -n "$yq_base" ]] && rm -f "$yq_base"
+        [[ -n "$yq_overlay" ]] && rm -f "$yq_overlay"
+        [[ -n "$yq_merged" ]] && rm -f "$yq_merged"
+        if [[ "$yq_status" -eq 2 ]]; then
+            print_error "Failed to create temporary files for docker-compose merge"
+            return 1
+        elif [[ "$yq_status" -ne 0 ]]; then
             print_error "Failed to merge docker-compose files with yq"
             return 1
         fi
