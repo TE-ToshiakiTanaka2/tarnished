@@ -1064,7 +1064,7 @@ post_sh_add_block() {
     # Earliest line number among the "before" markers present in post.sh.
     local before target_line=0 found_line
     for before in "${before_markers[@]}"; do
-        found_line="$(grep -nxF -- "$before" "$post_sh" | head -n 1 | cut -d: -f1)"
+        found_line="$(grep -nxF -- "$before" "$post_sh" | head -n 1 | cut -d: -f1 || true)"
         if [[ -n "$found_line" ]] && { [[ $target_line -eq 0 ]] || [[ $found_line -lt $target_line ]]; }; then
             target_line="$found_line"
         fi

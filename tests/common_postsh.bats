@@ -118,3 +118,15 @@ _line_of() {
     run cmp "$POST" "$SCRATCH/before"
     assert_success
 }
+
+# setup.sh stages distributions in `bash -e -o pipefail`; a before-marker that
+# is absent (grep exit 1) must not abort the helper there.
+@test "post_sh_add_block survives errexit and pipefail with absent before-markers" {
+    run bash -e -o pipefail -c '
+        source "$1"
+        printf "echo hi\n" > "$2"
+        post_sh_add_block "$2" "# mise Runtime Setup" "# Claude Code Setup" "# Codex CLI Setup" <<< "echo body"
+        grep -qxF "# mise Runtime Setup" "$2"
+    ' _ "${SCRIPT_DIR}/scripts/lib/common.sh" "$POST"
+    assert_success
+}
