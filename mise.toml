@@ -1,0 +1,8 @@
+# Runtime versions for this project, managed by mise (https://mise.jdx.dev).
+# Edit a version, then run `mise install` (or rebuild the container).
+# Setup never overwrites an entry you have changed.
+
+[tools]
+node = "22"
+rust = { version = "stable", components = ["rustfmt", "clippy"] }
+uv = "0.13.6"

@@ -92,6 +92,23 @@ check_pair "devcontainer: refresh-assets.sh" \
 check_pair "devcontainer: setup_plugins.sh" \
     ".devcontainer/scripts/setup_plugins.sh" \
     "templates/claude/.devcontainer/scripts/setup_plugins.sh"
+check_pair "devcontainer: setup_codex.sh" \
+    ".devcontainer/scripts/setup_codex.sh" \
+    "templates/codex/.devcontainer/scripts/setup_codex.sh"
+check_pair "devcontainer: setup_claude.sh" \
+    ".devcontainer/scripts/setup_claude.sh" \
+    "templates/core/.devcontainer/scripts/setup_claude.sh"
+check_pair "devcontainer: setup_mise.sh" \
+    ".devcontainer/scripts/setup_mise.sh" \
+    "templates/core/.devcontainer/scripts/setup_mise.sh"
+check_pair "devcontainer: npm_global_cli.sh" \
+    ".devcontainer/scripts/npm_global_cli.sh" \
+    "templates/core/.devcontainer/scripts/npm_global_cli.sh"
+
+# --- Dockerfile.dev: the workspace needs no plugin OS blocks, so it is the
+# core template verbatim ---------------------------------------------------
+check_pair "docker: Dockerfile.dev" \
+    "docker/Dockerfile.dev" "templates/core/docker/Dockerfile.dev"
 
 # --- Rust rules vs rust language template ------------------------------------
 check_pair "rules: rust.md" \
