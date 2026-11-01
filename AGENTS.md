@@ -51,7 +51,7 @@ Every plugin script must define and export the four-function interface:
 | `plugin_copy(target_dir)` | Optional | File-copy phase: copy template assets into `target_dir` |
 | `plugin_post_copy(target_dir)` | Optional | Post-copy phase: merge JSON, append gitignore blocks, run setup hooks |
 
-`plugin_dockerfile(target_dir)` and `plugin_interactive_setup()` are also recognized when present. Plugins MUST source `scripts/lib/common.sh` helpers (`copy_with_confirm`, `copy_dir_with_confirm`, `print_info` / `print_success` / `print_warning` / `print_error`, `merge_devcontainer_json`, `merge_claude_settings_hooks`) rather than reimplementing copy/merge logic. Watch for plugins that bypass `*_with_confirm` and overwrite user files silently.
+`plugin_dockerfile(target_dir)` and `plugin_interactive_setup()` are also recognized when present. `plugin_dockerfile` installs **OS packages only** (apt blocks through `dockerfile_add_os_packages`, TeX Live); language runtimes never go through it. Plugins MUST source `scripts/lib/common.sh` helpers (`copy_with_confirm`, `copy_dir_with_confirm`, `print_info` / `print_success` / `print_warning` / `print_error`, `merge_devcontainer_json`, `merge_claude_settings_hooks`, and since #325 `mise_toml_ensure`, `dockerfile_add_os_packages`, `post_sh_add_block`) rather than reimplementing copy/merge logic. Watch for plugins that bypass `*_with_confirm` and overwrite user files silently.
 
 ### 2. Shell-script rules (`.claude/rules/shell.md`)
 
@@ -86,6 +86,7 @@ Each flavor directory (`templates/codex/`, `templates/claude/`, `templates/langu
 - Optional `AGENTS.md` (Codex flavor only — root-level review-agent definition)
 - Optional `.devcontainer/`, `.claude/`, `.codex/`, `.agents/`, `.tarnished/`, `.github/`, `docker/` subdirectories whose contents are copied verbatim into the target by `plugin_copy`
 - Optional `.devcontainer/scripts/<setup>.sh` shell helpers whose functions are sourced into the target's `post.sh` by `plugin_post_copy`
+- `templates/core/mise.toml` (#325) — a **core-only project-root distributable** (not under any of the subdirectories above). It is copied once by core's `plugin_copy` and is developer-owned afterwards (never touched by `--upgrade` or refresh). Language plugins never ship their own `mise.toml`; they add `[tools]` / `[env]` entries in `plugin_post_copy_shared` through `mise_toml_ensure`, which keeps any entry the developer already has. No flavor may install a runtime through a devcontainer `features` key, and `devcontainer.json` overlays must not reintroduce one.
 - Optional `.zed/` subdirectory (#323) — unlike every directory above, it is **not** copied verbatim. `.zed/devcontainer.json` is a devcontainer merge overlay (only top-level key `customizations.zed`) that must never reach the target; only `.zed/settings.json` is installed, as `<target>/.zed/settings.json`. The sole installer is `scripts/lib/common.sh::apply_zed_assets`, gated on `ZED_ENABLED`.
 
 Reviewers should reject changes that violate this shape (e.g., a plugin that puts setup logic outside `plugin_*` functions, a flavor that ships files outside the listed subdirectories, a `plugin.sh` that calls `setup.sh` machinery directly instead of going through `common.sh`, or a `templates/core/.zed/devcontainer.json`-shaped file placed where `plugin_copy`'s verbatim copy would ship it into every generated project).
@@ -100,6 +101,8 @@ Helpers sourced into `post.sh` run under `set -e`. They MUST:
 - Be idempotent: detect already-installed state and skip cleanly with a status log
 
 The `plugin_post_copy` step must append a guarded block to `${target_dir}/.devcontainer/scripts/post.sh` that sources the new helper and calls its entry function — using the same `${SCRIPT_DIR}` re-derivation pattern shown in existing blocks. Verify the marker (`# <Tool> Setup`) is unique and the block is appended exactly once (`grep -q` check before append).
+
+Since #325 the install blocks have a load-bearing order — `# mise Runtime Setup` → `# Claude Code Setup` → (language/service blocks) → `# Codex CLI Setup` → `# Claude Code Plugin Setup` — because a Node.js bump removes npm global CLIs and plugins need `claude`. Blocks of these four markers MUST be added with `common.sh::post_sh_add_block <post_sh> <marker> [<before_marker>...]` (position-aware, marker-guarded), not a raw `cat >>`. `npm_global_cli.sh` is a sourced library (`install_npm_global_cli`), not a `setup_<thing>()` entry helper: `setup_claude` and `setup_codex` call it. None of these helpers may call `sudo`.
 
 ### 6. Always-latest asset sync (`templates/core/.devcontainer/scripts/refresh-assets.sh`, `<project>/.tarnished/refresh.json`, #279)
 
@@ -118,7 +121,7 @@ Claude assets/settings, applicable Codex `.agents/skills` and settings, shared w
 
 ### 7. Mirror byte-identity invariants (`scripts/verify-mirrors.sh`, `.github/workflows/asset-parity.yml`, #304)
 
-The workspace trees dogfood the templates. Every mirrored pair MUST stay byte-identical in the same commit: `.claude/commands/erd` ≡ `.tarnished/workflows/erd` ≡ `templates/claude/.claude/commands/erd`; `.claude/{skills,commands,agents,scripts}` ≡ `templates/claude/.claude/...`; `.agents` ≡ `templates/codex/.agents`; `.codex/config.toml` ≡ template copy; `.tarnished/workflows/*.md` + `refresh.json` + `agent-profile.json` ≡ `templates/agent-workflows/.tarnished/...` (except generated `erd/`); `.claude/rules/rust.md` ≡ rust language template copy. The authoritative list lives in `scripts/verify-mirrors.sh` — run it before approving any change that touches these trees; CI enforces it via `asset-parity.yml`. When adding a new mirrored asset, extend `verify-mirrors.sh` in the same PR.
+The workspace trees dogfood the templates. Every mirrored pair MUST stay byte-identical in the same commit: `.claude/commands/erd` ≡ `.tarnished/workflows/erd` ≡ `templates/claude/.claude/commands/erd`; `.claude/{skills,commands,agents,scripts}` ≡ `templates/claude/.claude/...`; `.agents` ≡ `templates/codex/.agents`; `.codex/config.toml` ≡ template copy; `.tarnished/workflows/*.md` + `refresh.json` + `agent-profile.json` ≡ `templates/agent-workflows/.tarnished/...` (except generated `erd/`); `.claude/rules/rust.md` ≡ rust language template copy; `.devcontainer/scripts/{setup_claude,setup_mise,npm_global_cli}.sh` ≡ core template, `setup_codex.sh` ≡ codex template, `setup_plugins.sh` ≡ claude template; `docker/Dockerfile.dev` ≡ `templates/core/docker/Dockerfile.dev`. The authoritative list lives in `scripts/verify-mirrors.sh` — run it before approving any change that touches these trees; CI enforces it via `asset-parity.yml`. When adding a new mirrored asset, extend `verify-mirrors.sh` in the same PR.
 
 ## Output Format
 
