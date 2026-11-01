@@ -127,6 +127,10 @@ setup_plugins() {
 
     echo "  - Claude Code CLI detected"
 
+    # Expected `claude plugin list --json` shape: an array of objects, each with
+    # an `id` field of the form `<name>@<marketplace>`. Written against Claude
+    # Code 2.1.x. If the shape changes, jq fails or matches nothing and every
+    # enabled plugin is re-installed, which is idempotent and therefore benign.
     # An unreadable list means "assume nothing is installed": install is idempotent.
     local installed="" list_json=""
     if list_json="$(claude plugin list --json 2>/dev/null)" \

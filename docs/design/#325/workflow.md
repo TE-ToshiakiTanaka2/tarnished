@@ -150,7 +150,7 @@ Steps 3, 5 and 6 can proceed in parallel once 1 and 2 land.
 | postgresql | `--postgresql` | + psql |
 | mysql | `--mysql` | + mysql |
 | redis | `--redis` | core set |
-| celery | `--celery` | + python, uv (celery auto-enables python + redis) |
+| celery | `--lang python --celery` | + python, uv (`--celery` alone does not add Python non-interactively, so CI passes `--lang python` explicitly) |
 | workspace | (none — builds the repo root) | node, cargo, uv |
 
 - **Steps per entry**:

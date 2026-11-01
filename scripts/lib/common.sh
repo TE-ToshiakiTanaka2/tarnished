@@ -837,6 +837,8 @@ readonly MISE_TOML_HEADER='# Runtime versions for this project, managed by mise 
 # Usage: mise_toml_ensure <mise_toml> <section> <key> <toml_value>
 # Returns: 0 on success or when the key already exists; 1 on invalid
 # arguments or a write failure (file left untouched).
+# Side effect: sets the global MISE_TOML_CHANGED=true after a successful write
+# (not when the existing key is kept).
 mise_toml_ensure() {
     local mise_toml="${1:-}"
     local section="${2:-}"
@@ -958,6 +960,9 @@ mise_toml_ensure() {
         print_error "Failed to write ${mise_toml}"
         return 1
     fi
+    # Global flag so callers (setup.sh add-module epilogue) can tell whether
+    # anything was actually written during this run.
+    MISE_TOML_CHANGED=true
     print_success "Added ${section}.${key} to $(basename "$mise_toml")"
 }
 
@@ -1044,6 +1049,11 @@ post_sh_add_block() {
     local marker_line="${2:-}"
     shift 2 || true
     local before_markers=("$@")
+
+    if [[ -t 0 ]]; then
+        print_error "post_sh_add_block: block body must be supplied on stdin"
+        return 1
+    fi
 
     local body
     body="$(cat)"

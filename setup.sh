@@ -139,6 +139,7 @@ SKIP_CONFIRM=false
 # Monorepo mode (#263)
 MONOREPO_MODE=false
 IS_ADD_MODULE_MODE=false
+MISE_TOML_CHANGED=false
 ADD_MODULE_NAME=""
 ADD_MODULE_LANG=""
 declare -a MODULES=()
@@ -3037,7 +3038,7 @@ main() {
     print_section "Setup Complete"
     print_success "Devcontainer environment created for: $PROJECT_NAME"
     echo ""
-    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+    if [[ "$IS_ADD_MODULE_MODE" == true ]] && [[ "${MISE_TOML_CHANGED:-false}" == true ]]; then
         echo "New runtimes were added to mise.toml. Install them with \`mise install\`"
         echo "inside the container (or rebuild the container)."
         echo ""

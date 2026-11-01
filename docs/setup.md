@@ -95,7 +95,11 @@ Notes:
   (`extraKnownMarketplaces`, `enabledPlugins`); only `context7` is enabled by
   default. `setup_plugins.sh` installs enabled plugins that are not installed
   yet after you have logged in to Claude Code. To opt out per developer, set the
-  plugin to `false` in `.claude/settings.local.json`.
+  plugin to `false` in `.claude/settings.local.json`. The fallback's
+  `claude plugin install --scope project` writes to `.claude/settings.json`,
+  which `refresh-assets.sh` manages, so a re-serialised file may be backed up
+  and replaced on the next container start (same as the previous `-s project`
+  behaviour).
 - Add a package to the image (for example another apt tool) in
   `docker/Dockerfile.dev` above the `SHELL` line; generated plugin blocks use the
   same spot.

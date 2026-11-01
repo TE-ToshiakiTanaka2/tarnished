@@ -156,7 +156,9 @@ _assert_mise_entry() {
     assert_output "0"
 }
 
-@test "celery scaffold: auto-enabled python and redis resolve through mise.toml" {
+# --celery alone does not add Python non-interactively, so CI passes
+# --lang python --celery; the test checks python/uv resolve through mise.toml.
+@test "celery scaffold (--lang python --celery): python and uv resolve through mise.toml" {
     _scaffold --lang python --celery
     _assert_install_contract
     run grep -x 'python = "3.12"' mise.toml
@@ -249,6 +251,7 @@ _assert_mise_entry() {
     assert_success
     run cmp mise.toml "$SCRATCH/mise.before"
     assert_success
+    refute_output --partial "mise install"
 }
 
 @test "add-module of a new language appends only its entries" {
