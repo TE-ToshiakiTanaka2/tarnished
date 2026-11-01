@@ -173,6 +173,16 @@ Prerequisites:
     - Git repository cloned (e.g., via ghq)
     - 'origin' remote configured
     - GitHub CLI (gh) installed
+    - jq and awk
+
+Install contract of the generated devcontainer (no devcontainer features):
+    - Language runtimes (node, python, rust, go, deno, ...) are declared in
+      mise.toml and installed by mise; edit a version there, then run
+      'mise install' or rebuild the container.
+    - OS packages (git, gh, database clients, TeX Live) are installed by
+      docker/Dockerfile.dev.
+    - Claude Code and Codex CLI are installed by .devcontainer/scripts/setup_*.sh
+      (run from post.sh); Claude Code plugins are declared in .claude/settings.json.
 
 Options:
     -h, --help          Show this help message
@@ -230,10 +240,11 @@ Available Languages:
     node                Node.js/TypeScript (pnpm, Biome, Vitest)
     deno                Deno (built-in fmt, lint, test)
     go                  Go (gofmt, golangci-lint, gotestsum)
+    latex               LaTeX (TeX Live, latexmk, LaTeX Workshop)
 
 Available Services:
-    postgresql          PostgreSQL 16 database with psql client
-    mysql               MySQL 8.0 database with mysql client
+    postgresql          PostgreSQL 16 database (psql client via Dockerfile.dev)
+    mysql               MySQL 8.0 database (mysql client via Dockerfile.dev)
     redis               Redis 7 cache/broker with redis-cli client
     celery              Celery Worker + Beat task queue (requires Python + Redis)
 
@@ -461,6 +472,11 @@ check_dependencies() {
         missing_deps+=("jq")
     fi
 
+    # awk edits mise.toml and Dockerfile.dev (mise_toml_ensure, OS-package blocks)
+    if ! command -v awk &> /dev/null; then
+        missing_deps+=("awk")
+    fi
+
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         print_error "Missing required dependencies: ${missing_deps[*]}"
         print_info "Please install the missing dependencies:"
@@ -638,7 +654,8 @@ execute_plugin_copies() {
 }
 
 # Execute plugin_dockerfile for all loaded plugins
-# Appends language-specific ENV/RUN directives to Dockerfile.dev
+# Inserts OS-package blocks (apt-get) into Dockerfile.dev. Runtimes are not
+# installed here: language plugins declare them in mise.toml (#325).
 execute_plugin_dockerfiles() {
     local target_dir="$1"
     local dockerfile="${target_dir}/docker/Dockerfile.dev"
@@ -646,6 +663,13 @@ execute_plugin_dockerfiles() {
     if [[ ! -f "$dockerfile" ]]; then
         print_warning "Dockerfile.dev not found, skipping plugin_dockerfile hooks"
         return
+    fi
+
+    # A Dockerfile.dev without the mise runtime layer predates #325: runtimes
+    # declared in mise.toml would never be installed into the image.
+    if ! grep -qxF '# >>> mise runtimes >>>' "$dockerfile"; then
+        print_warning "Dockerfile.dev has no mise runtime layer (created before #325); runtimes in mise.toml will not be installed at build time"
+        print_info "See docs/maintenance.md (Migrating a feature-based project) to update docker/Dockerfile.dev"
     fi
 
     for plugin_path in "${LOADED_PLUGINS[@]}"; do
@@ -3013,6 +3037,11 @@ main() {
     print_section "Setup Complete"
     print_success "Devcontainer environment created for: $PROJECT_NAME"
     echo ""
+    if [[ "$IS_ADD_MODULE_MODE" == true ]]; then
+        echo "New runtimes were added to mise.toml. Install them with \`mise install\`"
+        echo "inside the container (or rebuild the container)."
+        echo ""
+    fi
     echo "Next steps:"
     echo "  1. Open in VS Code: code ."
     echo "  2. Reopen in Container: F1 > Dev Containers: Reopen in Container"

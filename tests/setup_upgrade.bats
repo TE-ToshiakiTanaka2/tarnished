@@ -719,3 +719,35 @@ MOCK
     assert_equal "$(sha256sum .zed/settings.json)" "$before"
     assert_equal "$(jq -r '.scaffold_options.zed_enabled' .tarnished-manifest.json)" "true"
 }
+
+# -----------------------------------------------------------------------------
+# #325: a feature-based (pre-#325) project must survive --upgrade untouched
+# -----------------------------------------------------------------------------
+
+@test "#325: --upgrade ships the new helpers but leaves developer-owned install files byte-identical" {
+    seed_scaffold
+    # Pre-#325 shape: features in devcontainer.json, nvm-era Dockerfile and post.sh.
+    printf 'FROM debian:trixie-slim\nRUN ln -sf /bin/bash /bin/sh\nSHELL ["/bin/bash", "-c"]\n' > docker/Dockerfile.dev
+    printf '{"features": {"ghcr.io/devcontainers/features/node:1": {}}}\n' > .devcontainer/devcontainer.json
+    printf '#!/bin/bash\nset -e\nsetup_sudo_path() { :; }\nsetup_sudo_path\n' > .devcontainer/scripts/post.sh
+    bootstrap_and_commit
+
+    cp docker/Dockerfile.dev "$SCRATCH/Dockerfile.before"
+    cp .devcontainer/devcontainer.json "$SCRATCH/devcontainer.before"
+    cp .devcontainer/scripts/post.sh "$SCRATCH/post.before"
+
+    run bash "$SETUP_SH" --upgrade -y
+    [[ "$status" -eq 0 ]]
+
+    [[ -f .devcontainer/scripts/setup_mise.sh ]]
+    [[ -f .devcontainer/scripts/setup_claude.sh ]]
+    [[ -f .devcontainer/scripts/npm_global_cli.sh ]]
+
+    run cmp docker/Dockerfile.dev "$SCRATCH/Dockerfile.before"
+    [[ "$status" -eq 0 ]]
+    run cmp .devcontainer/devcontainer.json "$SCRATCH/devcontainer.before"
+    [[ "$status" -eq 0 ]]
+    run cmp .devcontainer/scripts/post.sh "$SCRATCH/post.before"
+    [[ "$status" -eq 0 ]]
+    [[ ! -e mise.toml ]]
+}
