@@ -1,6 +1,6 @@
 # Class Diagram (Project-wide)
 
-Cumulative class/type diagram for the Rust CLI and shell maintenance metadata. Snapshot — overwritten on every `/design` (NFR-1).
+Cumulative class/type diagram for the Rust CLI, shell maintenance metadata, and the generated install contract. Snapshot — overwritten on every `/design` (NFR-1).
 
 ## Configuration types
 
@@ -154,6 +154,12 @@ classDiagram
         +lsp
     }
     DownstreamProject --> ZedProjectSettings : owns outright (#323)
+    class MiseConfig {
+        +tools
+        +env
+        +settings
+    }
+    DownstreamProject --> MiseConfig : owns outright (#325)
     class ReplacementBackup {
         +run_directory
         +original_relative_path
@@ -176,10 +182,133 @@ classDiagram
     RefreshConfig --> InstalledAsset : constrains active mappings
 ```
 
+## Generated install contract (#325)
+
+Shell-side structure of the three install layers. "Classes" are files; methods
+are their entry functions. Arrows read "uses" unless labelled. File mapping:
+`CommonSh` = `scripts/lib/common.sh`; `CorePlugin`/`ClaudePlugin`/`CodexPlugin`
+= `templates/{core,claude,codex}/plugin.sh`; `LanguagePlugin` =
+`templates/languages/{python,node,rust,go,deno}/plugin.sh`; `LatexPlugin` =
+`templates/languages/latex/plugin.sh`; `ServicePlugin` =
+`templates/services/{postgresql,mysql}/plugin.sh`; `DockerfileDev`,
+`MiseConfig`, `PostSh`, `ClaudeSettings` = the generated
+`docker/Dockerfile.dev`, `mise.toml`, `.devcontainer/scripts/post.sh`,
+`.claude/settings.json`; `Setup*` / `NpmGlobalCli` = the
+`.devcontainer/scripts/*.sh` helpers of the same names.
+
+```mermaid
+classDiagram
+    class CommonSh {
+        <<library>>
+        +mise_toml_ensure(file, section, key, value) int
+        +dockerfile_add_os_packages(dockerfile, block_id, packages) int
+        +post_sh_add_block(post_sh, marker, before_markers) int
+        +merge_devcontainer_json(base, overlay, out) int
+        +merge_claude_settings(base, overlay, out) int
+    }
+    class CorePlugin {
+        <<plugin>>
+        +plugin_copy(target)
+        +plugin_post_copy(target)
+    }
+    class LanguagePlugin {
+        <<plugin>>
+        +plugin_post_copy_shared(root)
+        +plugin_post_copy_module(dir, name)
+    }
+    class LatexPlugin {
+        <<plugin>>
+        +plugin_dockerfile(target)
+    }
+    class ServicePlugin {
+        <<plugin>>
+        +plugin_dockerfile(target)
+        +plugin_post_copy(target)
+    }
+    class ClaudePlugin {
+        <<plugin>>
+        +plugin_post_copy(target)
+    }
+    class CodexPlugin {
+        <<plugin>>
+        +plugin_post_copy(target)
+    }
+    class DockerfileDev {
+        <<generated file>>
+        +ARG MISE_VERSION
+        +root OS packages
+        +SHELL anchor
+        +mise runtime layer
+    }
+    class MiseConfig {
+        <<generated file>>
+        +tools
+        +env
+    }
+    class PostSh {
+        <<generated file>>
+        +mise Runtime Setup
+        +Claude Code Setup
+        +Codex CLI Setup
+        +Claude Code Plugin Setup
+    }
+    class SetupMise {
+        <<helper>>
+        +setup_mise()
+    }
+    class NpmGlobalCli {
+        <<library>>
+        +install_npm_global_cli(name, pkg, cmd)
+    }
+    class SetupClaude {
+        <<helper>>
+        +setup_claude()
+    }
+    class SetupCodex {
+        <<helper>>
+        +setup_codex()
+    }
+    class SetupPlugins {
+        <<helper>>
+        +setup_plugins()
+        +is_claude_authenticated()
+    }
+    class ClaudeSettings {
+        <<generated file>>
+        +extraKnownMarketplaces
+        +enabledPlugins
+    }
+
+    CorePlugin --> CommonSh
+    LanguagePlugin --> CommonSh
+    ServicePlugin --> CommonSh
+    ClaudePlugin --> CommonSh
+    CodexPlugin --> CommonSh
+    CorePlugin --> MiseConfig : seeds node
+    LanguagePlugin --> MiseConfig : mise_toml_ensure
+    LatexPlugin --> DockerfileDev : TeX Live block
+    ServicePlugin --> DockerfileDev : os-packages block
+    CorePlugin --> PostSh : mise + Claude blocks
+    CodexPlugin --> PostSh : Codex block before plugins
+    ClaudePlugin --> PostSh : plugin block
+    ClaudePlugin --> ClaudeSettings : merge keeps plugin keys
+    DockerfileDev --> MiseConfig : COPY + mise install
+    PostSh --> SetupMise
+    PostSh --> SetupClaude
+    PostSh --> SetupCodex
+    PostSh --> SetupPlugins
+    SetupMise --> MiseConfig : mise install
+    SetupClaude --> NpmGlobalCli
+    SetupCodex --> NpmGlobalCli
+    SetupPlugins --> ClaudeSettings : reads enabledPlugins
+```
+
 ## Notes
 
 - `LabelProjectConfig` keys (in `ProjectConfig.label_projects`) are issue-label names; values are independent project + field defaults (#230).
 - `BranchPrefixes` is the canonical internal struct; `VersioningSection` (Format B) deserializes directly into it, while a custom deserializer collapses Format A (`branches: [{prefix, bump}]`) into the same shape (#228).
 - `BumpType::Rc` is the default when no branch prefix matches.
 - `IssueCommands::link_issue_to_project` accepts a `ProjectConfig` so it can be reused for both default and label-routed links (#230 refactor).
+- `MiseConfig` (`<project>/mise.toml`, #325) has the same ownership shape as `ZedProjectSettings`: seeded at scaffold time (core template + `mise_toml_ensure` entries) and then developer-owned, with no edge to `ManifestV2`, `RefreshConfig` or `RefreshState`. The helper scripts that consume it (`setup_mise.sh` etc.) *are* manifest-eligible; the file they read is not.
+- In the install-contract diagram, `npm_global_cli.sh` is a library sourced by two entry helpers, not a `post.sh` entry itself; `post.sh` order (mise → Claude Code → Codex → plugins) is enforced by `post_sh_add_block`, not by plugin load order.
 - `ZedProjectSettings` (`<project>/.zed/settings.json`, #323) is drawn as a direct child of `DownstreamProject` with no edge to `ManifestV2`, `RefreshConfig` or `RefreshState`: it is written once at scaffold time by `apply_zed_assets` and then wholly developer-owned — not an AI asset (no `refresh.json` mapping) and outside `_manifest_path_eligible`, so no maintenance path reads, rewrites or prunes it. The absence of those edges is the ownership statement.

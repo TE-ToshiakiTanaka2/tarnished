@@ -23,6 +23,8 @@ This is the cumulative project-wide data model. Per-issue deltas may add or modi
 | `LifecycleDecision` (internal) | `scripts/lib/manifest.sh` (#265) | Pure enum used by `manifest_decide` to tag each file's upgrade outcome — `NOOP \| UPDATE \| SKIP_EDITED \| NEW \| SKIP_NEW_CONFLICT \| LEAVE_REMOVED \| PRUNE \| SKIP_USER_DELETED` |
 | `RefreshConfig` (logical) | downstream `<project>/.tarnished/refresh.json` (#279) | Always-latest sync whitelist + overlay declaration — `{ schema_version, upstream: { repo_url, branch }, clone_dir, managed_paths: [{ src, dst, overlay }] }` |
 | `ZedProjectSettings` (logical) | downstream `<project>/.zed/settings.json` (#323) | Zed project settings generated when Zed support is enabled — `terminal.shell`, `file_scan_exclusions`, `languages.<Lang>`, `lsp.<server>`. Developer-owned: not an AI asset, not manifest-eligible |
+| `MiseConfig` (logical) | downstream `<project>/mise.toml` (#325) | Runtime versions and tool environment — `[tools]`, `[env]`, optional `[settings]`. Developer-owned: no refresh mapping, not manifest-eligible, tracked by git |
+| `ClaudePluginSettings` (logical) | `.claude/settings.json :: extraKnownMarketplaces`, `enabledPlugins` (#325) | Declarative Claude Code plugin set read by Claude Code and by the `setup_plugins.sh` fallback. Part of the refresh-managed settings file |
 
 ## Type Definitions
 
@@ -199,6 +201,28 @@ erDiagram
         string path
         string sha256
     }
+    MiseConfig ||--o{ MiseToolEntry : "[tools]"
+    MiseConfig ||--o{ MiseEnvEntry : "[env]"
+    MiseToolEntry {
+        string tool
+        string version_or_table
+    }
+    MiseEnvEntry {
+        string name
+        string value_or_table
+    }
+    ClaudePluginSettings ||--o{ EnabledPlugin : "enabledPlugins"
+    ClaudePluginSettings ||--o{ KnownMarketplace : "extraKnownMarketplaces"
+    EnabledPlugin }o--|| KnownMarketplace : "id suffix @marketplace"
+    EnabledPlugin {
+        string id
+        bool enabled
+    }
+    KnownMarketplace {
+        string name
+        string source_type
+        string repo_or_url
+    }
 ```
 
 ## Schemas / Migrations
@@ -231,7 +255,7 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `modules.json :: modules[].language` accepted values | Widened from `{rust, python, node, deno, latex}` to add `go`. Schema `version` unchanged (additive widening is non-breaking per NFR-2: tolerant readers ignore unknown values). | #274 |
 | Language plugin contract (`templates/languages/<lang>/plugin.sh`) | `plugin_post_copy` split into `plugin_post_copy_shared(target_dir)` + `plugin_post_copy_module(target_dir, module_name)`. Existing `plugin_post_copy` retained as a backward-compat shim. | #263 |
 | `templates/languages/go/` (downstream Go scaffold) | New plugin following the Rust shape: gofmt + golangci-lint + gotestsum, per-module `.golangci.yml`, marker-guarded `post.sh` block keyed on `GO_POSTSH_MARKER`. `go mod init` and `src/` scaffolding intentionally omitted (user retains control). | #274 |
-| `Dockerfile.dev` and `.devcontainer/scripts/post.sh` language toolchain blocks | Now wrapped in marker comments (`# >>> <lang> toolchain >>>` … `<<< <lang> toolchain <<<`) and gated by `grep -q` checks for block-level idempotency, so `setup.sh --add-module` re-runs are no-ops for shared assets. | #263 |
+| `Dockerfile.dev` and `.devcontainer/scripts/post.sh` language toolchain blocks | Now wrapped in marker comments (`# >>> <lang> toolchain >>>` … `<<< <lang> toolchain <<<`) and gated by `grep -q` checks for block-level idempotency, so `setup.sh --add-module` re-runs are no-ops for shared assets. Since #325 the only language `Dockerfile.dev` block left is latex's (python's ENV block moved to `mise.toml [env]`). | #263, #325 |
 | `.tarnished-manifest.json` (downstream target) | New schema introduced for upgrade tracking; `manifest_version: 1`. Lives at the scope root (one root manifest in single-mode, root + per-module in monorepo). Forward-compatible via unknown-key tolerance and a `manifest_version` escape hatch. | #265 |
 | `copy_with_confirm` / `copy_dir_with_confirm` (`scripts/lib/common.sh`) | Extended to opportunistically record `(<rel_path>, sha256)` into a global `MANIFEST_TRACKED` map when `MANIFEST_RECORDING=true`. Default off — pre-#265 callers see byte-equivalent behavior (NFR-1). | #265 |
 | `templates/core/plugin.sh` and `templates/languages/<lang>/plugin.sh` | Direct `cp` calls migrated to `copy_with_confirm` so manifest recording captures every verbatim file. The plugin contract itself is unchanged. | #265 |
@@ -245,9 +269,15 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `<project>/.zed/settings.json` (downstream, optional) | New file introduced by `setup.sh --zed`: Zed project settings assembled from `templates/core/.zed/settings.json` (installed by `copy_with_confirm` — first contributor) plus each selected language's `templates/languages/<lang>/.zed/settings.json` fragment (merged by `merge_zed_settings`). Absent without `--zed`. Developer-owned: no `refresh.json` mapping, no manifest entry (outside `_manifest_path_eligible`), tracked by git (no `update_gitignore` block). | #323 |
 | `<project>/.devcontainer/devcontainer.json :: customizations` | Gains an optional sibling `zed` next to the always-present `vscode`. `merge_devcontainer_json` now carries `customizations.zed` through the merge (`extensions` as a `unique` union, other keys object-merged) and emits the key **only** when the base or the overlay declares one, so output without `--zed` is byte-identical to pre-#323. Other `customizations.*` namespaces (e.g. `codespaces`) are still dropped by the rebuild. | #323 |
 | `scaffold_options.zed_enabled` (manifest) | New optional boolean, absent in every pre-#323 manifest and read as `// false`. Inferred by `infer_scaffold_options` from the existence of `<scope>/.zed/settings.json`, not from the CLI flag, so removing the file correctly flips the record at the next `--create-manifest`. `manifest_options_valid` validates its type when present; no migration is required. | #323 |
+| `.devcontainer/devcontainer.json` (downstream + workspace) | `features` removed from every flavor (core: git, github-cli, claude-code; codex/node: node; python: python + uv; rust; go; deno; postgresql/mysql clients). The codex overlay file is deleted. `merge_devcontainer_json` no longer special-cases `features`: it is emitted only when the base or overlay has one, so a developer's own features survive add-module. Workspace `devcontainer-lock.json` deleted. | #325 |
+| `<project>/mise.toml` (downstream + workspace) | New developer-owned file — see "mise.toml schema". Not manifest-tracked, not refreshed. | #325 |
+| `docker/Dockerfile.dev` (core template + workspace) | Rewritten: root apt (adds git, build-essential, curl, gnupg, minisign), `gh` from the signed apt repo, pinned + verified mise, one `SHELL` anchor for plugin OS blocks, then `USER vscode` + shims on `PATH` + `MISE_TRUSTED_CONFIG_PATHS` + `mise install` inside `# >>> mise runtimes >>>`. `ln -sf /bin/bash /bin/sh` removed. Workspace copy byte-identical. postgresql/mysql gain `# >>> <svc> os-packages >>>` apt blocks. | #325 |
+| `.devcontainer/scripts/post.sh` (core template + workspace) | `setup_sudo_path` and the trailing "Claude Code Setup" probe removed; new marker blocks `# mise Runtime Setup` and `# Claude Code Setup`; required order mise → Claude Code → Codex → plugins. Existing downstream `post.sh` files are not migrated automatically. | #325 |
+| `.devcontainer/scripts/{setup_mise,setup_claude,npm_global_cli}.sh` | New manifest-eligible helpers shipped by core (delivered as `NEW` by `--upgrade`); `setup_codex.sh` rewritten on the shared npm helper; `setup_plugins.sh` reads `enabledPlugins` instead of a hard-coded context7/serena/playwright list. | #325 |
+| `.claude/settings.json` (claude template + workspace) | Gains `extraKnownMarketplaces` + `enabledPlugins` (`context7` only). Arrives downstream through the next refresh. | #325 |
 | `templates/languages/latex/.claude/rules/latex.md` (downstream LaTeX scaffold) | New rules file — LaTeX gains `rules/latex.md` for parity with the other five languages; `latex/plugin.sh::plugin_post_copy_shared` copies the rules dir like the rust/node plugins. Also: `setup.sh::load_selected_plugins` warns when `node` and `deno` are both selected (their `*.ts`/`*.tsx` format hooks compete), and all `templates/**/plugin.sh` file modes normalized to 644 (they are sourced, never executed). | #301 |
 
-No SQL, no database migrations — config files, the JSON modules registry, and the seeded `.gitignore` are the only schemas.
+No SQL, no database migrations — config files (including `mise.toml`, #325), the JSON modules registry, and the seeded `.gitignore` are the only schemas.
 
 ### `.tarnished/refresh.json` schema (AI distribution)
 
@@ -295,6 +325,58 @@ is what makes an `--add-module` or staged `--upgrade` re-run a no-op.
 **Forward compatibility**: unknown keys are ignored by Zed, and
 `merge_zed_settings` preserves any key present only in the developer's file,
 so hand-added settings survive re-runs.
+
+### `mise.toml` schema (runtime versions, #325)
+
+Project-root TOML read by mise (and, in parallel, any `.tool-versions` a
+developer adds). Generated from `templates/core/mise.toml` plus language
+plugin entries; every key is developer-owned after scaffold.
+
+| Section | Key | Value written by Tarnished | Writer |
+| --- | --- | --- | --- |
+| `[tools]` | `node` | `"22"` | core (node plugin re-requests it; no-op) |
+| `[tools]` | `python` | `"3.12"` | python |
+| `[tools]` | `uv` | exact current release at implementation | python |
+| `[tools]` | `pnpm` | exact current release at implementation | node |
+| `[tools]` | `rust` | `{ version = "stable", components = ["rustfmt", "clippy"] }` | rust |
+| `[tools]` | `go` | exact current release at implementation | go |
+| `[tools]` | `deno` | exact current release at implementation | deno |
+| `[env]` | `UV_PYTHON` | `{ value = "{{ tools.python.path }}", tools = true }` | python |
+| `[env]` | `PYTHONDONTWRITEBYTECODE`, `PYTHONUNBUFFERED`, `UV_COMPILE_BYTECODE` | `"1"` | python |
+| `[env]` | `UV_LINK_MODE` | `"copy"` | python |
+
+**Write rule** (`common.sh::mise_toml_ensure`): an entry is inserted only when
+its key is absent from the section in every spelling (bare or quoted key,
+`[section.key]` table, top-level `section.key`). Existing entries are never
+rewritten, so a developer-changed version survives every scaffold re-run,
+monorepo init and `--add-module`. A monorepo root holds the union of its
+modules' entries.
+
+**Consumers**: `docker/Dockerfile.dev` copies the file and runs `mise install`
+as `vscode`; `post.sh` re-runs `mise install` (`setup_mise`) so later edits
+converge without a rebuild. The `[env]` templates require trust, provided by
+`MISE_TRUSTED_CONFIG_PATHS=/workspace` and by `mise install`'s automatic trust
+of its active config. `{{ tools.python.path }}` is mise template syntax, not a
+Tarnished placeholder: `mise.toml` must never be added to
+`replace_placeholders`' file list.
+
+**Ownership**: no `.tarnished/refresh.json` mapping, outside
+`_manifest_path_eligible` (so no `MANIFEST_EXCLUDE_GLOBS` entry), tracked by
+git.
+
+### `.claude/settings.json` plugin keys (#325)
+
+| Key | Shape | Shipped value |
+| --- | --- | --- |
+| `extraKnownMarketplaces` | `{ "<marketplace>": { "source": { "source": "github", "repo": "<owner>/<repo>" } } }` (also `git` + `url`) | `claude-plugins-official` → `anthropics/claude-plugins-official` |
+| `enabledPlugins` | `{ "<plugin>@<marketplace>": bool }` | `{ "context7@claude-plugins-official": true }` |
+
+Claude Code applies the marketplace after the folder-trust dialog, but does not
+download an enabled external plugin by itself; `setup_plugins.sh` installs
+every `true` id not reported by `claude plugin list --json`. Scaffold merges
+(`merge_claude_settings`, `merge_claude_settings_hooks`) preserve both keys;
+the root AI refresh replaces the whole file with the distributed copy, so a
+per-developer opt-out belongs in `.claude/settings.local.json`.
 
 ### `.codex/config.toml` schema (project-level Codex CLI config, #261)
 
@@ -357,7 +439,7 @@ The shipped defaults use pinned model IDs. The Claude designer's `[1m]` suffix b
 
 The `.gitignore` produced by `update_gitignore()` and Codex's `plugin_post_copy` is structured as a sequence of **marker-guarded blocks**. The marker (a comment line) is the keyed-on identity of the block; rewriting it without coordination would re-trigger the block-append on existing projects (a benign but visible side effect). The exact marker strings and block contents are defined in [api-spec.md](./api-spec.md) :: "Setup / Plugin Surface".
 
-The same marker-guarded-block pattern (#263) governs the language toolchain blocks appended to `Dockerfile.dev` and `post.sh` by language plugins — see api-spec.md :: "Language plugin contract".
+The same marker-guarded-block pattern (#263) governs the language blocks appended to `post.sh`, latex's TeX Live block and (since #325) the service OS-package blocks in `Dockerfile.dev`, and the core/codex/claude `post.sh` setup blocks placed by `post_sh_add_block` — see api-spec.md :: "Language plugin contract" and "Generated install contract". `mise.toml` uses key-level rather than block-level idempotency (`mise_toml_ensure`).
 
 ### Host maintenance boundary (#316)
 
