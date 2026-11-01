@@ -5,7 +5,7 @@ repository: TE-ToshiakiTanaka2/tarnished
 issue_number: 325
 review_status: complete
 reviewed_head: 6db2ba49dd46a311bf32367bb0251a849096e1bd
-verified_head: e30a1d93875d116b5679c570a0407daee278e58a
+verified_head: 3f4c8cac40deb252d7eeef9a63e72bf384927f99
 base_ref: develop
 base_commit: 423b0e53bd50a11c12a8c50739d6769658ac1291
 merge_base: 423b0e53bd50a11c12a8c50739d6769658ac1291
@@ -127,6 +127,55 @@ Every finding was reproduced by the orchestrator before triage (the `mise_toml_e
 
 No finding deferred.
 
+## Post-completion change: CI fix `bba1c4f` and its scoped review
+
+After `review_status: complete` was recorded at `e30a1d9`, the first `scaffold-build.yml` run on PR #326 failed for the four service flavors in the **scaffold** step: `merge_docker_compose_services` runs `yq eval-all` on overlays that still carry `{{PROJECT_NAME}}` placeholders, and go-yaml rejects a line beginning with `{`. (Locally no `yq` is installed, so the fallback path masked it.) The executor committed `bba1c4f` (sentinel substitution around the yq merge, `tests/common_compose.bats`). Per `references/completion.md` an implementation change after `verified_head` requires a review of the changed scope, so a scoped Codex review of that single commit was run.
+
+- **Reviewer**: Codex CLI 0.163.0 (model: gpt-6-astra, reasoning effort: high), `codex exec - -C /tmp/tarnished-325 --sandbox read-only`, prompt = the commit's diff plus the nine criteria; timestamp 2026-11-01T16:22:01Z.
+
+### Codex output (verbatim, scoped to `bba1c4f`)
+
+### Critical (must fix)
+
+None.
+
+### Major (must fix before PR)
+
+- [common.sh:1317](/tmp/tarnished-325/scripts/lib/common.sh:1317): **Sentinel restoration is not lossless.** Verified with the exact sed expressions:
+  - `{{PROJECT_NAME}}_{{PROJECT_NAME}}` becomes `{{PROJECT_NAME_____TARNISHED_PH_PROJECT_NAME}}`, which later rendering leaves unresolved. The greedy capture consumes the delimiter and subsequent sentinel.
+  - Literal `__TARNISHED_PH_PROJECT_NAME__` becomes `{{PROJECT_NAME}}`, then the project name—even in a base file originally containing no placeholders.
+
+  Use collision-checked tokens with unambiguous boundaries and restore only tokens actually introduced. Add regression cases for adjacent placeholders, underscore suffixes, and literal sentinel text.
+
+### Minor (fix when cheap)
+
+- [common.sh:1310](/tmp/tarnished-325/scripts/lib/common.sh:1310): The three predictable temporary paths are opened with truncating redirects and subsequently deleted without establishing ownership. Existing files at those paths are destroyed; symlinks are followed. Allocate private temporary files with `mktemp`, handling partial allocation failures and cleaning up only successfully allocated paths.
+
+- [common_compose.bats:18](/tmp/tarnished-325/tests/common_compose.bats:18): The fake tests placeholder removal, **not go-yaml parsing or YAML merging**. It rejects even quoted placeholders and concatenates documents into duplicate `services:` mappings. Consequently, the scaffold assertions pass without establishing a usable Compose configuration. Keep the stub for failure injection, but add a real mikefarah-yq test that parses the rendered output and asserts both the original app and added service survive.
+
+### Suggestions (nice to have)
+
+- Extend failure tests to cover both preprocessing commands and output restoration under an explicit `set -euo pipefail` caller. Currently only yq failure is injected.
+
+### Positive
+
+- The guarded processing chain reaches cleanup on sed/yq failures under `set -e`; assuming cleanup succeeds, the existing error message and return code are preserved.
+- Placeholder restoration runs regardless of whether the base contains placeholders.
+- All five shipped Compose templates passed exact sed round-trip checks. Bash syntax and diff whitespace checks passed.
+- Scope remained limited to this commit. Bats and real yq were unavailable; parser/serializer behavior was not executed. Requirement assessment used the supplied follow-up contract and local design context.
+
+**Final verdict: REQUEST_CHANGES**
+
+### Orchestrator triage
+
+| # | Severity | Finding | Disposition |
+| --- | --- | --- | --- |
+| S-1 | Major | Sentinel restore regex is greedy across `_`-adjacent placeholders; literal sentinel text in input is mis-restored | Fix: boundary-safe sentinel (`tarnishedph-NAME-hptarnished`), collision check with fallback to the non-yq path, regression tests |
+| S-2 | Minor | Predictable temp paths opened with truncating redirects | Fix: `mktemp`-allocated private files, cleanup only of allocated paths |
+| S-3 | Minor | Fake-yq tests do not model go-yaml parsing or a real merge | Fix: add a real mikefarah yq v4 test (skipped when yq is absent) and run it locally with a downloaded yq binary |
+| S-4 | Suggestion | Inject failures into the preprocessing/restore steps too | Apply |
+
+
 ## Fixes Applied
 
 Both independent reviews were run under `/flow`, so fixes were applied by the `executor` subagent and verified by the orchestrator before being recorded here.
@@ -156,8 +205,19 @@ Orchestrator verification: diff of `59b6fa0` read hunk by hunk; `common_mise`, `
 
 Orchestrator verification of `e30a1d9`: the two TOML reproductions re-run against the new helper (`tools.pnpm = "12.16.1"` appended as a dotted key and accepted by `tomllib`; `'node'` kept with "Kept existing" message); node, redis, workflow and `setup_claude.sh` hunks read; `scripts/verify-mirrors.sh` byte-identical; full bats suite re-run by the orchestrator on `e30a1d9`: 480 ok, 0 failed, exit 0 (baseline on `develop` @ `423b0e5`: 364 ok, 0 failed).
 
-### Completion
+### Scoped Codex review findings (on `bba1c4f`) → `f8a0e57`, `3f4c8ca`
 
-- Critical: none in either review. Major: 3 (Codex), all fixed and verified. Minor: 4 total, all fixed. Suggestions: 4, all applied. Nothing deferred.
-- `verified_head` is `e30a1d9` (code head after both fix commits). This review-artifact commit itself contains no code and preserves freshness per `references/completion.md`.
+| # | Severity | Finding | Resolution |
+| --- | --- | --- | --- |
+| S-1 | Major | Greedy sentinel restore across `_`-adjacent placeholders; literal sentinel text mis-restored | `f8a0e57`: sentinel `tarnishedph-NAME-hptarnished` with `-` boundaries outside the capture class; inputs containing the sentinel text fall back to the non-yq merge with a warning; bats: adjacent `_`/`-` placeholders, `_suffix`, placeholder-free base, literal-sentinel fallback |
+| S-2 | Minor | Predictable temp paths | `f8a0e57`: `mktemp`-allocated private files; failed allocation cleans only what was allocated and returns 1 |
+| S-3 | Minor | Fake-yq tests did not model a real merge | `f8a0e57`: real mikefarah yq v4 test (skips when absent) run locally with yq v4.47.1 (checksum-verified download): merged output keeps placeholders, renders to a compose file whose services are `demo` and `demo-db` and carries the overlay volume; end-to-end `setup.sh --postgresql -y` with real yq renders a parseable compose file |
+| S-4 | Suggestion | Inject failures into every pipeline stage | `f8a0e57`: failure-injection test under `set -euo pipefail` for both `sed`s, `yq` and the restore step (rc=1, no temp files). `3f4c8ca`: the test's own `yq` stub was not executable, so PATH lookup bypassed it (real yq won, or the non-yq fallback ran); fixed with `chmod +x` plus a marker proving the yq pipeline is exercised; verified with and without a real yq, and in a 5× loop |
+
+Orchestrator verification: `bba1c4f`, `f8a0e57` and `3f4c8ca` diffs read; the orchestrator's own full-suite run with the real yq on PATH exposed the `3f4c8ca` defect (488 ok / 1 not ok on `f8a0e57`); after `3f4c8ca` the executor's full-suite run with real yq is 489 ok / 0 not ok and the orchestrator re-ran `tests/common_compose.bats` with real yq (9 ok). CI on `bba1c4f` (PR #326): all 11 `scaffold-build` entries green, including the four service flavors (psql 17.11, MariaDB client 11.8.6, redis-cli 8.0.2, celery python 3.12.16 / uv 0.13.6), plus Rust quality, Integration Tests and mirror parity; CI on the final head is recorded in the PR.
+
+### Completion (updated)
+
+- Critical: none in any review. Major: 4 (3 Codex full review + 1 Codex scoped review), all fixed and verified. Minor: 6 total, all fixed. Suggestions: 5, all applied. Nothing deferred.
+- `verified_head` is `3f4c8ca` (code head after the review fixes `59b6fa0`, `e30a1d9`, the CI fix `bba1c4f`, its scoped-review fixes `f8a0e57`, and the test fix `3f4c8ca`). Review-artifact commits contain no code and preserve freshness per `references/completion.md`.
 - Still unverified in this environment (no `docker`): image build, `bash -c` / `bash -ic` runtime checks, post-create `claude --version`, arm64, MySQL client login. `.github/workflows/scaffold-build.yml` is the automated check for these on the PR; the `/pr` stage treats its result as part of readiness.
