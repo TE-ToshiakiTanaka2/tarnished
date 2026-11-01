@@ -1303,8 +1303,22 @@ merge_docker_compose_services() {
 
     # Check if yq is available for direct YAML processing
     if command -v yq &> /dev/null; then
-        # Use yq for YAML merge
-        if ! yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' "$base_file" "$overlay_file" > "$output_file"; then
+        # Use yq for YAML merge. Overlays still carry unrendered {{NAME}}
+        # placeholders, and a line starting with "{" opens a YAML flow mapping
+        # that yq (go-yaml) rejects. Swap each placeholder for a YAML-safe
+        # sentinel in same-directory temp copies, merge those, then restore.
+        local yq_base="${output_file}.yqbase.tmp"
+        local yq_overlay="${output_file}.yqoverlay.tmp"
+        local yq_merged="${output_file}.yqmerged.tmp"
+        local yq_status=0
+        if ! sed -E 's/\{\{([A-Za-z0-9_]+)\}\}/__TARNISHED_PH_\1__/g' "$base_file" > "$yq_base" \
+            || ! sed -E 's/\{\{([A-Za-z0-9_]+)\}\}/__TARNISHED_PH_\1__/g' "$overlay_file" > "$yq_overlay" \
+            || ! yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' "$yq_base" "$yq_overlay" > "$yq_merged" \
+            || ! sed -E 's/__TARNISHED_PH_([A-Za-z0-9_]+)__/{{\1}}/g' "$yq_merged" > "$output_file"; then
+            yq_status=1
+        fi
+        rm -f "$yq_base" "$yq_overlay" "$yq_merged"
+        if [[ "$yq_status" -ne 0 ]]; then
             print_error "Failed to merge docker-compose files with yq"
             return 1
         fi
