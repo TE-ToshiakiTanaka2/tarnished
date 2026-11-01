@@ -121,17 +121,15 @@ plugin_post_copy() {
         make_scripts_executable "${target_dir}/.devcontainer/scripts"
     fi
 
-    # Integrate plugin setup into post.sh
+    # Integrate plugin setup into post.sh. Appended last of the install blocks
+    # (mise -> Claude Code -> Codex CLI -> plugins, #325); the Codex plugin
+    # inserts its own block above this one, whichever plugin loads first.
     local post_sh="${target_dir}/.devcontainer/scripts/post.sh"
     local plugin_marker="# Claude Code Plugin Setup"
 
-    if [[ -f "$post_sh" ]] && ! grep -q "$plugin_marker" "$post_sh"; then
+    if [[ -f "$post_sh" ]] && ! grep -qxF "$plugin_marker" "$post_sh"; then
         print_info "Integrating Claude Code plugin setup into post.sh..."
-        cat >> "$post_sh" << 'EOF'
-
-# -----------------------------------------------------------------------------
-# Claude Code Plugin Setup
-# -----------------------------------------------------------------------------
+        post_sh_add_block "$post_sh" "$plugin_marker" << 'EOF'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/setup_plugins.sh" ]]; then
     source "${SCRIPT_DIR}/setup_plugins.sh"
