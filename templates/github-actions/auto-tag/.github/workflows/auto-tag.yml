@@ -31,13 +31,11 @@ permissions:
   contents: write
   pull-requests: write
 
-# Serialize tag computation per ref so rapid back-to-back merges queue
-# instead of racing to compute the same version. Concurrency declared
-# inside the reusable workflow does not apply to caller runs, so this
-# block must live here in the caller.
-concurrency:
-  group: auto-tag-${{ github.ref }}
-  cancel-in-progress: false
+# Do not add a workflow-level concurrency block here. The reusable workflow
+# already serializes tag computation per ref with the group "auto-tag-<ref>".
+# Redeclaring the same group in this caller makes the caller run and the called
+# workflow claim one group, and GitHub fails the run before any job starts
+# (deadlock), so no tag is ever created.
 
 jobs:
   call-auto-tag:
