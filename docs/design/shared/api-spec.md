@@ -576,9 +576,9 @@ Triggers include a requirement-level ambiguity producing different public interf
 
 | Role | Channel | Value |
 | --- | --- | --- |
-| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5` |
-| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
-| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
+| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5-1` |
+| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5-5[1m]` |
+| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5-5` |
 | `external-reviewer` | Reviewer's own CLI configuration | Codex default: `gpt-6-astra` / `high` |
 
 The table describes Claude dispatch. Codex-native `designer` and `executor` inherit the active Codex session model and reasoning effort unless a supported explicit override is set; Claude frontmatter IDs do not apply to Codex. `roles.<role>.model` defaults to `null` for the three primary roles; `external-reviewer` has no model key. A non-null override is vendor-specific to the actual dispatcher, including in `dual` mode. Keep it `null` for a profile shared across vendors, and report incompatible overrides rather than translating them. Claude dispatch precedence is profile override → agent frontmatter → session inheritance; Codex precedence is supported profile override → active Codex session.

@@ -3,6 +3,10 @@
 .claude/settings.local.json
 tests/libs/
 
+# Tarnished refresh runtime state (local-only; see docs/maintenance.md)
+.tarnished/refresh-state.json
+.tarnished/backups/
+
 # Codex CLI (track shared config only)
 .codex/*
 !.codex/config.toml
