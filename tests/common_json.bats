@@ -441,3 +441,115 @@ JSON
     assert_success
     assert_output "$first_sorted"
 }
+
+# --- #325: features are no longer special-cased ------------------------------
+
+@test "merge_devcontainer_json emits no features key when neither input has one" {
+    local base_file="$SCRATCH/base.json"
+    local overlay_file="$SCRATCH/overlay.json"
+    local output_file="$SCRATCH/output.json"
+
+    echo '{"name": "app", "customizations": {"vscode": {"extensions": ["a.b"]}}}' > "$base_file"
+    echo '{"customizations": {"vscode": {"extensions": ["c.d"]}}}' > "$overlay_file"
+
+    run merge_devcontainer_json "$base_file" "$overlay_file" "$output_file"
+    assert_success
+
+    run jq -r 'has("features")' "$output_file"
+    assert_output "false"
+    run jq -r '.customizations.vscode.extensions | length' "$output_file"
+    assert_output "2"
+}
+
+@test "merge_devcontainer_json preserves a base-only features object" {
+    local base_file="$SCRATCH/base.json"
+    local overlay_file="$SCRATCH/overlay.json"
+    local output_file="$SCRATCH/output.json"
+
+    echo '{"features": {"ghcr.io/example/own:1": {"a": 1}}}' > "$base_file"
+    echo '{"customizations": {"vscode": {"extensions": []}}}' > "$overlay_file"
+
+    run merge_devcontainer_json "$base_file" "$overlay_file" "$output_file"
+    assert_success
+
+    run jq -c '.features' "$output_file"
+    assert_output '{"ghcr.io/example/own:1":{"a":1}}'
+}
+
+@test "merge_devcontainer_json deep-merges features declared on both sides" {
+    local base_file="$SCRATCH/base.json"
+    local overlay_file="$SCRATCH/overlay.json"
+    local output_file="$SCRATCH/output.json"
+
+    echo '{"features": {"x": {"a": 1}}}' > "$base_file"
+    echo '{"features": {"x": {"b": 2}, "y": {}}}' > "$overlay_file"
+
+    run merge_devcontainer_json "$base_file" "$overlay_file" "$output_file"
+    assert_success
+
+    run jq -c '.features' "$output_file"
+    assert_output '{"x":{"a":1,"b":2},"y":{}}'
+}
+
+# --- #325: plugin keys survive the settings merges ---------------------------
+
+_plugin_keys_json() {
+    cat <<'JSON'
+{
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": { "source": "github", "repo": "anthropics/claude-plugins-official" }
+    }
+  },
+  "enabledPlugins": { "context7@claude-plugins-official": true }
+}
+JSON
+}
+
+@test "merge_claude_settings keeps plugin keys present only in the base" {
+    _plugin_keys_json > "$SCRATCH/base.json"
+    echo '{"permissions": {"allow": ["Bash(ls)"]}}' > "$SCRATCH/overlay.json"
+
+    run merge_claude_settings "$SCRATCH/base.json" "$SCRATCH/overlay.json" "$SCRATCH/out.json"
+    assert_success
+    run jq -r '.enabledPlugins["context7@claude-plugins-official"]' "$SCRATCH/out.json"
+    assert_output "true"
+    run jq -r '.extraKnownMarketplaces["claude-plugins-official"].source.repo' "$SCRATCH/out.json"
+    assert_output "anthropics/claude-plugins-official"
+}
+
+@test "merge_claude_settings keeps plugin keys present only in the overlay" {
+    echo '{"permissions": {"allow": ["Bash(ls)"]}}' > "$SCRATCH/base.json"
+    _plugin_keys_json > "$SCRATCH/overlay.json"
+
+    run merge_claude_settings "$SCRATCH/base.json" "$SCRATCH/overlay.json" "$SCRATCH/out.json"
+    assert_success
+    run jq -r '.enabledPlugins["context7@claude-plugins-official"]' "$SCRATCH/out.json"
+    assert_output "true"
+}
+
+@test "merge_claude_settings unions plugin keys present on both sides" {
+    _plugin_keys_json > "$SCRATCH/base.json"
+    echo '{"enabledPlugins": {"other@claude-plugins-official": true}}' > "$SCRATCH/overlay.json"
+
+    run merge_claude_settings "$SCRATCH/base.json" "$SCRATCH/overlay.json" "$SCRATCH/out.json"
+    assert_success
+    run jq -c '.enabledPlugins' "$SCRATCH/out.json"
+    assert_output '{"context7@claude-plugins-official":true,"other@claude-plugins-official":true}'
+}
+
+# merge_claude_settings_hooks only folds the overlay's hooks into the base, so
+# the base's plugin keys must survive untouched.
+@test "merge_claude_settings_hooks keeps the base plugin keys while merging hooks" {
+    _plugin_keys_json > "$SCRATCH/base.json"
+    echo '{"hooks": {"PostToolUse": [{"matcher": "Edit"}]}}' > "$SCRATCH/overlay.json"
+
+    run merge_claude_settings_hooks "$SCRATCH/base.json" "$SCRATCH/overlay.json" "$SCRATCH/out.json"
+    assert_success
+    run jq -c '.enabledPlugins' "$SCRATCH/out.json"
+    assert_output '{"context7@claude-plugins-official":true}'
+    run jq -r '.extraKnownMarketplaces | has("claude-plugins-official")' "$SCRATCH/out.json"
+    assert_output "true"
+    run jq -r '.hooks.PostToolUse | length' "$SCRATCH/out.json"
+    assert_output "1"
+}

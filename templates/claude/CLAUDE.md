@@ -19,8 +19,8 @@ This file provides context to Claude Code about the project structure and develo
 ```
 {{PROJECT_NAME}}/
 ├── .devcontainer/          # Devcontainer configuration
-│   ├── devcontainer.json   # VS Code Devcontainer settings
-│   └── scripts/            # Setup scripts
+│   ├── devcontainer.json   # Devcontainer settings (no features; see below)
+│   └── scripts/            # post.sh and its setup_*.sh helpers (mise, Claude Code, plugins)
 ├── .tarnished/             # Shared Claude/Codex workflow source
 │   ├── agent-profile.json  # Selected primary/review agent profile
 │   └── workflows/          # Agent-neutral lifecycle documentation
@@ -37,9 +37,19 @@ This file provides context to Claude Code about the project structure and develo
 ├── docker/                 # Docker configuration
 │   └── Dockerfile.dev      # Development Dockerfile
 ├── docker-compose.yml      # Docker Compose configuration
+├── mise.toml               # Language runtime versions (node, python, ...), managed by mise
 ├── AGENTS.md               # Codex entrypoint when Codex is enabled
 └── CLAUDE.md               # This file
 ```
+
+## Development Environment
+
+- **Runtimes** (Node.js, Python, Rust, ...) are declared in `mise.toml`. Change a
+  version there, then run `mise install` (or rebuild the container).
+- **OS packages** live in `docker/Dockerfile.dev`.
+- **Claude Code and Codex CLI** are installed by `.devcontainer/scripts/setup_*.sh`
+  from `post.sh`; Claude Code plugins are declared in `.claude/settings.json`
+  (`enabledPlugins`).
 
 ## Coding Conventions
 

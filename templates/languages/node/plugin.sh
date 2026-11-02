@@ -4,8 +4,8 @@
 # This file is meant to be sourced by setup.sh, not executed directly.
 # =============================================================================
 # This plugin provides Node.js/TypeScript development environment features including:
-# - Node.js 22 LTS devcontainer feature
-# - pnpm package manager (fast, disk-efficient)
+# - Node.js 22, declared in mise.toml (no devcontainer feature)
+# - pnpm package manager (fast, disk-efficient), also declared in mise.toml
 # - VS Code extensions for TypeScript development
 # - Biome linter and formatter configuration
 # - TypeScript strict mode type checking
@@ -78,18 +78,26 @@ plugin_copy() {
 plugin_post_copy_shared() {
     local target_dir="$1"
 
-    # Merge devcontainer.json features and extensions
+    # Runtime versions live in mise.toml (#325). Existing entries are never
+    # changed. Runs before any early return below so re-runs and --add-module
+    # stay idempotent.
+    mise_toml_ensure "${target_dir}/mise.toml" tools node '"22"' \
+        || print_warning "Could not add tools.node to mise.toml"
+    mise_toml_ensure "${target_dir}/mise.toml" tools pnpm '"12.16.1"' \
+        || print_warning "Could not add tools.pnpm to mise.toml"
+
+    # Merge devcontainer.json customizations (extensions and settings)
     local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
     local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
 
     if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
-        print_info "Merging Node.js devcontainer features..."
+        print_info "Merging Node.js devcontainer customizations..."
         local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
 
         merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
         mv "$temp_file" "$target_devcontainer"
 
-        print_success "Node.js devcontainer features merged"
+        print_success "Node.js devcontainer customizations merged"
     fi
 
     # Zed editor assets (no-op unless --zed was selected). Placed before the
@@ -146,22 +154,25 @@ ${NODE_POSTSH_MARKER}
 if command -v node &> /dev/null; then
     echo "Setting up Node.js development environment..."
 
-    # Install pnpm if not available
-    if ! command -v pnpm &> /dev/null; then
-        echo "  - Installing pnpm..."
-        corepack enable
-        corepack prepare pnpm@latest --activate
+    # pnpm comes from mise.toml
+    HAS_PNPM=false
+    if command -v pnpm &> /dev/null; then
+        HAS_PNPM=true
+    else
+        echo "  [WARN] pnpm not found - add it to mise.toml and run: mise install"
     fi
 
     # Install dependencies if package.json exists at the project root
-    if [[ -f "package.json" ]]; then
+    if [[ "\$HAS_PNPM" == true ]] && [[ -f "package.json" ]]; then
         echo "  - Installing dependencies with pnpm..."
-        pnpm install
+        pnpm install || echo "  [WARN] pnpm install failed - run it manually"
     fi
 
     echo "Node.js development environment ready."
     echo "  - Node.js: \$(node --version)"
-    echo "  - pnpm: \$(pnpm --version)"
+    if [[ "\$HAS_PNPM" == true ]]; then
+        echo "  - pnpm: \$(pnpm --version)"
+    fi
 fi
 # <<< node (pnpm) post-create <<<
 EOF
@@ -175,22 +186,25 @@ EOF
 if command -v node &> /dev/null; then
     echo "Setting up Node.js development environment..."
 
-    # Install pnpm if not available
-    if ! command -v pnpm &> /dev/null; then
-        echo "  - Installing pnpm..."
-        corepack enable
-        corepack prepare pnpm@latest --activate
+    # pnpm comes from mise.toml
+    HAS_PNPM=false
+    if command -v pnpm &> /dev/null; then
+        HAS_PNPM=true
+    else
+        echo "  [WARN] pnpm not found - add it to mise.toml and run: mise install"
     fi
 
     # Install dependencies if package.json exists
-    if [[ -f "package.json" ]]; then
+    if [[ "$HAS_PNPM" == true ]] && [[ -f "package.json" ]]; then
         echo "  - Installing dependencies with pnpm..."
-        pnpm install
+        pnpm install || echo "  [WARN] pnpm install failed - run it manually"
     fi
 
     echo "Node.js development environment ready."
     echo "  - Node.js: $(node --version)"
-    echo "  - pnpm: $(pnpm --version)"
+    if [[ "$HAS_PNPM" == true ]]; then
+        echo "  - pnpm: $(pnpm --version)"
+    fi
 fi
 EOF
         fi

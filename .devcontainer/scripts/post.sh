@@ -27,52 +27,6 @@ is_interactive() {
 }
 
 # -----------------------------------------------------------------------------
-# Setup sudo PATH for nvm-installed Node.js
-# -----------------------------------------------------------------------------
-setup_sudo_path() {
-    echo "Setting up sudo PATH for nvm..."
-
-    local nvm_bin
-    nvm_bin=$(dirname "$(which node 2>/dev/null)" 2>/dev/null)
-
-    if [ -z "$nvm_bin" ] || [ ! -d "$nvm_bin" ]; then
-        echo "  - Node.js not found, skipping sudo PATH setup"
-        return 0
-    fi
-
-    echo "  - Detected nvm bin path: $nvm_bin"
-
-    if [ -f /etc/sudoers.d/nvm-path ]; then
-        if grep -q "$nvm_bin" /etc/sudoers.d/nvm-path 2>/dev/null; then
-            echo "  - sudo PATH already configured"
-            return 0
-        fi
-    fi
-
-    local current_secure_path
-    current_secure_path=$(sudo grep -oP 'secure_path="\K[^"]+' /etc/sudoers 2>/dev/null || echo "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-
-    if [[ "$current_secure_path" == *"$nvm_bin"* ]]; then
-        echo "  - nvm path already in secure_path"
-        return 0
-    fi
-
-    local new_secure_path="$nvm_bin:$current_secure_path"
-    echo "Defaults secure_path=\"$new_secure_path\"" | sudo tee /etc/sudoers.d/nvm-path > /dev/null
-    sudo chmod 0440 /etc/sudoers.d/nvm-path
-
-    if sudo visudo -c -f /etc/sudoers.d/nvm-path >/dev/null 2>&1; then
-        echo "  - sudo PATH configured successfully"
-    else
-        echo "  - Error: Invalid sudoers syntax, removing file"
-        sudo rm -f /etc/sudoers.d/nvm-path
-        return 1
-    fi
-}
-
-setup_sudo_path
-
-# -----------------------------------------------------------------------------
 # Git Configuration
 # -----------------------------------------------------------------------------
 echo "Setting up Git configuration..."
@@ -246,14 +200,6 @@ EOF
 
 setup_ssh_host_config
 
-# -----------------------------------------------------------------------------
-# Claude Code Setup
-# -----------------------------------------------------------------------------
-if command -v claude &> /dev/null; then
-    echo "Claude Code CLI is available"
-    mkdir -p "$HOME/.claude"
-fi
-
 echo "Post-creation setup script finished."
 
 # -----------------------------------------------------------------------------
@@ -262,6 +208,24 @@ echo "Post-creation setup script finished."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -x "${SCRIPT_DIR}/refresh-assets.sh" ]]; then
     "${SCRIPT_DIR}/refresh-assets.sh" || true
+fi
+
+# -----------------------------------------------------------------------------
+# mise Runtime Setup
+# -----------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/setup_mise.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_mise.sh"
+    setup_mise
+fi
+
+# -----------------------------------------------------------------------------
+# Claude Code Setup
+# -----------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/setup_claude.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_claude.sh"
+    setup_claude
 fi
 
 # -----------------------------------------------------------------------------
@@ -282,16 +246,10 @@ if command -v cargo &> /dev/null; then
         cargo install --locked cargo-edit
     fi
 
-    echo "Rust development tools installed."
-fi
+    # Give freshly installed binaries a mise shim
+    command -v mise &> /dev/null && mise reshim || true
 
-# -----------------------------------------------------------------------------
-# Claude Code Plugin Setup
-# -----------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/setup_plugins.sh" ]]; then
-    source "${SCRIPT_DIR}/setup_plugins.sh"
-    setup_plugins
+    echo "Rust development tools installed."
 fi
 
 # -----------------------------------------------------------------------------
@@ -304,22 +262,10 @@ if [[ -f "${SCRIPT_DIR}/setup_codex.sh" ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Rust Development Tools Setup
+# Claude Code Plugin Setup
 # -----------------------------------------------------------------------------
-if command -v cargo &> /dev/null; then
-    echo "Installing Rust development tools..."
-
-    # Install cargo-watch for auto-rebuild on file changes
-    if ! command -v cargo-watch &> /dev/null; then
-        echo "  - Installing cargo-watch..."
-        cargo install --locked cargo-watch
-    fi
-
-    # Install cargo-edit for easy dependency management (cargo add/rm)
-    if ! cargo add --version &> /dev/null 2>&1; then
-        echo "  - Installing cargo-edit..."
-        cargo install --locked cargo-edit
-    fi
-
-    echo "Rust development tools installed."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/setup_plugins.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_plugins.sh"
+    setup_plugins
 fi

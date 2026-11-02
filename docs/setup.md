@@ -51,6 +51,61 @@ codex --dangerously-bypass-approvals-and-sandbox
 The default generated `.codex/config.toml` remains `workspace-write` +
 `on-request` so projects do not silently disable approvals.
 
+## Runtime versions (`mise.toml`)
+
+A generated project installs software in three layers, and a plain
+`docker build` of `docker/Dockerfile.dev` produces the same environment as
+VS Code or Zed. No devcontainer `features` are used.
+
+| Layer | Declared in | Installed by | When |
+| --- | --- | --- | --- |
+| OS packages (git, gh, mise, build tools, `postgresql-client`, `default-mysql-client`, TeX Live) | `docker/Dockerfile.dev` | `apt-get` as root | image build |
+| Language runtimes (node, python, uv, pnpm, rust, go, deno) | `mise.toml` | `mise install` as `vscode` | image build, and again on post-create |
+| Claude Code, Codex CLI, Claude Code plugins | `.devcontainer/scripts/setup_*.sh`, `.claude/settings.json` | `npm install -g` / `claude plugin install` as `vscode` | post-create (`post.sh`) |
+
+`mise.toml` is developer-owned: core ships it with `node = "22"`, each language
+plugin adds its own entries (`python` + `uv`, `pnpm`, `rust`, `go`, `deno`), and
+neither `setup.sh --upgrade` nor `--add-module` ever changes an entry you edited.
+
+To change a version:
+
+1. Edit the entry in `mise.toml` (for example `node = "24"`).
+2. Run `mise install` in the container, or rebuild it. `post.sh` also runs
+   `mise install` on post-create, so a pulled `mise.toml` change converges
+   without a rebuild.
+3. After a Node.js bump, run `bash .devcontainer/scripts/post.sh` once: npm
+   global packages belong to one Node version, so the Claude Code and Codex CLI
+   are reinstalled by their `post.sh` blocks (which run after the mise block).
+
+Notes:
+
+- mise also reads a `.tool-versions` file if you add one (asdf users), but
+  Tarnished only generates `mise.toml`.
+- `[env]` values in `mise.toml` (for example the Python `UV_*` settings) apply to
+  processes started through mise shims or an activated shell, not to a process
+  that is exec'd by absolute path, such as an editor extension launching the
+  interpreter directly.
+- `npm install -g` writes into the active Node's own directory under
+  `~/.local/share/mise`, which the `vscode` user owns, so no step needs `sudo`.
+  mise shims are not visible under `sudo`.
+- Pin the AI CLIs without editing the managed helpers by setting
+  `CLAUDE_CODE_NPM_PACKAGE` / `CODEX_NPM_PACKAGE` (for example
+  `@anthropic-ai/claude-code@2.1.300`) in `containerEnv`.
+- Claude Code plugins are declared in `.claude/settings.json`
+  (`extraKnownMarketplaces`, `enabledPlugins`); only `context7` is enabled by
+  default. `setup_plugins.sh` installs enabled plugins that are not installed
+  yet after you have logged in to Claude Code. To opt out per developer, set the
+  plugin to `false` in `.claude/settings.local.json`. The fallback's
+  `claude plugin install --scope project` writes to `.claude/settings.json`,
+  which `refresh-assets.sh` manages, so a re-serialised file may be backed up
+  and replaced on the next container start (same as the previous `-s project`
+  behaviour).
+- Add a package to the image (for example another apt tool) in
+  `docker/Dockerfile.dev` above the `SHELL` line; generated plugin blocks use the
+  same spot.
+- A CI workflow (`.github/workflows/scaffold-build.yml`) scaffolds and builds
+  every language and service flavor except `latex` on amd64.
+
 ## Monorepo support
 
 `setup.sh` also supports monorepo layouts where multiple sub-projects live in
@@ -90,7 +145,8 @@ Resulting layout:
 my-monorepo/
 ├── .devcontainer/        # shared (one devcontainer for the whole monorepo)
 ├── .claude/              # shared
-├── docker/Dockerfile.dev # shared, union of all module-language toolchains
+├── docker/Dockerfile.dev # shared (OS packages and the mise runtime layer)
+├── mise.toml             # shared, union of all module-language runtimes
 ├── docker-compose.yml    # shared; service names use <project>-<svc>
 ├── CLAUDE.md             # project-wide
 ├── modules.json          # registry: { "version": 1, "modules": [...] }
@@ -101,10 +157,11 @@ my-monorepo/
 ```
 
 Each language plugin's per-module hook generates the language-idiomatic
-scaffold inside the module directory; the shared `docker/Dockerfile.dev`
-contains the union of every module's language toolchain. Subsequent
-`setup.sh --add-module` invocations are idempotent against the shared root
-files (marker-guarded blocks).
+scaffold inside the module directory; the shared root `mise.toml` contains the
+union of every module's language runtimes. Subsequent `setup.sh --add-module`
+invocations are idempotent against the shared root files (marker-guarded
+blocks, and `mise.toml` entries are only added, never changed); run
+`mise install` in the container afterwards to install a newly added runtime.
 
 ## Zed editor support
 

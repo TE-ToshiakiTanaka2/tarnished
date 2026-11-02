@@ -179,18 +179,18 @@ plugin_dockerfile() {
 plugin_post_copy_shared() {
     local target_dir="$1"
 
-    # Merge devcontainer.json features and extensions
+    # Merge devcontainer.json customizations (extensions and settings)
     local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
     local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
 
     if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
-        print_info "Merging LaTeX devcontainer features..."
+        print_info "Merging LaTeX devcontainer customizations..."
         local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
 
         merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
         mv "$temp_file" "$target_devcontainer"
 
-        print_success "LaTeX devcontainer features merged"
+        print_success "LaTeX devcontainer customizations merged"
     fi
 
     # Zed editor assets (no-op unless --zed was selected). Placed before the

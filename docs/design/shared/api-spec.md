@@ -256,7 +256,7 @@ Schema (full table in [data-model.md](./data-model.md) :: "modules.json schema")
 
 ## Workflow Triggers (`.github/workflows/`)
 
-Six root workflow files. The first four are also exposed as `workflow_call`-callable reusable workflows for downstream repos (e.g., freyja). `release-erd.yml` and `rust-quality-check.yml` are tarnished-internal.
+The first four are also exposed as `workflow_call`-callable reusable workflows for downstream repos (e.g., freyja). The rest are tarnished-internal.
 
 | Workflow | Triggers | `workflow_call` exposed? | Purpose |
 | --- | --- | --- | --- |
@@ -266,6 +266,9 @@ Six root workflow files. The first four are also exposed as `workflow_call`-call
 | `project-label-routing.yml` | `issues: [labeled]` | Yes (inputs: `issue-number`, `label-name`, `config-path`, `erd-version`; secret: `PROJECT_TOKEN`) | Run `erd issue link --label-only` for label-keyed `label_projects` routing (#244 sub-feature opt-in) |
 | `release-erd.yml` | `workflow_dispatch` (input: `tag`) | No | Build the `erd` Linux binary, run tests + coverage, upload artifacts, create GitHub Release |
 | `rust-quality-check.yml` | `pull_request: [develop]`, `push: [develop]` | No | Tarnished-internal: `cargo check`, `clippy`, `fmt`, unit tests, integration tests |
+| `asset-parity.yml` | `pull_request: [develop]` (AI asset / template paths), `push: [develop]` | No | Runs `scripts/verify-mirrors.sh` (#304) |
+| `claude-code-review.yml` | `pull_request: [develop]` types `[opened, ready_for_review]` | No | First-pass Claude review of a PR (#308) |
+| `scaffold-build.yml` | `pull_request: [develop]` (templates, `setup.sh`, `scripts/lib`, `scripts/ci`, root `docker/`, `mise.toml`), `push: [develop]`, `workflow_dispatch` | No | (#325) amd64 matrix — core, python, node, rust, go, deno, postgresql, mysql, redis, celery, plus the workspace image: scaffold with `setup.sh -y`, assert no `features`, `docker build` the generated `Dockerfile.dev` with gha cache and a `github_token` BuildKit secret, run `scripts/ci/smoke-runtimes.sh` under `bash -c` and `bash -ic`; the core entry also runs `post.sh` and asserts `claude --version`. latex excluded |
 
 ### JavaScript action runtime pin policy (#267)
 
@@ -286,6 +289,8 @@ Composite actions (`dtolnay/rust-toolchain@stable`, `taiki-e/install-action@*`) 
 ### `setup.sh`
 
 See "CLI Surface :: `setup.sh`" above for flags and modes (#263). The completion message is unchanged from #246. Per #279, `setup.sh`'s `--upgrade` mode automatically excludes the always-latest path whitelist via the `MANIFEST_EXCLUDE_GLOBS` extension — no new flags or modes are required, and the eight-case `manifest_decide` state machine is unchanged. Pre-#279 manifests that contain hashes for now-excluded paths become inert; the next `--create-manifest` produces a clean manifest.
+
+Per #325 no flag changes: `--help` states that runtimes come from `mise.toml` and lists latex; `show_interactive_mode_error` lists only real flags (the phantom `--playwright`, `--docker`, `--neo4j` are gone); `check_dependencies` requires `jq` and `awk` (mise and Docker are container-side, not host prerequisites); `execute_plugin_dockerfiles` keeps its position between the copy and post-copy passes and warns once when the target `Dockerfile.dev` lacks `# >>> mise runtimes >>>`. Add-module ends with a hint to run `mise install` (or rebuild) for newly declared runtimes.
 
 Per #323, `scaffold_options` gains the optional boolean `zed_enabled`, produced by `infer_scaffold_options` from the presence of `<scope>/.zed/settings.json` and restored into `ZED_ENABLED` by `populate_setup_state_from_manifest` so an `--upgrade` staging run reproduces the same tree it would have scaffolded. Because `.zed/settings.json` is outside `_manifest_path_eligible` (only `.devcontainer/scripts/*.sh` other than `post.sh` is maintenance-eligible), that fidelity affects staging only: `--create-manifest` never hashes the file, `--upgrade` never decides on it, and `--upgrade --prune` cannot delete it. No `MANIFEST_EXCLUDE_GLOBS` entry is needed.
 
@@ -314,8 +319,10 @@ Preserve existing copy/confirmation interface. Record only successful eligible w
 ### `scripts/lib/common.sh::merge_devcontainer_json()`
 
 Signature: `merge_devcontainer_json <base_file> <overlay_file> <output_file>`.
-Merges devcontainer JSON files with special handling for `features`,
-`customizations.vscode` and (since #323) `customizations.zed`. Inputs may be
+Merges devcontainer JSON files with special handling for
+`customizations.vscode` and (since #323) `customizations.zed`. Since #325 no
+shipped overlay carries `features`; the key is merged like any other
+top-level key. Inputs may be
 strict JSON or JSON with `//` and `/* */` comments. The helper normalizes each
 input to strict JSON in private temp files before invoking `jq`; the merged
 output is strict JSON and comments are not preserved. The function reads **no**
@@ -326,8 +333,7 @@ Merge semantics:
 
 | Field | Behavior |
 | --- | --- |
-| Other top-level keys | Deep-merged with overlay values taking precedence. |
-| `features` | Object merge: base feature map overlaid by plugin feature map. |
+| Other top-level keys, including `features` (#325) | Deep-merged with overlay values taking precedence; emitted only when present on either side, so feature-free inputs produce no `features` key and a developer's own `features` survive. |
 | `customizations.vscode.extensions` | Base and overlay arrays concatenated and de-duplicated with `unique`. Always emitted. |
 | `customizations.vscode.settings` | Object merge: base settings overlaid by plugin settings. Always emitted. |
 | `customizations.zed` | (#323) Emitted **only if** the base or the overlay has a non-null `customizations.zed`. When emitted: object merge of both sides, with `extensions` replaced by the `unique` union of both sides' `extensions`. A `zed` subtree present only in the base survives, so a non-Zed overlay cannot erase it. |
@@ -596,31 +602,101 @@ When Codex is the external reviewer, this file supplies its default model and re
 
 The workspace's own `/workspace/.codex/config.toml` MUST stay in sync with this template default so a `/review` run inside the tarnished repo behaves identically to a `/review` run inside any newly bootstrapped downstream project.
 
-### `templates/codex/.devcontainer/scripts/setup_codex.sh` and workspace counterpart (#261)
+### Generated install contract (#325)
 
-| Function | Purpose |
+Generated projects carry no devcontainer `features`. Rationale and decision
+log: `docs/design/#325/design.md`; external facts: `research/mise.md`.
+
+**`docker/Dockerfile.dev` (core template; workspace copy byte-identical)**
+
+| Region | Contents |
 | --- | --- |
-| `setup_codex()` | Idempotent install of `@openai/codex` via npm. Single function, no args, always returns `0`. |
+| Root section (POSIX `sh`) | apt: build-essential, ca-certificates, curl, git, gnupg, jq, minisign, openssh-client, procps, ripgrep, rsync, sudo, vim; `gh` from `cli.github.com` with a `signed-by` keyring checked against `ARG GH_KEYRING_FINGERPRINT`; mise from GitHub releases at `ARG MISE_VERSION`, verified by `minisign` (`ARG MISE_MINISIGN_PUBKEY`) and `sha256sum`, arch `amd64`→`linux-x64`, `arm64`→`linux-arm64`, else fail; `vscode` user with NOPASSWD sudo |
+| Plugin OS blocks | Inserted above the single `SHELL ["/bin/bash", "-o", "pipefail", "-c"]` line by `plugin_dockerfile` hooks |
+| `# >>> mise runtimes >>>` … `# <<< mise runtimes <<<` | `USER vscode`; `ENV PATH=/home/vscode/.local/share/mise/shims:$PATH`, `MISE_TRUSTED_CONFIG_PATHS=/workspace`; `.bashrc` gains `eval "$(mise activate bash)"`; `COPY mise.toml`; `RUN --mount=type=secret,id=github_token,env=GITHUB_TOKEN,required=false mise install` |
 
-Behavior contract:
+No `latest` token and no `ln -sf /bin/bash /bin/sh`. The image's default user
+is `vscode`.
 
-1. If `npm` is missing → log `[WARN]` and return `0`.
-2. If `codex` is already on `$PATH` → log the version and return `0`.
-3. Otherwise, probe `npm root -g`:
-   - empty result → attempt install without sudo (optimistic);
-   - existing prefix dir not user-writable, OR missing prefix whose parent is not user-writable → use `sudo -E npm install -g @openai/codex`;
-   - else → install without sudo.
-4. Run `npm install -g @openai/codex` (with or without `sudo -E`); on non-zero exit, log `[WARN] Failed to install Codex CLI` plus the manual recovery command, and return `0`.
+**`post.sh` blocks and order** (placed by `post_sh_add_block`):
 
-Contract: under `set -e` (in `post.sh`), this function MUST return `0` even when install fails — same non-fatal invariant as `setup_plugins.sh`. The two-pronged write check (existing dir vs. parent dir) is required because `npm install -g` writes into the prefix when present and creates it otherwise; a single check is wrong in one of the two cases. The decision tree is documented in `docs/design/#261/flowchart.md`.
+| Order | Marker | Owner | Sources / calls |
+| --- | --- | --- | --- |
+| 1 | `# mise Runtime Setup` | core | `setup_mise.sh` / `setup_mise` |
+| 2 | `# Claude Code Setup` | core | `setup_claude.sh` / `setup_claude` |
+| — | language / service blocks | languages, services | unchanged mechanisms |
+| 3 | `# Codex CLI Setup` | codex | `setup_codex.sh` / `setup_codex` |
+| 4 | `# Claude Code Plugin Setup` | claude | `setup_plugins.sh` / `setup_plugins` |
 
-The function is sourced into `.devcontainer/scripts/post.sh` after `setup_plugins`, using the same `${SCRIPT_DIR}/setup_codex.sh` source pattern. The Node.js LTS devcontainer feature (`ghcr.io/devcontainers/features/node:1`) is the prerequisite for `npm` being present.
+**Post-create helpers** (all `.devcontainer/scripts/*.sh`, manifest-eligible,
+workspace ≡ template via `verify-mirrors.sh`):
+
+| Helper | Entry | Contract |
+| --- | --- | --- |
+| `setup_mise.sh` (core) | `setup_mise()` | `mise` missing → `[WARN]`; no `mise.toml`/`.mise.toml`/`.tool-versions` → skip; `mise install` in the project root (derived from the script path); failure → `[WARN]` + manual command. Returns 0. |
+| `npm_global_cli.sh` (core) | library: `install_npm_global_cli <display_name> <package_spec> <command>` | Skip when `<command> --version` succeeds (a stale shim fails this probe and triggers reinstall); `npm` missing → `[WARN]`; global prefix not writable → `[WARN]`, never sudo; `npm install -g` failure or still-unrunnable command (after `mise reshim`) → `[WARN]` + manual command. Returns 0. |
+| `setup_claude.sh` (core) | `setup_claude()` | `install_npm_global_cli "Claude Code" "${CLAUDE_CODE_NPM_PACKAGE:-@anthropic-ai/claude-code}" claude`; `mkdir -p ~/.claude`; missing library → `[WARN]`. Returns 0. |
+| `setup_codex.sh` (codex) | `setup_codex()` | `install_npm_global_cli "Codex CLI" "${CODEX_NPM_PACKAGE:-@openai/codex}" codex`; sign-in hint; missing library → `[WARN]`. Returns 0. |
+| `setup_plugins.sh` (claude) | `setup_plugins()` | See below. Returns 0. |
+
+npm globals live in mise's per-version Node prefix (user-owned, so no sudo);
+mise's npm wrapper reshims after installs, so `claude`/`codex` resolve through
+the shim directory in non-login shells and through activation in interactive
+ones. A Node version change drops them until the next `post.sh` run, which is
+why the CLI blocks follow the mise block.
+
+On projects scaffolded before #325, `--upgrade` delivers these helpers but not
+their `post.sh` wiring (post.sh is developer-owned); every helper skips or
+warns cleanly when `mise`, `npm` or `enabledPlugins` is absent and never
+replaces a feature-installed CLI that already runs.
+
+### `scripts/lib/common.sh::mise_toml_ensure()` (#325)
+
+Signature: `mise_toml_ensure <mise_toml> <section> <key> <toml_value>`.
+`section` ∈ {`tools`, `env`, `settings`}; `key` matches
+`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`; `toml_value` is a single-line TOML literal
+written verbatim. Creates the file (with a header comment) or the section when
+missing; inserts after the section's last non-blank line; **skips** when the
+key is already present as a bare or quoted key in the section, as a
+`[section.key]` table, or as a top-level `section.key`. Atomic temp + `mv`.
+Returns 1 only for invalid arguments or write failure; plugin callers
+downgrade that to `print_warning`. Called only from
+`plugin_post_copy_shared` (root scope), never from `plugin_post_copy_module`.
+
+### `scripts/lib/common.sh::dockerfile_add_os_packages()` (#325)
+
+Signature: `dockerfile_add_os_packages <dockerfile> <block_id> <package>...`.
+Inserts, before the first `^SHELL ` line, a block delimited by
+`# >>> <block_id> os-packages >>>` / `# <<< <block_id> os-packages <<<`
+containing one `RUN apt-get update && apt-get install -y --no-install-recommends ... && rm -rf /var/lib/apt/lists/*`.
+Exact-line marker guard in every mode. Missing Dockerfile or missing anchor →
+`print_warning` (listing the packages), file unchanged, return 0. Callers:
+`templates/services/postgresql/plugin.sh::plugin_dockerfile`
+(`postgresql-client`), `templates/services/mysql/plugin.sh::plugin_dockerfile`
+(`default-mysql-client`). latex keeps its own #263 awk insertion at the same
+anchor.
+
+### `scripts/lib/common.sh::post_sh_add_block()` (#325)
+
+Signature: `post_sh_add_block <post_sh> <marker_line> [<before_marker_line>...]`,
+body lines on stdin. Writes a blank line, a `# ----` rule, `<marker_line>`, a
+rule, then the body. Skips when `<marker_line>` exists as an exact line or the
+file is missing. When any `<before_marker_line>` exists, inserts before the
+earliest one (moving up over its rule line and one blank line); otherwise
+appends. Atomic temp + `mv`. Callers and before-lists: core
+(`# mise Runtime Setup` before Claude/Codex/plugin markers;
+`# Claude Code Setup` before Codex/plugin markers), codex
+(`# Codex CLI Setup` before `# Claude Code Plugin Setup`), claude
+(`# Claude Code Plugin Setup`, append). The order is therefore independent of
+plugin load order.
 
 ### `/workspace/.claude/settings.json` (workspace, #261, #299)
 
 `permissions.allow` includes `"Bash(codex:*)"` so the `/review` skill can invoke `codex exec` and `codex review` without per-call approval (#261). Other downstream projects opt in via `templates/codex/.claude/settings.json`.
 
 Since #299 the `permissions.deny` list uses canonical `Bash(prefix:*)` rules aligned with `deny-check.sh`'s regex list, the PreToolUse deny-check hook is addressed via `"$CLAUDE_PROJECT_DIR"/.claude/scripts/deny-check.sh`, and PostToolUse format hooks use `matcher: "Write|Edit"` with per-handler `if: "Write(*.ext)"` rules, reading the file path from the hook's stdin JSON (`.tool_input.file_path`). The workspace carries only the Rust hooks (dogfooding); language templates ship the same shape per language.
+
+Since #325 both the workspace file and `templates/claude/.claude/settings.json` carry `extraKnownMarketplaces` (`claude-plugins-official` → `anthropics/claude-plugins-official`) and `enabledPlugins` (`context7@claude-plugins-official: true`); schema in data-model.md. `merge_claude_settings` (`$base * $overlay` followed by permission/hook unions) and `merge_claude_settings_hooks` (`$base * {hooks}`) preserve both keys without a code change, and the root AI refresh replaces the file with the distributed copy on every container start.
 
 ### `templates/github-actions/project-integration/plugin.sh` — gh helper contract (#276)
 
@@ -687,18 +763,26 @@ The `templates/claude/.claude/rules/` directory is new (was missing pre-#279). I
 
 `plugin_post_copy` is unchanged; the `post.sh` wiring lives in `templates/core/plugin.sh::plugin_post_copy` (see above).
 
-### `setup_plugins.sh` (workspace + `templates/claude/.devcontainer/scripts/`, #249, #255, #273)
+### `setup_plugins.sh` (workspace + `templates/claude/.devcontainer/scripts/`, #249, #255, #273, #325)
 
-The workspace dogfooded copy (`/workspace/.devcontainer/scripts/setup_plugins.sh`) and the downstream template copy (`templates/claude/.devcontainer/scripts/setup_plugins.sh`) are now structurally identical (#273); a future change to one MUST be applied to the other in the same commit, mirroring the workspace-Codex dogfooding convention from #261.
+Fallback installer for the declarative plugin set in `.claude/settings.json`
+(`extraKnownMarketplaces` + `enabledPlugins`, #325). Claude Code applies the
+settings but does not download external plugins on a new machine, so this
+script installs what is enabled and missing. The workspace and template copies
+are byte-identical (`verify-mirrors.sh`).
 
 | Function | Purpose |
 | --- | --- |
-| `is_claude_authenticated()` | (#273) Pure read-only check — returns `0` iff `$HOME/.claude/.credentials.json` exists and is non-empty (`[[ -s … ]]`). No subprocess, no network. |
-| `ensure_claude_marketplace(repo)` | Idempotent registration of `anthropics/claude-plugins-official` marketplace. Returns `1` only on registration failure. |
-| `try_install_plugin(name, marketplace, plugins_output)` | Install one plugin via `claude plugins install <name>@<marketplace> -s project`; absorb failures so siblings continue. Always returns `0`. |
-| `setup_plugins()` | (1) `command -v claude` prerequisite; (2) **`is_claude_authenticated` pre-flight gate (#273)** — if false, print guidance ("run `claude` to log in, then re-run setup_plugins.sh") and `return 0`; (3) `ensure_claude_marketplace`; (4) `try_install_plugin` for `context7`, `serena`, optionally `playwright` (interactive prompt). |
+| `is_claude_authenticated()` | (#273) Returns `0` iff `$HOME/.claude/.credentials.json` is non-empty. No subprocess. |
+| `setup_plugins()` | (1) `claude` and `jq` present; (2) settings file (default `<project>/.claude/settings.json`, overridable by `SETUP_PLUGINS_SETTINGS_FILE` for tests) exists and parses; (3) at least one `enabledPlugins` entry is `true`; (4) `is_claude_authenticated`; then (5) read installed ids from `claude plugin list --json` (failure → treat as none); (6) for each enabled, well-formed, missing `<name>@<marketplace>`: register the marketplace once from `extraKnownMarketplaces[<marketplace>].source` (`github` → `repo`, `git` → `url`; undeclared `claude-plugins-official` → `anthropics/claude-plugins-official`; otherwise warn and skip) and run `claude plugin install <id> --scope project`. |
 
-Contract: under `set -e` (in `post.sh`), this script MUST `return 0` even when individual plugins fail or when authentication is missing; surface auth-missing as one-line guidance and per-plugin failures as warnings. The auth gate (#273) ensures `claude plugins …` is never invoked on a fresh container, so `post.sh` continues to `setup_codex` on first run instead of aborting under `set -e`.
+Contract: under `set -e` (in `post.sh`) the function returns `0` in every
+case. Steps 1–4 each end the run with a one-line warning or guidance; step 6
+failures are isolated per id. `-y` / `--accept-command` are never passed, so a
+plugin whose marketplace declares an install command is refused in a non-TTY
+run and reported. The hard-coded context7/serena/playwright list and the
+playwright prompt were removed in #325; `context7` is the only shipped
+default.
 
 ### Language plugin contract (`templates/languages/<lang>/plugin.sh`, #263)
 
@@ -709,7 +793,8 @@ Language plugins (currently `python`, `rust`, `node`, `deno`, `latex`, `go` — 
 plugin_name()                       # echo "<id>"
 plugin_description()                # echo "<desc>"
 plugin_copy(target_dir)             # root-scoped (e.g. .github/workflows/<lang>-quality-check.yml)
-plugin_dockerfile(target_dir)       # appends marker-guarded language block to docker/Dockerfile.dev
+plugin_dockerfile(target_dir)       # OPTIONAL, OS packages only (#325): latex (TeX Live) is the
+                                    #   only language that still implements it
 
 # REQUIRED today, becomes a SHIM that delegates to the new pair:
 plugin_post_copy(target_dir) {
@@ -725,14 +810,16 @@ plugin_post_copy_module(target_dir, module_name)
 
 | Hook | Arguments | What it MAY touch | What it MUST NOT touch |
 | --- | --- | --- | --- |
-| `plugin_post_copy_shared` | `target_dir` (= project root) | `target_dir/.devcontainer/`, `target_dir/.claude/`, `target_dir/.zed/` via `apply_zed_assets` (#323), marker-guarded blocks in `target_dir/docker/Dockerfile.dev` and `target_dir/.devcontainer/scripts/post.sh` | Module sub-directories |
-| `plugin_post_copy_module` | `target_dir` (= `<root>/<module>` in monorepo mode, `<root>` in single mode), `module_name` | Files inside `target_dir`: `pyproject.toml`/`Cargo.toml`/`package.json`, lint config (`ruff.toml`, `biome.json`, etc.), `src/<module_name>/`, `tests/`, language-specific `.gitignore`, `CLAUDE.md` for the module | `target_dir/.devcontainer/`, `target_dir/.claude/`, `target_dir/.zed/`, `target_dir/docker/`, root `docker-compose.yml` |
+| `plugin_post_copy_shared` | `target_dir` (= project root) | `target_dir/.devcontainer/` (feature-free `customizations` overlay), `target_dir/.claude/`, `target_dir/.zed/` via `apply_zed_assets` (#323), `target_dir/mise.toml` via `mise_toml_ensure` (#325), marker-guarded blocks in `target_dir/.devcontainer/scripts/post.sh` | Module sub-directories |
+| `plugin_post_copy_module` | `target_dir` (= `<root>/<module>` in monorepo mode, `<root>` in single mode), `module_name` | Files inside `target_dir`: `pyproject.toml`/`Cargo.toml`/`package.json`, lint config (`ruff.toml`, `biome.json`, etc.), `src/<module_name>/`, `tests/`, language-specific `.gitignore`, `CLAUDE.md` for the module | `target_dir/.devcontainer/`, `target_dir/.claude/`, `target_dir/.zed/`, `target_dir/docker/`, `target_dir/mise.toml`, root `docker-compose.yml` |
 
-Both functions MUST be **idempotent** — re-running `setup.sh --add-module` for an already-registered language is a no-op for shared assets and obeys `--overwrite` for module assets. Marker-guarded blocks (`# >>> <lang> toolchain >>>` … `<<< <lang> toolchain <<<`) in `Dockerfile.dev` and `post.sh` provide block-level idempotency analogous to the gitignore policy (#259).
+Both functions MUST be **idempotent** — re-running `setup.sh --add-module` for an already-registered language is a no-op for shared assets and obeys `--overwrite` for module assets. Marker-guarded blocks in `post.sh` (and latex's `Dockerfile.dev` block) provide block-level idempotency analogous to the gitignore policy (#259); `mise_toml_ensure` provides key-level idempotency for `mise.toml` (#325).
+
+Runtime entries per language (#325): python → `python = "3.12"`, `uv`, and the `[env]` block (`UV_PYTHON` from `{{ tools.python.path }}`, `PYTHONDONTWRITEBYTECODE`, `PYTHONUNBUFFERED`, `UV_COMPILE_BYTECODE`, `UV_LINK_MODE`); node → `node = "22"`, `pnpm` (Corepack no longer used); rust → `rust = { version = "stable", components = ["rustfmt", "clippy"] }`; go → `go`; deno → `deno`; latex → none. Exact uv/pnpm/go/deno pins are the current releases at implementation time. The rust and go `post.sh` blocks run `mise reshim` after `cargo install` / `go install`.
 
 ### Non-language plugin contract (`templates/{core,claude,codex,services/<svc>,github-actions/<wf>}/plugin.sh`)
 
-Unchanged in shape. These plugins implement only `plugin_post_copy(target_dir)` and operate on `target_dir = project root` in both single and monorepo modes. Since #323, `core` and the three service plugins also call `apply_zed_assets "$target_dir" "$PLUGIN_DIR"` once — a no-op unless `--zed` was selected and the flavor ships a `.zed/` directory. Service plugins remain mode-agnostic because their existing `{{PROJECT_NAME}}-<svc>` naming convention naturally produces monorepo-correct service names (e.g., `myapp-db` in single mode, `elsur-db` in monorepo mode for project `elsur`).
+Unchanged in shape. These plugins implement `plugin_post_copy(target_dir)` and operate on `target_dir = project root` in both single and monorepo modes. Since #325: `core` copies `mise.toml` and the `setup_mise.sh` / `setup_claude.sh` / `npm_global_cli.sh` helpers and places the `# mise Runtime Setup` and `# Claude Code Setup` blocks; `codex` has no devcontainer overlay and places `# Codex CLI Setup` before `# Claude Code Plugin Setup`; `postgresql` and `mysql` add a `plugin_dockerfile(target_dir)` that calls `dockerfile_add_os_packages`. Since #323, `core` and the three service plugins also call `apply_zed_assets "$target_dir" "$PLUGIN_DIR"` once — a no-op unless `--zed` was selected and the flavor ships a `.zed/` directory. Service plugins remain mode-agnostic because their existing `{{PROJECT_NAME}}-<svc>` naming convention naturally produces monorepo-correct service names (e.g., `myapp-db` in single mode, `elsur-db` in monorepo mode for project `elsur`).
 
 `templates/core/plugin.sh::plugin_post_copy` gains an internal monorepo-mode branch (#263) gated on `${MONOREPO_MODE}` that writes `modules.json` from the registered `MODULES` array and writes `<module>/CLAUDE.md` per module — internal logic, not a contract change.
 
@@ -764,10 +851,18 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 | `GitHubClientError::RateLimited` | API | GitHub rate limit |
 | `GitHubClientError::NotFound` | API | Issue / project not found (default link → fatal; label-routed → warning) |
 | `anyhow::Error` (boundary) | Anywhere | Wrapped at command boundary |
-| Plugin install failure | shell warning | `setup_plugins.sh` per-plugin; non-fatal |
-| Marketplace registration failure | shell warning, `return 0` | `setup_plugins.sh` ensure_claude_marketplace; non-fatal so `post.sh` continues |
-| Claude not yet authenticated (`~/.claude/.credentials.json` missing or empty) | shell info + guidance, `return 0` | `setup_plugins.sh` `is_claude_authenticated` gate (#273); skips marketplace/plugin steps entirely so `post.sh` proceeds to `setup_codex` on first run |
-| `claude plugins list` query failure | shell warning, `return 0` | `setup_plugins.sh` if-guarded command substitution (#273 review); symmetric with marketplace failure path so a degraded `claude` CLI cannot trip `set -e` in `post.sh` |
+| Plugin install failure | shell warning, continue | `setup_plugins.sh` per enabled id; non-fatal |
+| Marketplace registration failure / undeclared non-official marketplace | shell warning, skip that marketplace's ids | `setup_plugins.sh` (#325) |
+| Claude not yet authenticated (`~/.claude/.credentials.json` missing or empty) | shell info + guidance, `return 0` | `setup_plugins.sh` `is_claude_authenticated` gate (#273); `post.sh` continues |
+| `claude` / `jq` / settings file / enabled `enabledPlugins` missing, or settings JSON invalid | shell warning, `return 0` | `setup_plugins.sh` (#325, FR-8) |
+| `claude plugin list --json` failure | note, continue with an empty installed set | `setup_plugins.sh` (#325); install is idempotent, so retrying is safe |
+| `mise` missing or `mise install` failure on post-create | `[WARN]` + recovery command, `return 0` | `setup_mise` (#325) |
+| `npm` missing, non-writable global prefix, or `npm install -g` failure | `[WARN]` + recovery command, `return 0`; sudo never used | `install_npm_global_cli` via `setup_claude` / `setup_codex` (#325) |
+| `npm_global_cli.sh` missing | `[WARN]` + "run `setup.sh --upgrade`", `return 0` | `setup_claude` / `setup_codex` (#325) |
+| `mise_toml_ensure` invalid arguments or write failure | `print_error`, return 1 → caller `print_warning` | Scaffold continues; original `mise.toml` untouched (#325) |
+| Plugin OS block without a `SHELL` anchor | `print_warning`, return 0 | `dockerfile_add_os_packages` (#325); packages listed for manual addition |
+| Target `Dockerfile.dev` predates the mise runtime layer | `print_warning` once | `execute_plugin_dockerfiles` (#325); points at docs/maintenance.md |
+| mise download signature/checksum mismatch, gh keyring fingerprint mismatch, unsupported CPU architecture | image build fails | Core `Dockerfile.dev` (#325, NFR-4/NFR-5) |
 | `update_gitignore` write failure | shell error (propagates under `set -euo pipefail`) | `${target_dir}/.gitignore` not writable |
 | Devcontainer JSON comment normalization failure | shell error, non-zero helper return | `merge_devcontainer_json` receives malformed comments or JSON invalid after comment stripping |
 | Zed devcontainer overlay merge failure | shell warning, `apply_zed_assets` returns 0 (#323) | A flavor's `.zed/devcontainer.json` is unparseable; temp removed, the live `.devcontainer/devcontainer.json` is left unchanged |

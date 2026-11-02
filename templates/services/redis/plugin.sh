@@ -5,7 +5,7 @@
 # =============================================================================
 # This plugin provides Redis cache/broker service including:
 # - Redis 7 service via docker-compose
-# - redis-cli client in devcontainer (installed via post.sh)
+# - redis-cli client installed as an OS package in Dockerfile.dev (plugin_dockerfile)
 # - Health check configuration
 # - Data persistence with named volume
 # - REDIS_URL environment variable
@@ -46,6 +46,15 @@ plugin_copy() {
         copy_with_confirm "$source_compose" "$target_compose"
         print_success "Redis docker-compose overlay copied"
     fi
+}
+
+# Install the redis-cli client as an OS package. Runs in the plugin_dockerfile
+# pass, before plugin_post_copy; the marker-guarded block lands above the
+# Dockerfile.dev SHELL line (OS packages only, root only at image build, #325).
+plugin_dockerfile() {
+    local target_dir="$1"
+
+    dockerfile_add_os_packages "${target_dir}/docker/Dockerfile.dev" redis redis-tools
 }
 
 # Post-copy processing - merge docker-compose, devcontainer, and configure environment
@@ -200,15 +209,13 @@ plugin_post_copy() {
 # -----------------------------------------------------------------------------
 # Redis Client Setup
 # -----------------------------------------------------------------------------
-if ! command -v redis-cli &> /dev/null; then
-    echo "Installing redis-tools..."
-    sudo apt-get update && sudo apt-get install -y --no-install-recommends redis-tools 2>/dev/null || true
-fi
 if command -v redis-cli &> /dev/null; then
     echo "Redis client is available."
     echo "  - redis-cli version: $(redis-cli --version)"
     echo "  - Connection: redis-cli -h {{PROJECT_NAME}}-redis"
     echo "  - REDIS_URL: redis://{{PROJECT_NAME}}-redis:6379/0"
+else
+    echo "  [WARN] redis-cli not found - rebuild the container to install redis-tools"
 fi
 POSTEOF
 

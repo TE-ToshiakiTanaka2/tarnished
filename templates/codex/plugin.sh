@@ -7,8 +7,8 @@
 # - AGENTS.md template for primary or review agent role
 # - Project-level Codex configuration (.codex/config.toml)
 # - Codex repo-local workflow skills (.agents/skills)
-# - Node.js devcontainer feature (for npm-based Codex CLI install)
-# - Codex CLI installation script for post-creation setup
+# - Codex CLI installation script for post-creation setup (npm install -g
+#   under the mise-managed Node from core's mise.toml; no devcontainer feature)
 # - Claude Code integration settings for cross-agent handoff
 #
 # =============================================================================
@@ -58,26 +58,9 @@ plugin_copy() {
     print_success "Codex CLI template files copied"
 }
 
-# Post-copy processing - merge devcontainer.json, Claude settings, and setup scripts
+# Post-copy processing - merge Claude settings and set up the CLI install script
 plugin_post_copy() {
     local target_dir="$1"
-
-    # -------------------------------------------------------------------------
-    # Devcontainer Features Integration (Node.js for npm)
-    # -------------------------------------------------------------------------
-
-    local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
-    local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
-
-    if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
-        print_info "Merging Codex devcontainer features..."
-        local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
-
-        merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
-        mv "$temp_file" "$target_devcontainer"
-
-        print_success "Codex devcontainer features merged"
-    fi
 
     # -------------------------------------------------------------------------
     # Claude Code Settings Integration
@@ -117,13 +100,12 @@ plugin_post_copy() {
     local post_sh="${target_dir}/.devcontainer/scripts/post.sh"
     local codex_marker="# Codex CLI Setup"
 
-    if [[ -f "$post_sh" ]] && ! grep -q "^${codex_marker}$" "$post_sh"; then
+    # Inserted above the Claude Code plugin block when it already exists, so the
+    # order stays mise -> Claude Code -> Codex CLI -> plugins (#325): plugins
+    # need `claude`, and a Node.js bump removes both npm global CLIs.
+    if [[ -f "$post_sh" ]] && ! grep -qxF "$codex_marker" "$post_sh"; then
         print_info "Integrating Codex CLI setup into post.sh..."
-        cat >> "$post_sh" << 'EOF'
-
-# -----------------------------------------------------------------------------
-# Codex CLI Setup
-# -----------------------------------------------------------------------------
+        post_sh_add_block "$post_sh" "$codex_marker" "# Claude Code Plugin Setup" << 'EOF'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/setup_codex.sh" ]]; then
     source "${SCRIPT_DIR}/setup_codex.sh"

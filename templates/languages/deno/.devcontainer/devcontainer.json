@@ -1,9 +1,4 @@
 {
-  "features": {
-    "ghcr.io/devcontainers-community/features/deno:1": {
-      "version": "latest"
-    }
-  },
   "customizations": {
     "vscode": {
       "settings": {

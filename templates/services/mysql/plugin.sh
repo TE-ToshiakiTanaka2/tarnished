@@ -5,7 +5,7 @@
 # =============================================================================
 # This plugin provides MySQL database service including:
 # - MySQL 8.0 service via docker-compose
-# - mysql client in devcontainer
+# - mysql client (default-mysql-client) installed as an OS package in Dockerfile.dev
 # - Health check configuration
 # - Data persistence with named volume
 # - DATABASE_URL environment variable
@@ -46,6 +46,15 @@ plugin_copy() {
         copy_with_confirm "$source_compose" "$target_compose"
         print_success "MySQL docker-compose overlay copied"
     fi
+}
+
+# Install the mysql client as an OS package. Runs in the plugin_dockerfile pass, before
+# plugin_post_copy; the marker-guarded block lands above the Dockerfile.dev
+# SHELL line (OS packages only; runtimes belong in mise.toml, #325).
+plugin_dockerfile() {
+    local target_dir="$1"
+
+    dockerfile_add_os_packages "${target_dir}/docker/Dockerfile.dev" mysql default-mysql-client
 }
 
 # Post-copy processing - merge docker-compose, devcontainer, and configure environment
@@ -106,18 +115,18 @@ plugin_post_copy() {
     fi
 
     # -------------------------------------------------------------------------
-    # Merge devcontainer.json (add mysql client feature and VS Code extension)
+    # Merge devcontainer.json (VS Code extension)
     # -------------------------------------------------------------------------
     local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
 
     if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
-        print_info "Merging MySQL devcontainer features..."
+        print_info "Merging MySQL devcontainer customizations..."
         local temp_file="${target_devcontainer}.tmp"
 
         merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
         mv "$temp_file" "$target_devcontainer"
 
-        print_success "MySQL devcontainer features merged"
+        print_success "MySQL devcontainer customizations merged"
     fi
 
     # Zed editor assets (no-op unless --zed was selected)

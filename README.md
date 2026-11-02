@@ -13,6 +13,8 @@ curl -fsSL https://raw.githubusercontent.com/TE-ToshiakiTanaka2/tarnished/develo
 
 Follow the prompts, then open the folder in VS Code and choose **Reopen in Container**. Pass `--zed` (or answer the prompt) to also open the project in [Zed](https://zed.dev)'s dev container mode. See the [setup reference](docs/setup.md) for AI profiles, Codex workflow invocation, monorepos and Zed editor support.
 
+The generated devcontainer uses no devcontainer features. Language runtimes (Node.js, Python, Rust, Go, Deno and their package managers) are declared in the project's `mise.toml` and installed by [mise](https://mise.jdx.dev); to change a version, edit `mise.toml` and run `mise install` or rebuild the container. OS packages live in `docker/Dockerfile.dev`, and Claude Code and Codex CLI are installed from `.devcontainer/scripts/` when the container is created. Details are in [Runtime versions](docs/setup.md#runtime-versions-misetoml). Projects scaffolded before this change keep working; see [migrating a feature-based project](docs/maintenance.md#migrating-a-feature-based-project) to adopt the new layout.
+
 ## Update an existing project
 
 Run these commands from your project directory. Preview an AI update, then apply it:

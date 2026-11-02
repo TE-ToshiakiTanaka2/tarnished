@@ -75,69 +75,112 @@ sequenceDiagram
     CLI-->>CI: new tag
 ```
 
-## devcontainer plugin install (#249, #255, #273)
+## Container build and post-create (#325)
 
-`setup_plugins.sh` is sourced by `post.sh` (which runs under `set -e`) and is contractually required to `return 0`. The flow has three early-exit gates before any `claude plugins …` invocation: (a) the `claude` CLI must be present, (b) the user must be authenticated (`~/.claude/.credentials.json` exists and is non-empty — added in #273), (c) the marketplace must register successfully. Only after all three pass does the per-plugin install loop run, and even then each install failure is isolated by `try_install_plugin` so siblings continue.
+The generated environment installs in three layers: OS packages at image build
+(root), runtimes from `mise.toml` at image build (`vscode`), and AI CLIs plus
+Claude plugins in `post.sh`. No devcontainer `features` are involved, so a
+plain `docker build` of `docker/Dockerfile.dev` yields the same runtimes as a
+devcontainer build. `post.sh` runs under `set -e`; every helper returns 0.
 
 ```mermaid
 sequenceDiagram
-    participant Container as devcontainer onCreate
+    participant Builder as docker build / compose / devcontainer
+    participant Root as Dockerfile.dev (root section)
+    participant Mise as mise
+    participant Post as post.sh (set -e, non-login bash)
+    participant SM as setup_mise.sh
+    participant SC as setup_claude.sh
+    participant NPM as npm_global_cli.sh
+    participant SX as setup_codex.sh
+    participant SP as setup_plugins.sh
+    participant Claude as claude CLI
+
+    Builder->>Root: apt (git, build-essential, ...), gh (signed-by repo)
+    Root->>Root: download mise @ MISE_VERSION, minisign + sha256 verify
+    Root->>Root: plugin OS blocks above SHELL (TeX Live, psql, mysql client)
+    Builder->>Mise: USER vscode, PATH += shims, MISE_TRUSTED_CONFIG_PATHS=/workspace
+    Builder->>Mise: COPY mise.toml, mise install (optional github_token secret)
+    Mise-->>Builder: node, python, uv, pnpm, rust, go, deno per mise.toml
+
+    Builder->>Post: postCreateCommand: bash .devcontainer/scripts/post.sh
+    Note over Post: git / SSH sections, Tarnished Asset Refresh
+    Post->>SM: source then setup_mise
+    alt mise missing (pre-#325 image)
+        SM-->>Post: [WARN] rebuild / docs/maintenance.md, return 0
+    else mise present
+        SM->>Mise: mise install (converge edits made after the build)
+        SM-->>Post: ok or [WARN] + manual command, return 0
+    end
+    Post->>SC: source then setup_claude
+    SC->>NPM: install_npm_global_cli "Claude Code" pkg claude
+    alt claude --version succeeds
+        NPM-->>SC: already installed
+    else missing or stale shim after a Node bump
+        NPM->>NPM: npm present? prefix writable? (never sudo)
+        NPM->>NPM: npm install -g (mise reshims via npm wrapper)
+        NPM-->>SC: installed, or [WARN] + manual command
+    end
+    SC-->>Post: mkdir -p ~/.claude, return 0
+    Note over Post: language / service post-create blocks
+    Post->>SX: source then setup_codex (only with --codex)
+    SX->>NPM: install_npm_global_cli "Codex CLI" pkg codex
+    SX-->>Post: return 0
+    Post->>SP: source then setup_plugins
+    SP-->>Post: see "Claude plugin fallback" below, return 0
+    Post-->>Builder: post-create complete
+```
+
+Order is load-bearing: a Node change in `mise.toml` installs a new Node in
+`setup_mise`, which drops npm globals, so `setup_claude` and `setup_codex`
+must run after it and before `setup_plugins` needs `claude`.
+
+## Claude plugin fallback (`setup_plugins`, #249, #255, #273, #325)
+
+`.claude/settings.json` declares the plugin set (`extraKnownMarketplaces`,
+`enabledPlugins`). Claude Code does not download external plugins on a new
+machine by itself, so the fallback installs enabled ids that are missing.
+
+```mermaid
+sequenceDiagram
     participant Post as post.sh (set -e)
-    participant Setup as setup_plugins.sh
+    participant SP as setup_plugins.sh
+    participant Settings as .claude/settings.json
     participant Creds as ~/.claude/.credentials.json
     participant Claude as claude CLI
 
-    Container->>Post: source post.sh
-    Post->>Setup: source setup_plugins.sh; setup_plugins
-    Setup->>Setup: command -v claude
-    alt claude missing
-        Setup-->>Post: warning + return 0
-    else claude present
-        Setup->>Setup: is_claude_authenticated()
-        Setup->>Creds: [[ -s ~/.claude/.credentials.json ]]
-        alt credentials missing or empty (first run, #273)
-            Creds-->>Setup: false
-            Setup-->>Post: guidance ("run claude to log in,<br/>then re-run setup_plugins.sh") + return 0
-            Note over Post: set -e respected; post.sh proceeds to setup_codex
-        else credentials present
-            Creds-->>Setup: true
-            Setup->>Setup: ensure_claude_marketplace()
-            Setup->>Claude: claude plugins marketplace add anthropics/claude-plugins-official
-            alt registration ok
-                Claude-->>Setup: ok
-            else registration fails
-                Claude-->>Setup: error
-                Setup-->>Post: warning + return 0
-                Note over Post: set -e respected; post.sh continues
-            end
-
-            Setup->>Claude: claude plugins list (if-guarded, #273 review)
-            alt query ok
-                Claude-->>Setup: plugins_output
-            else query fails
-                Claude-->>Setup: error
-                Setup-->>Post: warning + return 0
-                Note over Post: set -e respected; post.sh continues
-            end
-
-            loop each plugin in [context7, serena, optionally playwright]
-                Setup->>Setup: try_install_plugin(name)
-                Setup->>Claude: claude plugins install <name>@claude-plugins-official -s project
-                alt install ok
-                    Claude-->>Setup: installed
-                else install fails
-                    Claude-->>Setup: error
-                    Note over Setup: log warning, continue with next plugin
-                end
-            end
-
-            Setup-->>Post: return 0
+    Post->>SP: setup_plugins
+    SP->>SP: command -v claude, jq
+    alt missing
+        SP-->>Post: warning, return 0
+    end
+    SP->>Settings: jq enabledPlugins entries == true
+    alt file missing, invalid JSON or no enabled ids
+        SP-->>Post: warning, return 0
+    end
+    SP->>Creds: [[ -s ... ]] (is_claude_authenticated, #273)
+    alt not authenticated
+        SP-->>Post: guidance (log in, re-run), return 0
+    end
+    SP->>Claude: claude plugin list --json
+    Claude-->>SP: installed ids (failure: treat as none)
+    loop each enabled id not installed
+        SP->>SP: validate name@marketplace
+        opt marketplace not yet registered (once per marketplace)
+            SP->>Settings: extraKnownMarketplaces[marketplace].source
+            SP->>Claude: claude plugin marketplace add repo-or-url
+        end
+        SP->>Claude: claude plugin install id --scope project
+        alt failure
+            Claude-->>SP: exit 1
+            Note over SP: warning, continue with next id
         end
     end
-    Post-->>Container: post-create complete
+    SP-->>Post: return 0
 ```
 
-The `is_claude_authenticated` gate (#273) is identical in the workspace `setup_plugins.sh` and the `templates/claude/.devcontainer/scripts/setup_plugins.sh` template variant — those two files are now structurally aligned (the template variant also adopted `ensure_claude_marketplace` + `try_install_plugin` from the workspace variant in #273), mirroring the workspace-Codex dogfooding convention from #261.
+The workspace and template copies of `setup_plugins.sh` are byte-identical
+(`verify-mirrors.sh`).
 
 ## Claude Code skill workflow (`/issue` → `/design` → `/implement` → `/review` → `/pr`)
 
@@ -207,17 +250,17 @@ sequenceDiagram
 
     Design->>Migration: shared/ missing AND prior #{issue}/ exist
     Migration->>Issue: list directories (#NNN and NNN forms)
-    Migration->>Issue: read each design.md (chronological; api-spec/class/sequence opportunistically)
+    Migration->>Issue: read each design.md (chronological, api-spec/class/sequence opportunistically)
     Issue-->>Migration: cumulative content
     Migration->>Migration: synthesize architecture, data-model, api-spec, class, sequence
     Migration->>Shared: write 5 shared files
     Note over Migration,Issue: existing #{old}/ files are PRESERVED unchanged (FR-5)
-    Migration-->>Design: shared/ seeded; resume normal flow
+    Migration-->>Design: shared/ seeded, resume normal flow
 ```
 
 ## Codex CLI: install in devcontainer + `/review` execution (#261)
 
-Two phases: (a) `setup_codex` runs once during devcontainer post-create to make `codex` available on `$PATH`; (b) every subsequent `/review` invocation streams a prompt to `codex exec` and captures the result. Phase (a) is system-wide for any project that ships `setup_codex.sh` (workspace + downstream Codex-flavor projects); phase (b) is invoked per `/review` call. The decision tree inside `setup_codex` itself lives in `docs/design/#261/flowchart.md`.
+Two phases: (a) `setup_codex` runs during devcontainer post-create to make `codex` available on `$PATH`; (b) every subsequent `/review` invocation streams a prompt to `codex exec` and captures the result. Phase (a) is system-wide for any project that ships `setup_codex.sh` (workspace + downstream Codex-flavor projects); since #325 it delegates to the shared `npm_global_cli.sh::install_npm_global_cli` (detailed in "Container build and post-create" above) and runs after `setup_claude`, before `setup_plugins`. The sudo decision tree of `docs/design/#261/flowchart.md` no longer applies: the helper never uses sudo.
 
 ```mermaid
 sequenceDiagram
@@ -228,27 +271,25 @@ sequenceDiagram
     participant Codex as codex CLI
 
     Container->>Post: source post.sh
-    Note over Post: ... earlier blocks (git/SSH/Rust/codespell/setup_plugins) ...
-    Post->>SetupCodex: source setup_codex.sh; setup_codex
-    alt npm missing
-        SetupCodex-->>Post: [WARN] + return 0
-    else codex already installed
+    Note over Post: ... mise, Claude Code, language blocks ...
+    Post->>SetupCodex: source setup_codex.sh then setup_codex
+    alt codex --version succeeds
         SetupCodex->>Codex: codex --version
         Codex-->>SetupCodex: <version>
         SetupCodex-->>Post: log + return 0
+    else npm missing or global prefix not writable
+        SetupCodex-->>Post: [WARN] + recovery hint, return 0 (no sudo)
     else needs install
-        SetupCodex->>Npm: npm root -g
-        Npm-->>SetupCodex: <prefix or empty>
-        SetupCodex->>SetupCodex: decide sudo (see flowchart.md)
-        SetupCodex->>Npm: [sudo -E] npm install -g @openai/codex
+        SetupCodex->>Npm: npm install -g @openai/codex (mise per-version prefix)
         alt install ok
-            Npm-->>SetupCodex: installed
+            Npm-->>SetupCodex: installed (npm wrapper reshims)
         else install fails
             Npm-->>SetupCodex: error
             Note over SetupCodex: [WARN] + manual recovery hint
         end
         SetupCodex-->>Post: return 0
     end
+    Note over Post: ... then setup_plugins ...
     Post-->>Container: post-create complete
 
     actor Dev
@@ -267,7 +308,7 @@ sequenceDiagram
         Codex->>Agents: read review-agent role
         Codex-->>Claude: structured review (Critical/Warnings/Suggestions/Positive)
         Claude->>Claude: save to docs/review/#{issue}/review.md
-        Claude->>Claude: apply fixes; commit
+        Claude->>Claude: apply fixes, commit
         Claude-->>Dev: review summary + applied fixes
     end
 ```
@@ -346,7 +387,7 @@ sequenceDiagram
     Setup->>Setup: execute_plugin_copies(root)
     Note over Setup,Root: copies .devcontainer/, .claude/, docker/, docker-compose.yml, etc.
     Setup->>Setup: execute_plugin_dockerfiles(root)
-    Note over Setup,Root: appends marker-guarded python + node toolchain blocks (FR-5)
+    Note over Setup,Root: OS-package blocks only (latex, postgresql, mysql) above the SHELL anchor (#325)
 
     Setup->>Setup: execute_plugin_post_copies (monorepo mode)
     loop for each loaded plugin
@@ -354,6 +395,7 @@ sequenceDiagram
             Setup->>Lang: plugin_post_copy_shared(root)
             Lang->>Root: patch .devcontainer/devcontainer.json (idempotent merge)
             Lang->>Root: patch .claude/settings.json (idempotent merge)
+            Lang->>Root: mise_toml_ensure → root mise.toml (union of module runtimes, #325)
             Lang->>Root: append marker-guarded post.sh language block
             loop for each module with language == python (e.g. jing)
                 Setup->>Lang: plugin_post_copy_module(root/jing, "jing")
@@ -361,7 +403,7 @@ sequenceDiagram
             end
         else plugin in templates/services/* (e.g. postgres) or core/claude/codex/github-actions
             Setup->>Svc: plugin_post_copy(root)
-            Svc->>Root: merge docker-compose.yml service "<project>-db" (project-name prefix; existing convention)
+            Svc->>Root: merge docker-compose.yml service "<project>-db" (project-name prefix, existing convention)
             Svc->>Root: append marker-guarded post.sh service block
         end
     end
@@ -400,7 +442,7 @@ sequenceDiagram
     else Unknown, edited, deleted or unsafe
         Setup-->>Developer: Preserve and report recovery path
     end
-    Note over Setup,Project: No real-target post-copy; dry-run writes nothing
+    Note over Setup,Project: No real-target post-copy, dry-run writes nothing
 ```
 
 ## `setup.sh` remote bootstrap (`curl | bash`) (#276)
@@ -411,10 +453,10 @@ The primary distribution path. The bootstrap block at `setup.sh:29-69` detects p
 sequenceDiagram
     actor User
     participant Curl as curl
-    participant BootBash as bash (bootstrap; reads script from curl's stdout)
+    participant BootBash as bash (bootstrap, reads script from curl's stdout)
     participant Git as git
     participant Tmp as $BOOTSTRAP_TEMP_DIR
-    participant NewBash as bash (exec'd; reads script from disk)
+    participant NewBash as bash (exec'd, reads script from disk)
 
     User->>Curl: curl -fsSL .../setup.sh | bash
     Curl->>BootBash: stream setup.sh bytes
@@ -423,10 +465,10 @@ sequenceDiagram
     Git->>Tmp: populated
     Tmp-->>BootBash: ok
 
-    Note over BootBash,NewBash: exec replaces the process image; pre-#276 the<br/>outer curl pipe was inherited and curl hit EPIPE,<br/>printing "curl: (23) Failure writing output to destination"<br/>at a non-deterministic point during the rest of the setup.
+    Note over BootBash,NewBash: exec replaces the process image, pre-#276 the<br/>outer curl pipe was inherited and curl hit EPIPE,<br/>printing "curl: (23) Failure writing output to destination"<br/>at a non-deterministic point during the rest of the setup.
 
     BootBash->>NewBash: exec bash "$BOOTSTRAP_TEMP_DIR/setup.sh" "$@" < /dev/null
-    Note over Curl,NewBash: stdin redirected to /dev/null; the curl pipe is<br/>NOT inherited; curl exits cleanly with no terminal noise.
+    Note over Curl,NewBash: stdin redirected to /dev/null, the curl pipe is<br/>NOT inherited, curl exits cleanly with no terminal noise.
 
     NewBash->>Tmp: read setup.sh from disk
     NewBash->>NewBash: parse_arguments + run modes (single / monorepo / upgrade / ...)
@@ -476,7 +518,7 @@ sequenceDiagram
             alt projects fetched and length > 0
                 Setup->>Setup: use_gh_detection=true
                 Setup->>Setup: select project (auto if 1, list if many)
-                Setup->>GhRun: get_project_fields_detailed (GraphQL; fallback to basic on empty)
+                Setup->>GhRun: get_project_fields_detailed (GraphQL, fallback to basic on empty)
                 GhRun->>Gh: gh api graphql -f ...
                 Gh-->>GhRun: detailed JSON or empty
                 GhRun-->>Setup: stdout, GH_LAST_ERROR_FILE
@@ -520,7 +562,7 @@ sequenceDiagram
         end
     end
     Note over Refresh,Project: No destination directory mirror deletion
-    Note over Refresh,State: Same SHA still reconciles; dry-run writes nothing
+    Note over Refresh,State: Same SHA still reconciles, dry-run writes nothing
     Refresh-->>Caller: Nonfatal summary
 ```
 
@@ -552,8 +594,8 @@ sequenceDiagram
 
     Setup->>Setup: load python plugin (+ any newly-selected service plugin)
     Setup->>Setup: execute_plugin_dockerfiles(root)
-    Note over Setup,Root: marker-guard skips re-append if python toolchain block already present
-    Setup->>Lang: plugin_post_copy_shared(root) [idempotent: merge / marker-guards skip on re-run]
+    Note over Setup,Root: python has no Dockerfile hook since #325, warns if the root Dockerfile predates the mise layer
+    Setup->>Lang: plugin_post_copy_shared(root) [idempotent: merge / marker-guards / mise_toml_ensure skip existing keys]
 
     Setup->>SubDir: mkdir -p root/anisette
     Setup->>Lang: plugin_post_copy_module(root/anisette, "anisette")
@@ -561,11 +603,11 @@ sequenceDiagram
 
     Setup->>Core: plugin_post_copy(root) [monorepo branch]
     Core->>Common: add_module_entry(cwd, "anisette", "python", services=[])
-    Common->>Mods: append entry (atomic jq | mv); on duplicate → exit 2 (caller handled above)
+    Common->>Mods: append entry (atomic jq | mv), on duplicate → exit 2 (caller handled above)
     Core->>SubDir: write root/anisette/CLAUDE.md from template (skip if exists, unless --overwrite)
 
     Setup->>Common: update_gitignore(root) [idempotent]
-    Setup-->>User: completion: "Module 'anisette' added"
+    Setup-->>User: completion: "Module 'anisette' added" + "run mise install (or rebuild)"
 ```
 
 ## `setup.sh --zed` — optional Zed editor assets (#323)
@@ -592,7 +634,7 @@ sequenceDiagram
 
     User->>Setup: ./setup.sh --lang rust --postgresql --zed -y
     Setup->>Setup: parse_arguments → ZED_ENABLED=true
-    Note over Setup: interactive runs instead ask<br/>"Enable Zed editor support? (y/n) [n]";<br/>add-module mode warns and forces false
+    Note over Setup: interactive runs instead ask<br/>"Enable Zed editor support? (y/n) [n]",<br/>add-module mode warns and forces false
     Setup->>Setup: Setup Configuration prints "Zed: true"
 
     Setup->>Core: plugin_copy(root)
@@ -601,12 +643,12 @@ sequenceDiagram
     Setup->>Core: plugin_post_copy(root)
     Core->>Common: apply_zed_assets(root, templates/core)
     Common->>DC: merge_devcontainer_json(DC, core/.zed/devcontainer.json)
-    Note over Common,DC: customizations.zed.extensions = ["dockerfile"];<br/>customizations.vscode untouched
+    Note over Common,DC: customizations.zed.extensions = ["dockerfile"],<br/>customizations.vscode untouched
     Common->>Zed: .zed/ absent → mkdir + copy_with_confirm(core/.zed/settings.json)
 
     Setup->>Lang: plugin_post_copy_shared(root)
     Lang->>DC: merge_devcontainer_json(DC, rust/.devcontainer/devcontainer.json)
-    Note over Lang,DC: vscode extensions/settings + features;<br/>base customizations.zed carried through
+    Note over Lang,DC: vscode extensions/settings (no features since #325),<br/>base customizations.zed carried through
     Lang->>Common: apply_zed_assets(root, templates/languages/rust)
     Common->>DC: merge → zed.extensions = ["dockerfile","toml"] (unique union)
     Common->>Zed: merge_zed_settings(Zed, rust/.zed/settings.json)
@@ -627,9 +669,11 @@ emits `print_warning` and leaves the live file untouched, then returns 0.
 
 ## Devcontainer JSON merge with comment normalization
 
-Language and service plugins call `merge_devcontainer_json` to merge
-devcontainer features, VS Code extensions, VS Code settings, and — when
-either side declares it (#323) — the `customizations.zed` subtree. The helper
+Language and service plugins call `merge_devcontainer_json` to merge VS Code
+extensions, VS Code settings, and — when either side declares it (#323) — the
+`customizations.zed` subtree. Since #325 no shipped overlay carries
+`features`; other top-level keys (including a developer's own `features`) are
+deep-merged and emitted only when present. The helper
 accepts strict JSON or comment-bearing devcontainer JSON, normalizes comments
 away in private temp files, and then runs the structural `jq` merge. The output
 is strict JSON.

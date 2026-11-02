@@ -1,0 +1,149 @@
+name: Scaffold Build
+
+# Scaffolds core alone plus every language and service flavor with setup.sh,
+# builds the generated docker/Dockerfile.dev with plain `docker build` (no
+# devcontainer tooling, so devcontainer features cannot hide a missing
+# install) and smoke-checks the runtime versions inside the image (#325).
+# latex is excluded: TeX Live makes the image too large for this matrix.
+# amd64 only; arm64 is verified by hand (QEMU or an arm64 host).
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - "templates/**"
+      - "setup.sh"
+      - "scripts/lib/**"
+      - "scripts/ci/**"
+      - "docker/**"
+      - "mise.toml"
+      - ".github/workflows/scaffold-build.yml"
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.flavor }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: core
+            args: ""
+            tools: "mise git gh node npm"
+          - flavor: python
+            args: "--lang python"
+            tools: "mise git gh node npm python uv"
+          - flavor: node
+            args: "--lang node"
+            tools: "mise git gh node npm pnpm"
+          - flavor: rust
+            args: "--lang rust"
+            tools: "mise git gh node npm rust cargo cargo-fmt cargo-clippy"
+          - flavor: go
+            args: "--lang go"
+            tools: "mise git gh node npm go"
+          - flavor: deno
+            args: "--lang deno"
+            tools: "mise git gh node npm deno"
+          - flavor: postgresql
+            args: "--postgresql"
+            tools: "mise git gh node npm psql"
+          - flavor: mysql
+            args: "--mysql"
+            tools: "mise git gh node npm mysql"
+          - flavor: redis
+            args: "--redis"
+            tools: "mise git gh node npm redis-cli"
+          - flavor: celery
+            # --celery alone does not add Python outside the interactive prompt.
+            args: "--lang python --celery"
+            tools: "mise git gh node npm python uv redis-cli"
+          - flavor: workspace
+            args: ""
+            tools: "mise git gh node npm rust cargo uv"
+    env:
+      FLAVOR: ${{ matrix.flavor }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Scaffold ${{ matrix.flavor }}
+        if: matrix.flavor != 'workspace'
+        env:
+          SETUP_ARGS: ${{ matrix.args }}
+        run: |
+          set -euo pipefail
+          project_dir="${RUNNER_TEMP}/ci-${FLAVOR}"
+          mkdir "$project_dir"
+          cd "$project_dir"
+          # No TTY in Actions: every prompt takes its non-interactive default
+          # and the GitHub repository step is skipped.
+          # shellcheck disable=SC2086
+          bash "${GITHUB_WORKSPACE}/setup.sh" ${SETUP_ARGS} -y "ci-${FLAVOR}"
+          echo "PROJECT_DIR=${project_dir}" >> "$GITHUB_ENV"
+
+      - name: Use the repository root as the project (workspace)
+        if: matrix.flavor == 'workspace'
+        run: echo "PROJECT_DIR=${GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+
+      - name: Static assertions
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          jq -e 'has("features") | not' .devcontainer/devcontainer.json
+          if grep -q 'ln -sf /bin/bash /bin/sh' docker/Dockerfile.dev; then
+            echo "Dockerfile.dev must not relink /bin/sh to bash" >&2
+            exit 1
+          fi
+          if grep -qw latest docker/Dockerfile.dev; then
+            echo "Dockerfile.dev must not use a floating 'latest' version" >&2
+            exit 1
+          fi
+
+      - name: Build docker/Dockerfile.dev
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ env.PROJECT_DIR }}
+          file: ${{ env.PROJECT_DIR }}/docker/Dockerfile.dev
+          load: true
+          tags: tarnished-ci:${{ matrix.flavor }}
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
+          cache-from: type=gha,scope=${{ matrix.flavor }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.flavor }}
+
+      - name: Smoke-check runtime versions
+        env:
+          TOOLS: ${{ matrix.tools }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}/scripts/ci:/ci:ro" \
+            -w /workspace \
+            "tarnished-ci:${FLAVOR}" \
+            bash /ci/smoke-runtimes.sh ${TOOLS}
+
+      - name: Post-create (claude --version)
+        if: matrix.flavor == 'core'
+        run: |
+          set -euo pipefail
+          # The container user is not the runner user; let it write the mount.
+          chmod -R a+rwX "$PROJECT_DIR"
+          docker run --rm -e CI=1 \
+            -v "${PROJECT_DIR}:/workspace" \
+            -w /workspace \
+            "tarnished-ci:${FLAVOR}" \
+            bash -c 'bash .devcontainer/scripts/post.sh && claude --version'

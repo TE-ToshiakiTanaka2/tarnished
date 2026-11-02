@@ -357,3 +357,32 @@ EOF
     assert_failure
     [[ ! -e "$SCRATCH/nonexistent" ]]
 }
+
+@test "#325 bootstrap adopts the exact mise/Claude/npm helpers and never tracks mise.toml" {
+    make_single_mode_target
+    local helper
+    for helper in setup_mise.sh setup_claude.sh npm_global_cli.sh; do
+        cp "$SCRIPT_DIR/templates/core/.devcontainer/scripts/$helper" "$SCRATCH/.devcontainer/scripts/$helper"
+    done
+    printf '[tools]\nnode = "22"\n' > "$SCRATCH/mise.toml"
+    cd "$SCRATCH"
+    run bash "$SETUP_SH" --create-manifest -y
+    assert_success
+    run jq -e '(.files | keys) as $k
+        | ($k | index(".devcontainer/scripts/setup_mise.sh")) != null
+        and ($k | index(".devcontainer/scripts/setup_claude.sh")) != null
+        and ($k | index(".devcontainer/scripts/npm_global_cli.sh")) != null
+        and ($k | index("mise.toml")) == null' .tarnished-manifest.json
+    assert_success
+}
+
+@test "#325 bootstrap does not adopt an edited helper" {
+    make_single_mode_target
+    cp "$SCRIPT_DIR/templates/core/.devcontainer/scripts/setup_mise.sh" "$SCRATCH/.devcontainer/scripts/setup_mise.sh"
+    printf '\n# developer change\n' >> "$SCRATCH/.devcontainer/scripts/setup_mise.sh"
+    cd "$SCRATCH"
+    run bash "$SETUP_SH" --create-manifest -y
+    assert_success
+    run jq -e '.files | has(".devcontainer/scripts/setup_mise.sh") | not' .tarnished-manifest.json
+    assert_success
+}

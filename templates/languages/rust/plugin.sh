@@ -4,7 +4,7 @@
 # This file is meant to be sourced by setup.sh, not executed directly.
 # =============================================================================
 # This plugin provides Rust development environment features including:
-# - Rust stable (latest) devcontainer feature
+# - Rust stable (rustfmt, clippy), declared in mise.toml (no devcontainer feature)
 # - Cargo package manager with cargo-watch and cargo-edit
 # - VS Code extensions for Rust development
 # - rustfmt formatter configuration
@@ -80,18 +80,24 @@ plugin_copy() {
 plugin_post_copy_shared() {
     local target_dir="$1"
 
-    # Merge devcontainer.json features and extensions
+    # Runtime versions live in mise.toml (#325). Existing entries are never
+    # changed. Runs before any early return below so re-runs and --add-module
+    # stay idempotent.
+    mise_toml_ensure "${target_dir}/mise.toml" tools rust '{ version = "stable", components = ["rustfmt", "clippy"] }' \
+        || print_warning "Could not add tools.rust to mise.toml"
+
+    # Merge devcontainer.json customizations (extensions and settings)
     local target_devcontainer="${target_dir}/.devcontainer/devcontainer.json"
     local plugin_devcontainer="${PLUGIN_DIR}/.devcontainer/devcontainer.json"
 
     if [[ -f "$plugin_devcontainer" ]] && [[ -f "$target_devcontainer" ]]; then
-        print_info "Merging Rust devcontainer features..."
+        print_info "Merging Rust devcontainer customizations..."
         local temp_file="${target_dir}/.devcontainer/devcontainer.json.tmp"
 
         merge_devcontainer_json "$target_devcontainer" "$plugin_devcontainer" "$temp_file"
         mv "$temp_file" "$target_devcontainer"
 
-        print_success "Rust devcontainer features merged"
+        print_success "Rust devcontainer customizations merged"
     fi
 
     # Zed editor assets (no-op unless --zed was selected). Placed before the
@@ -160,6 +166,9 @@ if command -v cargo &> /dev/null; then
         cargo install --locked cargo-edit
     fi
 
+    # Give freshly installed binaries a mise shim
+    command -v mise &> /dev/null && mise reshim || true
+
     echo "Rust development tools installed."
 fi
 # <<< rust (cargo) post-create <<<
@@ -185,6 +194,9 @@ if command -v cargo &> /dev/null; then
         echo "  - Installing cargo-edit..."
         cargo install --locked cargo-edit
     fi
+
+    # Give freshly installed binaries a mise shim
+    command -v mise &> /dev/null && mise reshim || true
 
     echo "Rust development tools installed."
 fi

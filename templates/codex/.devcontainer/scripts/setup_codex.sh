@@ -2,36 +2,32 @@
 # =============================================================================
 # Codex CLI Setup Script
 # =============================================================================
-# This script installs and configures the OpenAI Codex CLI.
-# It is sourced by post.sh during devcontainer setup.
+# This script installs and configures the OpenAI Codex CLI with
+# `npm install -g` (no sudo). It is sourced by post.sh during devcontainer
+# setup, after the mise runtime and Claude Code blocks, so a Node.js version
+# change is followed by a reinstall of the CLI.
 #
-# Prerequisites: Node.js and npm must be available
+# Prerequisites: Node.js and npm from mise.toml; npm_global_cli.sh (shipped by
+# the core template) in the same directory.
+# Override the package (for example to pin a version) without editing this
+# file: CODEX_NPM_PACKAGE=@openai/codex@<version>
 # =============================================================================
 
 setup_codex() {
-    echo "Setting up OpenAI Codex CLI..."
+    local helper_dir
+    helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    # Check if npm is available
-    if ! command -v npm &> /dev/null; then
-        echo "  [WARN] npm not found. Skipping Codex CLI installation."
-        echo "  Install Node.js first, then run: npm install -g @openai/codex"
+    if [[ ! -f "${helper_dir}/npm_global_cli.sh" ]]; then
+        echo "  [WARN] npm_global_cli.sh not found. Skipping Codex CLI installation."
+        echo "  Run ./setup.sh --upgrade to restore it, or: npm install -g @openai/codex"
         return 0
     fi
 
-    # Install Codex CLI globally
-    if ! command -v codex &> /dev/null; then
-        echo "  - Installing Codex CLI..."
-        if npm install -g @openai/codex; then
-            echo "  - Codex CLI installed successfully"
-        else
-            echo "  [WARN] Failed to install Codex CLI (network error or npm issue)"
-            echo "  You can install it manually later: npm install -g @openai/codex"
-            return 0
-        fi
-    else
-        echo "  - Codex CLI already installed: $(codex --version 2>/dev/null || echo 'unknown version')"
-    fi
+    # shellcheck source=/dev/null
+    source "${helper_dir}/npm_global_cli.sh"
+    install_npm_global_cli "OpenAI Codex CLI" "${CODEX_NPM_PACKAGE:-@openai/codex}" "codex"
 
     echo "Codex CLI setup complete."
     echo "  To authenticate, run: codex (and follow the sign-in prompt)"
+    return 0
 }

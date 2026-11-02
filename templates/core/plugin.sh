@@ -5,6 +5,9 @@
 # =============================================================================
 # This plugin provides the base devcontainer infrastructure including:
 # - Docker configuration (Dockerfile.dev, docker-compose.yml)
+# - mise.toml, the project-root runtime manifest (node by default). Language
+#   plugins extend it through mise_toml_ensure; it is developer-owned after
+#   scaffold and never overwritten by --upgrade.
 # - Devcontainer configuration (devcontainer.json, post.sh)
 # - Base Claude Code settings
 #
@@ -60,6 +63,11 @@ plugin_copy() {
         copy_with_confirm "${PLUGIN_DIR}/docker-compose.yml" "${target_dir}/docker-compose.yml"
     fi
 
+    # Copy mise.toml (runtime versions; Dockerfile.dev COPYs it at build time)
+    if [[ -f "${PLUGIN_DIR}/mise.toml" ]]; then
+        copy_with_confirm "${PLUGIN_DIR}/mise.toml" "${target_dir}/mise.toml"
+    fi
+
     print_success "Core template files copied"
 }
 
@@ -104,6 +112,29 @@ fi
 EOF
         print_success "Tarnished asset refresh integrated into post.sh"
     fi
+
+    # -------------------------------------------------------------------------
+    # mise Runtime Setup and Claude Code Setup (#325). The helper keeps the
+    # load-bearing post.sh order mise -> Claude Code -> Codex CLI -> Claude Code
+    # plugins no matter which plugin appends first: a Node.js bump removes the
+    # npm global CLIs, so mise must converge before they are reinstalled.
+    # -------------------------------------------------------------------------
+    post_sh_add_block "$post_sh" "# mise Runtime Setup" \
+        "# Claude Code Setup" "# Codex CLI Setup" "# Claude Code Plugin Setup" << 'EOF'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/setup_mise.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_mise.sh"
+    setup_mise
+fi
+EOF
+    post_sh_add_block "$post_sh" "# Claude Code Setup" \
+        "# Codex CLI Setup" "# Claude Code Plugin Setup" << 'EOF'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/setup_claude.sh" ]]; then
+    source "${SCRIPT_DIR}/setup_claude.sh"
+    setup_claude
+fi
+EOF
 
     # Zed editor assets (no-op unless --zed was selected)
     apply_zed_assets "$target_dir" "$PLUGIN_DIR"

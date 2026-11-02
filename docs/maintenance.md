@@ -91,6 +91,67 @@ Container starts use the installed updater and configured upstream. For the ship
 
 Dry-run creates no target files, configuration, state, backups, summary or persistent cache and suppresses Git index refresh writes. It uses a valid local source/cache for exact plans; if none exists, it reports that comparison is unavailable. Actual summaries distinguish installed, unchanged/adopted, backed-up, preserved/unsafe and failed outcomes. Generated refresh state should be ignored if `.tarnished/refresh-state.json` is not already in your ignore rules.
 
+## Migrating a feature-based project
+
+Projects scaffolded before #325 install git, gh, Claude Code, Node.js and the
+language runtimes through devcontainer `features`. New scaffolds use `mise.toml`
+(runtimes), `docker/Dockerfile.dev` (OS packages) and `post.sh` helpers (AI
+CLIs) instead. Maintenance never rewrites `post.sh`, `Dockerfile.dev`,
+`devcontainer.json` or `mise.toml`, so an existing project keeps working as is
+and adopts the new layout only through these manual steps:
+
+1. **Replace `docker/Dockerfile.dev`** with the current
+   [core template](../templates/core/docker/Dockerfile.dev), then re-add your
+   project-specific apt lines above its `SHELL` line: the TeX Live block (latex),
+   `postgresql-client` / `default-mysql-client` in place of those features, and
+   any packages you added. Drop the former Python `ENV` block (`UV_HOME` and
+   friends) and keep one `SHELL` line above the `# >>> mise runtimes >>>` layer.
+2. **Create `mise.toml`** at the project root from the features you had:
+
+   | Feature | `mise.toml` entry |
+   | --- | --- |
+   | `node` | `[tools]` `node = "22"` |
+   | `python` | `python = "3.12"` |
+   | `astral.sh-uv` / `uv` | `uv = "<version>"` |
+   | `rust` | `rust = { version = "stable", components = ["rustfmt", "clippy"] }` |
+   | `go` | `go = "<version>"` |
+   | `deno` | `deno = "<version>"` |
+   | pnpm via corepack | `pnpm = "<version>"` |
+
+   For Python also add the `[env]` block from a fresh scaffold
+   (`UV_PYTHON = { value = "{{ tools.python.path }}", tools = true }` and the
+   `PYTHONDONTWRITEBYTECODE`, `PYTHONUNBUFFERED`, `UV_COMPILE_BYTECODE`,
+   `UV_LINK_MODE` values). Alternatively scaffold a throwaway project with the
+   same flags and copy its `mise.toml`.
+3. **Remove `features`** from `.devcontainer/devcontainer.json` and delete
+   `.devcontainer/devcontainer-lock.json`.
+4. **Receive the helpers.** Run `setup.sh --upgrade` (or `--create-manifest`
+   first if the project has no manifest) to install `setup_mise.sh`,
+   `setup_claude.sh`, `npm_global_cli.sh` and the new `setup_codex.sh` /
+   `setup_plugins.sh`, or copy them from the templates. They are safe on a
+   feature-based project: each skips when the tool already runs and returns 0
+   when `mise` or `enabledPlugins` is absent. They are not wired into `post.sh`
+   until step 5.
+5. **Edit `post.sh`.** Delete `setup_sudo_path` and its call, and the trailing
+   `# Claude Code Setup` section (`if command -v claude ...`). Add a
+   `# mise Runtime Setup` block and a `# Claude Code Setup` block after the core
+   sections (copy both from a fresh scaffold; each sources its helper from
+   `${SCRIPT_DIR}` and calls `setup_mise` / `setup_claude`). Order matters: mise,
+   then Claude Code, then your language blocks, then `# Codex CLI Setup` (move it
+   above `# Claude Code Plugin Setup`), then the plugin block. A Node.js version
+   change removes npm global CLIs, and this order reinstalls them.
+6. **Plugin settings.** `.claude/settings.json` receives `extraKnownMarketplaces`
+   and `enabledPlugins` (`context7` only; `serena` and `playwright` are no longer
+   defaults) on the next container start through the refresh; nothing to do by
+   hand. Plugins installed earlier stay installed.
+7. **Rebuild the container** and verify `node --version`, `claude --version` and
+   each runtime. Under `sudo`, mise shims are not on the path; run runtime tools
+   as `vscode`.
+
+If a project that is still on the old Dockerfile adds a language with
+`--add-module`, setup warns that `Dockerfile.dev` has no mise runtime layer; the
+runtime entries are still written to `mise.toml`.
+
 ## Runtime-helper provenance
 
 To adopt eligible helpers in a project without a manifest:
