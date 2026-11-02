@@ -1,9 +1,7 @@
 {
-  "model": "claude-fable-5",
+  "model": "claude-fable-5-1",
   "permissions": {
-    "allow": [
-      "Bash(codex:*)"
-    ],
+    "allow": [],
     "deny": [
       "Bash(apt:*)",
       "Bash(apt-get:*)",
@@ -23,23 +21,6 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/scripts/deny-check.sh"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "if": "Write(*.rs)",
-            "command": "f=\"$(jq -r '.tool_input.file_path')\" && cargo fmt -- \"$f\" && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
-          },
-          {
-            "type": "command",
-            "if": "Edit(*.rs)",
-            "command": "f=\"$(jq -r '.tool_input.file_path')\" && cargo fmt -- \"$f\" && cargo clippy --fix --allow-dirty --allow-staged -- -W clippy::all"
           }
         ]
       }

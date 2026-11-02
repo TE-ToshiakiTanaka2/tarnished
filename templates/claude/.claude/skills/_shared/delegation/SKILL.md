@@ -48,9 +48,9 @@ A non-null `roles.<role>.model` is specific to the vendor of the actual dispatch
 
 | Role | Channel | Value |
 | --- | --- | --- |
-| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5` |
-| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
-| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
+| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5-1` |
+| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5-5[1m]` |
+| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5-5` |
 | `external-reviewer` | `.codex/config.toml` | reviewer-owned |
 
 The orchestrator is the session rather than a subagent, so no frontmatter channel reaches it; `.claude/settings.json :: model` is its only channel and is read once at session start.

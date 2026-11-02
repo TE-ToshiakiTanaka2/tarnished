@@ -418,9 +418,9 @@ Flat JSON object. Written by `templates/agent-workflows/plugin.sh` and rendered 
 
 | Role | Execution | Channel | Shipped value |
 | --- | --- | --- | --- |
-| `orchestrator` | Inline — it *is* the session | `.claude/settings.json :: model` | `claude-fable-5` |
-| `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5` |
-| `designer` | Delegated subagent | `.claude/agents/designer.md` frontmatter | `claude-opus-5[1m]` |
+| `orchestrator` | Inline — it *is* the session | `.claude/settings.json :: model` | `claude-fable-5-1` |
+| `executor` | Delegated subagent | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5-5` |
+| `designer` | Delegated subagent | `.claude/agents/designer.md` frontmatter | `claude-opus-5-5[1m]` |
 | `external-reviewer` | Separate vendor CLI or fresh context | Reviewer's own configuration | Codex default: `gpt-6-astra` / `high` |
 
 For Claude-dispatched designer and executor roles the precedence is `roles.<role>.model` when non-null → agent frontmatter → session inheritance. For Codex-native dispatch it is supported profile override → active Codex session model and reasoning effort. Overrides are vendor-specific; in `dual` mode keep them `null` when the profile is shared by both dispatchers. Reject an incompatible explicit override rather than passing a Claude model ID to Codex or translating it. Profile values are not refresh-managed; Claude agent defaults are refresh-managed.
