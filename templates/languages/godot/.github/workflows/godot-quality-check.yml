@@ -1,0 +1,255 @@
+name: Godot Quality Check
+
+# Tool versions come from mise.toml (the same pins as the devcontainer).
+# Every job detects its inputs first and succeeds with a ::notice:: when there
+# is nothing to check, so the workflow is safe in a tooling-only scaffold.
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: GDScript Lint & Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Detect GDScript files
+        id: detect
+        run: |
+          count="$(find . \( -name .git -o -name .godot -o -name addons \) -prune -o -type f -name '*.gd' -print | wc -l)"
+          if [[ "$count" -eq 0 ]]; then
+            echo "::notice::No GDScript files found; skipping gdlint/gdformat"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install tools from mise.toml
+        if: steps.detect.outputs.found == 'true'
+        uses: jdx/mise-action@v4
+        with:
+          install_args: uv gdtoolkit
+
+      - name: Run gdlint and gdformat --check
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          # gdlint reads gdlintrc from its working directory, so lint each
+          # project (a directory with project.godot or gdlintrc) from there.
+          # Without any, lint the repository root.
+          mapfile -t roots < <(
+              find . \( -name .git -o -name .godot -o -name addons \) -prune -o \
+                  -type f \( -name project.godot -o -name gdlintrc \) \
+                  -exec dirname {} + | sort -u
+          )
+          if [[ "${#roots[@]}" -eq 0 ]]; then
+              roots=(.)
+          fi
+          status=0
+          for root in "${roots[@]}"; do
+              mapfile -d '' -t files < <(
+                  cd "$root" && find . \( -name .git -o -name .godot -o -name addons \) -prune -o \
+                      -type f -name '*.gd' -print0 | sort -z
+              )
+              if [[ "${#files[@]}" -eq 0 ]]; then
+                  continue
+              fi
+              echo "::group::${root}: gdlint (${#files[@]} files)"
+              (cd "$root" && gdlint "${files[@]}") || status=1
+              echo "::endgroup::"
+              echo "::group::${root}: gdformat --check"
+              (cd "$root" && gdformat --check "${files[@]}") || status=1
+              echo "::endgroup::"
+          done
+          exit "$status"
+
+  test:
+    name: Unit Tests (GUT, headless)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Detect Godot projects
+        id: detect
+        run: |
+          count="$(find . \( -name .git -o -name .godot -o -name addons \) -prune -o -type f -name project.godot -print | wc -l)"
+          if [[ "$count" -eq 0 ]]; then
+            echo "::notice::No project.godot found; skipping"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install tools from mise.toml
+        if: steps.detect.outputs.found == 'true'
+        uses: jdx/mise-action@v4
+        with:
+          install_args: godot dotnet
+
+      - name: Build C# and run GUT
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          status=0
+          mapfile -t projects < <(
+              find . \( -name .git -o -name .godot -o -name addons \) -prune -o \
+                  -type f -name project.godot -exec dirname {} + | sort -u
+          )
+          for dir in "${projects[@]}"; do
+              echo "::group::${dir}"
+              # Godot needs compiled C# assemblies before it loads C# scripts.
+              mapfile -t csprojs < <(find "$dir" -maxdepth 1 -type f -name '*.csproj' | sort)
+              for csproj in "${csprojs[@]}"; do
+                  dotnet build "$csproj" || status=1
+              done
+              if [[ ! -f "${dir}/addons/gut/gut_cmdln.gd" ]]; then
+                  echo "::notice::${dir}: addons/gut not found; skipping GUT"
+              else
+                  gut_args=()
+                  if [[ ! -f "${dir}/.gutconfig.json" ]]; then
+                      test_dirs=()
+                      for candidate in test tests; do
+                          if [[ -d "${dir}/${candidate}" ]]; then
+                              test_dirs+=("res://${candidate}")
+                          fi
+                      done
+                      if [[ "${#test_dirs[@]}" -eq 0 ]]; then
+                          echo "::notice::${dir}: no test directory or .gutconfig.json; skipping GUT"
+                          echo "::endgroup::"
+                          continue
+                      fi
+                      joined="$(IFS=,; echo "${test_dirs[*]}")"
+                      gut_args=("-gdir=${joined}" -ginclude_subdirs)
+                  fi
+                  godot --headless --path "$dir" --import || true
+                  godot --headless --path "$dir" -s addons/gut/gut_cmdln.gd -gexit "${gut_args[@]}" || status=1
+              fi
+              echo "::endgroup::"
+          done
+          exit "$status"
+
+  export:
+    name: Export (headless)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Detect export presets
+        id: detect
+        run: |
+          count="$(find . \( -name .git -o -name .godot -o -name addons \) -prune -o -type f -name export_presets.cfg -print | wc -l)"
+          if [[ "$count" -eq 0 ]]; then
+            echo "::notice::No export_presets.cfg found; skipping export"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install tools from mise.toml
+        if: steps.detect.outputs.found == 'true'
+        uses: jdx/mise-action@v4
+        with:
+          install_args: godot dotnet
+
+      - name: Resolve Godot versions
+        if: steps.detect.outputs.found == 'true'
+        id: version
+        run: |
+          tag="$(mise current godot)"
+          ver="$(godot --headless --version | tail -n 1 | sed -E 's/\.(official|custom_build)(\..*)?$//')"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "ver=${ver}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache export templates
+        if: steps.detect.outputs.found == 'true'
+        id: templates
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/share/godot/export_templates/${{ steps.version.outputs.ver }}
+          key: godot-export-templates-${{ steps.version.outputs.ver }}
+
+      - name: Download and verify export templates
+        if: steps.detect.outputs.found == 'true' && steps.templates.outputs.cache-hit != 'true'
+        env:
+          GODOT_TAG: ${{ steps.version.outputs.tag }}
+          GODOT_VER: ${{ steps.version.outputs.ver }}
+        run: |
+          tpz="Godot_v${GODOT_TAG}_mono_export_templates.tpz"
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_TAG}"
+          work="$(mktemp -d)"
+          curl -fsSL -o "${work}/${tpz}" "${base}/${tpz}"
+          curl -fsSL -o "${work}/SHA512-SUMS.txt" "${base}/SHA512-SUMS.txt"
+          expected="$(awk -v f="$tpz" '{ n = $2; sub(/^\*/, "", n) } n == f { print $1 "  " n }' "${work}/SHA512-SUMS.txt")"
+          if [[ -z "$expected" ]]; then
+            echo "::error::No SHA-512 entry for ${tpz} in SHA512-SUMS.txt"
+            exit 1
+          fi
+          (cd "$work" && echo "$expected" | sha512sum -c -)
+          unzip -q "${work}/${tpz}" -d "${work}/unpacked"
+          dest="${HOME}/.local/share/godot/export_templates/${GODOT_VER}"
+          mkdir -p "$dest"
+          mv "${work}"/unpacked/templates/* "$dest"/
+          rm -rf "$work"
+
+      - name: Export presets
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          status=0
+          root="$PWD"
+          mapfile -t cfgs < <(
+              find . \( -name .git -o -name .godot -o -name addons \) -prune -o \
+                  -type f -name export_presets.cfg -print | sort
+          )
+          for cfg in "${cfgs[@]}"; do
+              dir="$(dirname "$cfg")"
+              if [[ ! -f "${dir}/project.godot" ]]; then
+                  echo "::notice::${dir}: export_presets.cfg without project.godot; skipping"
+                  continue
+              fi
+              slug="$(echo "$dir" | sed -E 's|^\./?||; s|/|_|g')"
+              slug="${slug:-root}"
+              # One "<index><TAB><name><TAB><export_path>" line per [preset.N].
+              presets="$(awk '
+                  /^\[/ {
+                      insec = ($0 ~ /^\[preset\.[0-9]+\][ \t\r]*$/)
+                      if (insec) {
+                          idx = $0
+                          gsub(/[^0-9]/, "", idx)
+                          order[n++] = idx
+                      }
+                      next
+                  }
+                  insec && /^name=/ {
+                      v = $0; sub(/^name="/, "", v); sub(/"[ \t\r]*$/, "", v); names[idx] = v
+                  }
+                  insec && /^export_path=/ {
+                      v = $0; sub(/^export_path="/, "", v); sub(/"[ \t\r]*$/, "", v); paths[idx] = v
+                  }
+                  END {
+                      for (i = 0; i < n; i++) {
+                          print order[i] "\t" names[order[i]] "\t" paths[order[i]]
+                      }
+                  }
+              ' "$cfg")"
+              while IFS=$'\t' read -r idx name export_path; do
+                  [[ -n "$idx" ]] || continue
+                  if [[ -z "$export_path" ]]; then
+                      echo "::notice::${dir}: preset \"${name}\" has no export_path; skipping"
+                      continue
+                  fi
+                  out="${root}/build/ci-export/${slug}/${idx}"
+                  mkdir -p "$out"
+                  echo "::group::${dir}: export \"${name}\""
+                  godot --headless --path "$dir" --export-release "$name" "${out}/$(basename "$export_path")" || status=1
+                  echo "::endgroup::"
+              done <<< "$presets"
+          done
+          exit "$status"
