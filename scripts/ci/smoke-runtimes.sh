@@ -12,7 +12,8 @@
 # acceptance. OS-level tools only need `--version` to succeed.
 #
 # Usage: smoke-runtimes.sh <tool>...
-#   mise tools: node python uv pnpm go deno rust
+#   mise tools: node python uv pnpm go deno rust godot dotnet
+#   gdtoolkit:  gdformat gdlint (both checked against `mise current gdtoolkit`)
 #   other:      mise git gh npm cargo cargo-fmt cargo-clippy psql mysql redis-cli
 # =============================================================================
 
@@ -79,11 +80,51 @@ check_mise_tool() {
                 actual="$(run_in "$flags" 'rustup show active-toolchain')" || { fail "rustup show active-toolchain failed (bash ${flags})"; continue; }
                 expect_contains "rust toolchain (bash ${flags})" "$actual" "stable"
                 ;;
+            godot)
+                # `mise current godot` is 4.7.2-stable; the .NET build reports
+                # 4.7.2.stable.mono.official.<hash>.
+                actual="$(run_in "$flags" 'godot --headless --version' | tail -n 1)" || { fail "godot --headless --version failed (bash ${flags})"; continue; }
+                expect_contains "godot (bash ${flags})" "$actual" "${wanted//-/.}.mono"
+                ;;
+            dotnet)
+                actual="$(run_in "$flags" 'dotnet --version')" || { fail "dotnet --version failed (bash ${flags})"; continue; }
+                expect_equals "dotnet (bash ${flags})" "$actual" "$wanted"
+                ;;
             *)
                 fail "unknown mise tool '${tool}'"
                 return 0
                 ;;
         esac
+    done
+}
+
+# expect_equals <label> <actual> <wanted>
+expect_equals() {
+    local label="$1"
+    local actual="$2"
+    local wanted="$3"
+    actual="$(echo "$actual" | tr -d '[:space:]')"
+    if [[ "$actual" != "$wanted" ]]; then
+        fail "${label}: expected '${wanted}', got '${actual}'"
+    else
+        echo "ok   ${label}: ${actual}"
+    fi
+}
+
+# gdformat and gdlint ship in one package; mise tracks it as gdtoolkit.
+check_gdtoolkit_tool() {
+    local tool="$1"
+    local flags actual wanted
+
+    wanted="$(mise current gdtoolkit 2> /dev/null | head -n 1 | tr -d '[:space:]')"
+    if [[ -z "$wanted" ]]; then
+        fail "${tool}: 'mise current gdtoolkit' reported no version"
+        return 0
+    fi
+
+    for flags in -c -ic; do
+        actual="$(run_in "$flags" "${tool} --version")" || { fail "${tool} --version failed (bash ${flags})"; continue; }
+        expect_contains "${tool} (bash ${flags})" "$actual" "$wanted"
     done
 }
 
@@ -109,7 +150,8 @@ main() {
     local tool
     for tool in "$@"; do
         case "$tool" in
-            node | python | uv | pnpm | go | deno | rust) check_mise_tool "$tool" ;;
+            node | python | uv | pnpm | go | deno | rust | godot | dotnet) check_mise_tool "$tool" ;;
+            gdformat | gdlint) check_gdtoolkit_tool "$tool" ;;
             mise | git | gh | npm | cargo | psql | mysql | redis-cli) check_plain_tool "$tool" "${tool} --version" ;;
             cargo-fmt) check_plain_tool "cargo fmt" 'cargo fmt --version' ;;
             cargo-clippy) check_plain_tool "cargo clippy" 'cargo clippy --version' ;;
