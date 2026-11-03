@@ -162,6 +162,8 @@ overlay ahead of the base.
 | `test` | Unit Tests (GUT, headless) | — | `::notice::No project.godot found; skipping`; per project `::notice::<dir>: addons/gut not found; skipping GUT`, `::notice::<dir>: no test directory or .gutconfig.json; skipping GUT` |
 | `export` | Export (headless) | — | `::notice::No export_presets.cfg found; skipping export`; per preset `::notice::<dir>: preset "<name>" has no export_path; skipping` |
 
+Exported artifacts land in `build/ci-export/<project slug>/<preset index>/<basename of export_path>`. The slug is the project directory without its leading `./`, with `/` replaced by `_` (`root` for the repository root), so two projects in a monorepo cannot collide on the same preset index.
+
 Version derivation inside `export`:
 
 ```bash

@@ -212,7 +212,8 @@ a bump** and after a container rebuild (add a volume to keep them). With
 tpz="Godot_v${tag}_mono_export_templates.tpz"
 base="https://github.com/godotengine/godot/releases/download/${tag}"
 curl -fLO "${base}/${tpz}" && curl -fLO "${base}/SHA512-SUMS.txt"
-grep " ${tpz}\$" SHA512-SUMS.txt | sha512sum -c -
+awk -v f="$tpz" '{ n = $2; sub(/^\*/, "", n) } n == f { print $1 "  " n }' SHA512-SUMS.txt \
+    | sha512sum -c -
 unzip -q "$tpz" -d /tmp/godot-templates
 mkdir -p ~/.local/share/godot/export_templates/"$ver"
 mv /tmp/godot-templates/templates/* ~/.local/share/godot/export_templates/"$ver"/

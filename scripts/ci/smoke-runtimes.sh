@@ -83,11 +83,17 @@ check_mise_tool() {
             godot)
                 # `mise current godot` is 4.7.2-stable; the .NET build reports
                 # 4.7.2.stable.mono.official.<hash>.
-                actual="$(run_in "$flags" 'godot --headless --version' | tail -n 1)" || { fail "godot --headless --version failed (bash ${flags})"; continue; }
+                actual="$(run_in "$flags" 'godot --headless --version' | tail -n 1)" || {
+                    fail "godot --headless --version failed (bash ${flags})"
+                    continue
+                }
                 expect_contains "godot (bash ${flags})" "$actual" "${wanted//-/.}.mono"
                 ;;
             dotnet)
-                actual="$(run_in "$flags" 'dotnet --version')" || { fail "dotnet --version failed (bash ${flags})"; continue; }
+                actual="$(run_in "$flags" 'dotnet --version')" || {
+                    fail "dotnet --version failed (bash ${flags})"
+                    continue
+                }
                 expect_equals "dotnet (bash ${flags})" "$actual" "$wanted"
                 ;;
             *)
@@ -123,7 +129,10 @@ check_gdtoolkit_tool() {
     fi
 
     for flags in -c -ic; do
-        actual="$(run_in "$flags" "${tool} --version")" || { fail "${tool} --version failed (bash ${flags})"; continue; }
+        actual="$(run_in "$flags" "${tool} --version")" || {
+            fail "${tool} --version failed (bash ${flags})"
+            continue
+        }
         expect_contains "${tool} (bash ${flags})" "$actual" "$wanted"
     done
 }
@@ -150,7 +159,9 @@ main() {
     local tool
     for tool in "$@"; do
         case "$tool" in
-            node | python | uv | pnpm | go | deno | rust | godot | dotnet) check_mise_tool "$tool" ;;
+            node | python | uv | pnpm | go | deno | rust | godot | dotnet)
+                check_mise_tool "$tool"
+                ;;
             gdformat | gdlint) check_gdtoolkit_tool "$tool" ;;
             mise | git | gh | npm | cargo | psql | mysql | redis-cli) check_plain_tool "$tool" "${tool} --version" ;;
             cargo-fmt) check_plain_tool "cargo fmt" 'cargo fmt --version' ;;

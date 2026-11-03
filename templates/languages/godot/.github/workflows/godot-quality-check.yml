@@ -43,15 +43,43 @@ jobs:
         run: |
           # gdlint reads gdlintrc from its working directory, so lint each
           # project (a directory with project.godot or gdlintrc) from there.
-          # Without any, lint the repository root.
-          mapfile -t roots < <(
+          # Nested roots are covered by their outermost root, and any *.gd
+          # outside every root is linted from the repository root, so each
+          # file the detect step counted is linted exactly once.
+          # Without any root, lint the repository root.
+          mapfile -t found_roots < <(
               find . \( -name .git -o -name .godot -o -name addons \) -prune -o \
                   -type f \( -name project.godot -o -name gdlintrc \) \
                   -exec dirname {} + | sort -u
           )
+          roots=()
+          for candidate in "${found_roots[@]}"; do
+              nested=false
+              for other in "${found_roots[@]}"; do
+                  if [[ "$candidate" != "$other" && "$candidate" == "${other}/"* ]]; then
+                      nested=true
+                      break
+                  fi
+              done
+              if [[ "$nested" == false ]]; then
+                  roots+=("$candidate")
+              fi
+          done
           if [[ "${#roots[@]}" -eq 0 ]]; then
               roots=(.)
           fi
+          lint_files() {
+              local label="$1"
+              local rc=0
+              shift
+              echo "::group::${label}: gdlint ($# files)"
+              gdlint "$@" || rc=1
+              echo "::endgroup::"
+              echo "::group::${label}: gdformat --check"
+              gdformat --check "$@" || rc=1
+              echo "::endgroup::"
+              return "$rc"
+          }
           status=0
           for root in "${roots[@]}"; do
               mapfile -d '' -t files < <(
@@ -61,13 +89,29 @@ jobs:
               if [[ "${#files[@]}" -eq 0 ]]; then
                   continue
               fi
-              echo "::group::${root}: gdlint (${#files[@]} files)"
-              (cd "$root" && gdlint "${files[@]}") || status=1
-              echo "::endgroup::"
-              echo "::group::${root}: gdformat --check"
-              (cd "$root" && gdformat --check "${files[@]}") || status=1
-              echo "::endgroup::"
+              (cd "$root" && lint_files "$root" "${files[@]}") || status=1
           done
+          # Files outside every root, linted from the repository root.
+          mapfile -d '' -t all_files < <(
+              find . \( -name .git -o -name .godot -o -name addons \) -prune -o \
+                  -type f -name '*.gd' -print0 | sort -z
+          )
+          leftover=()
+          for file in "${all_files[@]}"; do
+              covered=false
+              for root in "${roots[@]}"; do
+                  if [[ "$file" == "${root}/"* ]]; then
+                      covered=true
+                      break
+                  fi
+              done
+              if [[ "$covered" == false ]]; then
+                  leftover+=("$file")
+              fi
+          done
+          if [[ "${#leftover[@]}" -gt 0 ]]; then
+              lint_files "." "${leftover[@]}" || status=1
+          fi
           exit "$status"
 
   test:

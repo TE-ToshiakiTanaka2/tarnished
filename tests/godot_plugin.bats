@@ -248,6 +248,41 @@ _run_post_block() {
     [[ -f "$SCRATCH/docker-compose.godot-gui.yml" ]]
 }
 
+@test "GODOT_GUI=1 and GODOT_GUI=yes enable the overlay" {
+    local value
+    for value in 1 yes; do
+        _seed_target "$SCRATCH"
+        GODOT_GUI="$value" _run_copy_and_post_copy
+        run _compose_files
+        assert_output "[\"../docker-compose.yml\",\"${OVERLAY_REF}\"]"
+        rm -rf "$SCRATCH"
+        mkdir -p "$SCRATCH"
+    done
+}
+
+@test "an arbitrary non-empty GODOT_GUI value disables the overlay without prompting" {
+    check_tty_available() { return 0; }
+    confirm() { echo "prompted" > "$SCRATCH/prompted"; return 0; }
+    GODOT_GUI=maybe
+    _load_plugin
+    plugin_interactive_setup
+    [[ ! -e "$SCRATCH/prompted" ]]
+    [[ "$GODOT_GUI_ENABLED" == false ]]
+    plugin_copy "$SCRATCH" > /dev/null 2>&1
+    plugin_post_copy "$SCRATCH" > /dev/null 2>&1
+    run _compose_files
+    assert_output '["../docker-compose.yml"]'
+}
+
+@test "with ZED_ENABLED the installed .zed/settings.json formats GDScript with gdformat" {
+    ZED_ENABLED=true _run_copy_and_post_copy
+    [[ -f "$SCRATCH/.zed/settings.json" ]]
+    run jq -r '.languages.GDScript.formatter.external.command' "$SCRATCH/.zed/settings.json"
+    assert_output "gdformat"
+    run jq -e '.file_scan_exclusions | index("**/.godot") != null' "$SCRATCH/.zed/settings.json"
+    assert_success
+}
+
 @test "TTY with -y and GODOT_GUI unset: no prompt, not enabled" {
     check_tty_available() { return 0; }
     SKIP_CONFIRM=true

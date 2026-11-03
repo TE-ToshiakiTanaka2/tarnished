@@ -36,7 +36,11 @@ GODOT_GUI_COMPOSE_REF="../docker-compose.godot-gui.yml"
 # The Godot .NET editor comes from the mise github backend (the registry
 # shorthand only fetches the standard build). Mise Tera templates, not
 # Tarnished placeholders.
-GODOT_MISE_TOOL_VALUE="{ version = \"4.7.2-stable\", asset_pattern = 'Godot_v{{ version }}_mono_linux_{{ arch(x64=\"x86_64\", arm64=\"arm64\") }}.zip', rename_exe = { \"Godot_v*_mono_linux.*\" = \"godot\" } }"
+GODOT_MISE_ASSET_PATTERN="Godot_v{{ version }}_mono_linux_"
+GODOT_MISE_ASSET_PATTERN+="{{ arch(x64=\"x86_64\", arm64=\"arm64\") }}.zip"
+GODOT_MISE_TOOL_VALUE="{ version = \"4.7.2-stable\", "
+GODOT_MISE_TOOL_VALUE+="asset_pattern = '${GODOT_MISE_ASSET_PATTERN}', "
+GODOT_MISE_TOOL_VALUE+="rename_exe = { \"Godot_v*_mono_linux.*\" = \"godot\" } }"
 GODOT_MISE_GDTOOLKIT_VALUE='{ version = "4.5.0", python = "3.12" }'
 
 # GUI choice: "true", "false" or empty (undecided). Reset on every source so a
@@ -131,7 +135,9 @@ _godot_gui_entry_present() {
     [[ -f "$devcontainer_json" ]] || return 1
     command -v jq &> /dev/null || return 1
     jq -e --arg f "$GODOT_GUI_COMPOSE_REF" \
-        '(.dockerComposeFile // []) | (if type == "string" then [.] else . end) | index($f) != null' \
+        '(.dockerComposeFile // [])
+         | (if type == "string" then [.] else . end)
+         | index($f) != null' \
         "$devcontainer_json" &> /dev/null
 }
 
@@ -182,10 +188,12 @@ _godot_enable_gui_overlay() {
     local target_dir="$1"
     local devcontainer_json="${target_dir}/.devcontainer/devcontainer.json"
     local overlay="${target_dir}/${GODOT_GUI_COMPOSE_FILE}"
-    local hint="add \"${GODOT_GUI_COMPOSE_REF}\" after \"../docker-compose.yml\" in \"dockerComposeFile\" of .devcontainer/devcontainer.json"
+    local hint="add \"${GODOT_GUI_COMPOSE_REF}\" after \"../docker-compose.yml\""
+    hint+=" in \"dockerComposeFile\" of .devcontainer/devcontainer.json"
 
     if [[ ! -f "$overlay" ]]; then
-        print_warning "${GODOT_GUI_COMPOSE_FILE} is missing; not enabling the Godot GUI (restore it, then ${hint})"
+        local msg="${GODOT_GUI_COMPOSE_FILE} is missing; not enabling the Godot GUI"
+        print_warning "${msg} (restore it, then ${hint})"
         return 0
     fi
     if [[ ! -f "$devcontainer_json" ]]; then
@@ -217,7 +225,8 @@ _godot_enable_gui_overlay() {
         print_success "Godot GUI (WSLg) overlay enabled"
     else
         rm -f "$temp_file"
-        print_warning "Could not enable the Godot GUI (devcontainer.json may contain comments); ${hint}"
+        local msg="Could not enable the Godot GUI (devcontainer.json may contain comments)"
+        print_warning "${msg}; ${hint}"
     fi
     return 0
 }
@@ -385,13 +394,17 @@ if command -v godot &> /dev/null; then
         echo "  - dotnet: $(dotnet --version 2> /dev/null || echo 'not runnable yet')"
     fi
     if [[ -n "$godot_version" ]]; then
-        godot_templates="${HOME}/.local/share/godot/export_templates/$(echo "$godot_version" | sed -E 's/\.(official|custom_build)(\..*)?$//')"
+        godot_tpl_version="$(echo "$godot_version" \
+            | sed -E 's/\.(official|custom_build)(\..*)?$//')"
+        godot_templates="${HOME}/.local/share/godot/export_templates/${godot_tpl_version}"
         if [[ ! -d "$godot_templates" ]]; then
-            echo "  - Export templates not installed (needed only for exporting); see docs/setup.md \"Godot\""
+            echo "  - Export templates not installed (needed only for exporting);" \
+                "see docs/setup.md \"Godot\""
         fi
     fi
     if [[ -d /mnt/wslg ]] && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-        echo "  - GUI: WSLg available. Start the editor with: godot -e  (GPU: add --rendering-driver opengl3)"
+        echo "  - GUI: WSLg available. Start the editor with: godot -e " \
+            "(GPU: add --rendering-driver opengl3)"
     else
         echo "  - GUI: headless. WSL2 hosts can opt in via docker-compose.godot-gui.yml"
     fi
