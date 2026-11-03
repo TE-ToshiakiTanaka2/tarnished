@@ -204,6 +204,61 @@ teardown() {
     assert_success
 }
 
+@test "mise_toml_ensure accepts the tool_alias section and appends to it" {
+    printf '[tools]\nnode = "22"\n' > "$TOML"
+    run mise_toml_ensure "$TOML" tool_alias godot '"github:godotengine/godot"'
+    assert_success
+    run mise_toml_ensure "$TOML" tool_alias gdtoolkit '"pypi:gdtoolkit"'
+    assert_success
+    run cat "$TOML"
+    assert_output $'[tools]\nnode = "22"\n\n[tool_alias]\ngodot = "github:godotengine/godot"\ngdtoolkit = "pypi:gdtoolkit"'
+}
+
+@test "mise_toml_ensure keeps an existing tool_alias key" {
+    printf '[tool_alias]\ngodot = "aqua:godotengine/godot"\n' > "$TOML"
+    cp "$TOML" "$SCRATCH/before"
+    run mise_toml_ensure "$TOML" tool_alias godot '"github:godotengine/godot"'
+    assert_success
+    run cmp "$TOML" "$SCRATCH/before"
+    assert_success
+}
+
+# --- mise_toml_has_key -------------------------------------------------------
+
+@test "mise_toml_has_key finds bare, quoted, table and dotted-key forms" {
+    printf '[tools]\ngodot = "4"\n"dotnet" = "10"\n'"'uv'"' = "1"\n\n[tools.gdtoolkit]\nversion = "4"\n' > "$TOML"
+    run mise_toml_has_key "$TOML" tools godot
+    assert_success
+    run mise_toml_has_key "$TOML" tools dotnet
+    assert_success
+    run mise_toml_has_key "$TOML" tools uv
+    assert_success
+    run mise_toml_has_key "$TOML" tools gdtoolkit
+    assert_success
+    printf 'tools.godot = "4"\n' > "$TOML"
+    run mise_toml_has_key "$TOML" tools godot
+    assert_success
+    assert_output ""
+}
+
+@test "mise_toml_has_key returns 1 for absent, other-section, commented and missing" {
+    printf '[tools]\nnode = "22"\n# godot = "4"\n\n[env]\ngodot = "x"\n' > "$TOML"
+    run mise_toml_has_key "$TOML" tools godot
+    assert_failure 1
+    assert_output ""
+    run mise_toml_has_key "$SCRATCH/nope.toml" tools godot
+    assert_failure 1
+    [[ ! -e "$SCRATCH/nope.toml" ]]
+}
+
+@test "mise_toml_has_key returns 2 for a bad section or key" {
+    printf '[tools]\n' > "$TOML"
+    run mise_toml_has_key "$TOML" bogus godot
+    assert_failure 2
+    run mise_toml_has_key "$TOML" tools 'bad key'
+    assert_failure 2
+}
+
 # --- dockerfile_add_os_packages ---------------------------------------------
 
 _fixture_dockerfile() {
