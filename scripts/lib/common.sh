@@ -834,6 +834,7 @@ readonly MISE_TOML_HEADER='# Runtime versions for this project, managed by mise 
 # one presence rule. Expects -v section=... -v key=...; scans line by line and
 # leaves `present` (the key exists), `found` (the [section] header exists),
 # `last`, `dotted` and `lines[]` for the caller's END block.
+# shellcheck disable=SC2016  # awk program: $0 must stay literal
 readonly MISE_TOML_AWK_SCAN='
     function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
     {
