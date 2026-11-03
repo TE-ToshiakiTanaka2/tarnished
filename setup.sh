@@ -97,7 +97,7 @@ declare -a PLUGIN_NAMES=()
 
 # Language selection
 declare -a SELECTED_LANGUAGES=()
-declare -a AVAILABLE_LANGUAGES=("rust" "python" "node" "deno" "latex" "go")
+declare -a AVAILABLE_LANGUAGES=("rust" "python" "node" "deno" "latex" "go" "godot")
 declare -A LANGUAGE_DISPLAY_NAMES=(
     ["rust"]="Rust"
     ["python"]="Python"
@@ -105,6 +105,7 @@ declare -A LANGUAGE_DISPLAY_NAMES=(
     ["deno"]="Deno"
     ["latex"]="LaTeX"
     ["go"]="Go"
+    ["godot"]="Godot (GDScript + C#)"
 )
 
 # Service selection
@@ -242,6 +243,7 @@ Available Languages:
     deno                Deno (built-in fmt, lint, test)
     go                  Go (gofmt, golangci-lint, gotestsum)
     latex               LaTeX (TeX Live, latexmk, LaTeX Workshop)
+    godot               Godot 4 .NET (GDScript + C#, gdtoolkit, GUT/export CI; WSLg GUI opt-in: GODOT_GUI=true)
 
 Available Services:
     postgresql          PostgreSQL 16 database (psql client via Dockerfile.dev)
@@ -261,6 +263,8 @@ Examples:
     ./setup.sh --lang rust --github-actions # Rust with GitHub Project integration
     ./setup.sh --lang go                    # Go only
     ./setup.sh --lang go --github-actions   # Go with GitHub Project integration
+    ./setup.sh --lang godot                 # Godot 4 (GDScript + C#), headless
+    GODOT_GUI=true ./setup.sh --lang godot -y   # WSL2: also run the Godot editor GUI
     ./setup.sh --ai-profile codex-main      # Codex primary + Claude reviewer
     ./setup.sh --codex                      # Claude primary + Codex reviewer
     ./setup.sh --lang rust --zed            # Rust, openable in VS Code or Zed
@@ -1675,6 +1679,9 @@ infer_scaffold_options() {
         # LaTeX has no canonical root manifest; the build-pdf workflow is
         # the cleanest indicator.
         [[ -f "$target_dir/.github/workflows/build-pdf.yml" ]] && langs+=(latex)
+        # Godot is tooling-only (no project.godot yet), so probe the files the
+        # plugin emits; the upgrade staging run then rebuilds the same tree.
+        [[ -f "$target_dir/gdlintrc" || -f "$target_dir/.github/workflows/godot-quality-check.yml" ]] && langs+=(godot)
         if [[ ${#langs[@]} -eq 0 ]]; then
             languages_json='[]'
         else
