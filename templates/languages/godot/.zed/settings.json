@@ -1,0 +1,18 @@
+{
+  "file_scan_exclusions": [
+    "**/.godot"
+  ],
+  "languages": {
+    "GDScript": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "gdformat",
+          "arguments": [
+            "-"
+          ]
+        }
+      }
+    }
+  }
+}

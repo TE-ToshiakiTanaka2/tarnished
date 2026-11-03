@@ -1,0 +1,19 @@
+# Godot GUI editor through WSLg (Windows 11 + WSL2 only).
+# Opt-in: active only while ".devcontainer/devcontainer.json" lists
+# "../docker-compose.godot-gui.yml" in "dockerComposeFile". Remove that entry
+# and rebuild on hosts without WSLg: the container then runs headless.
+# Docker Desktop users may need to override WSLG_X11_DIR / WSLG_DIR / WSL_LIB_DIR.
+services:
+  {{PROJECT_NAME}}:
+    volumes:
+      - ${WSLG_X11_DIR:-/tmp/.X11-unix}:/tmp/.X11-unix
+      - ${WSLG_DIR:-/mnt/wslg}:/mnt/wslg
+      - ${WSL_LIB_DIR:-/usr/lib/wsl}:/usr/lib/wsl:ro
+    devices:
+      - /dev/dxg:/dev/dxg
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      WAYLAND_DISPLAY: wayland-0
+      XDG_RUNTIME_DIR: /mnt/wslg/runtime-dir
+      PULSE_SERVER: unix:/mnt/wslg/PulseServer
+      LD_LIBRARY_PATH: /usr/lib/wsl/lib

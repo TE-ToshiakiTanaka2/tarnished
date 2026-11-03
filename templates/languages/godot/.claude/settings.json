@@ -1,0 +1,31 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Write(*.gd)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && gdformat \"$f\""
+          },
+          {
+            "type": "command",
+            "if": "Edit(*.gd)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && gdformat \"$f\""
+          },
+          {
+            "type": "command",
+            "if": "Write(*.cs)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && cd \"$(dirname \"$f\")\" && dotnet format whitespace . --folder --include \"$(basename \"$f\")\""
+          },
+          {
+            "type": "command",
+            "if": "Edit(*.cs)",
+            "command": "f=\"$(jq -r '.tool_input.file_path')\" && cd \"$(dirname \"$f\")\" && dotnet format whitespace . --folder --include \"$(basename \"$f\")\""
+          }
+        ]
+      }
+    ]
+  }
+}

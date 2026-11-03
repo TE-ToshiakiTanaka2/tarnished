@@ -1,0 +1,20 @@
+{
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "godotTools.editorPath.godot4": "godot",
+        "godotTools.lsp.headless": true,
+        "search.exclude": {
+          "**/.godot": true
+        },
+        "files.watcherExclude": {
+          "**/.godot/**": true
+        }
+      },
+      "extensions": [
+        "geequlim.godot-tools",
+        "ms-dotnettools.csharp"
+      ]
+    }
+  }
+}
