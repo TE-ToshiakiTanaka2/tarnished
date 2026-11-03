@@ -98,10 +98,10 @@ sequenceDiagram
 
     Builder->>Root: apt (git, build-essential, ...), gh (signed-by repo)
     Root->>Root: download mise @ MISE_VERSION, minisign + sha256 verify
-    Root->>Root: plugin OS blocks above SHELL (TeX Live, psql, mysql client)
+    Root->>Root: plugin OS blocks above SHELL (TeX Live, psql, mysql client, Godot GUI + .NET libs)
     Builder->>Mise: USER vscode, PATH += shims, MISE_TRUSTED_CONFIG_PATHS=/workspace
     Builder->>Mise: COPY mise.toml, mise install (optional github_token secret)
-    Mise-->>Builder: node, python, uv, pnpm, rust, go, deno per mise.toml
+    Mise-->>Builder: node, python, uv, pnpm, rust, go, deno, dotnet, godot, gdtoolkit per mise.toml
 
     Builder->>Post: postCreateCommand: bash .devcontainer/scripts/post.sh
     Note over Post: git / SSH sections, Tarnished Asset Refresh
@@ -134,6 +134,71 @@ sequenceDiagram
 Order is load-bearing: a Node change in `mise.toml` installs a new Node in
 `setup_mise`, which drops npm globals, so `setup_claude` and `setup_codex`
 must run after it and before `setup_plugins` needs `claude`.
+
+## Godot flavor: GUI opt-in and container launch (#331)
+
+Two moments carry the system-wide part of the godot flavor:
+
+1. **Scaffold.** Recording the opt-in.
+2. **Container start.** Compose applies the separate WSLg overlay only when
+   `devcontainer.json` lists it.
+
+Headless is the default on every host, so a non-WSLg host never sees
+`/dev/dxg`. Plugin-internal branching is in `docs/design/#331/flowchart.md`.
+
+```mermaid
+sequenceDiagram
+    actor Dev as Developer
+    participant Setup as setup.sh
+    participant Godot as godot plugin
+    participant Common as common.sh
+    participant DC as .devcontainer/devcontainer.json
+    participant Ov as docker-compose.godot-gui.yml
+    participant Compose as docker compose / devcontainer CLI
+    participant Img as Dockerfile.dev + mise
+    participant Post as post.sh
+
+    Dev->>Setup: ./setup.sh --lang godot [-y] (optionally GODOT_GUI=true)
+    Setup->>Godot: plugin_copy(root)
+    Godot->>Ov: copy_with_confirm (inert file)
+    Setup->>Godot: plugin_dockerfile(root)
+    Godot->>Common: dockerfile_add_os_packages(godot, X11/Wayland/Mesa/Vulkan/audio/.NET libs)
+    Note over Setup,Godot: plugin.sh is sourced for the post-copy pass, GODOT_GUI_ENABLED reset to empty
+    opt TTY available (setup.sh gates plugin_interactive_setup on a TTY, not on -y)
+        Setup->>Godot: plugin_interactive_setup()
+        Godot->>Godot: _godot_resolve_gui_choice (GODOT_GUI, already listed, staging or -y means off)
+        opt choice still empty
+            Godot->>Dev: Enable the Godot GUI editor through WSLg? [y if /mnt/wslg and /dev/dxg]
+            Dev-->>Godot: y / n
+        end
+    end
+    Setup->>Godot: plugin_post_copy_shared(root)
+    Godot->>Common: mise_toml_has_key tools godot / gdtoolkit
+    Godot->>Common: mise_toml_ensure tool_alias + tools (only if absent), dotnet, uv, env
+    opt GODOT_GUI_ENABLED empty (every non-TTY run)
+        Godot->>Godot: _godot_resolve_gui_choice (never prompts, empty afterwards means off)
+    end
+    opt GODOT_GUI_ENABLED == true
+        Godot->>DC: jq append "../docker-compose.godot-gui.yml" (order kept, no duplicate)
+    end
+    Godot->>Common: post_sh_add_block "# Godot Engine Setup" before Codex / plugin markers
+    Setup->>Setup: replace_placeholders (renders overlay service key)
+
+    Dev->>Compose: Reopen in Container
+    Compose->>DC: read dockerComposeFile
+    alt overlay listed (WSLg host)
+        Compose->>Ov: multi-file merge: + X11/WSLg/usr-lib-wsl mounts, + /dev/dxg, + DISPLAY/WAYLAND/XDG/PULSE/LD_LIBRARY_PATH
+    else not listed
+        Note over Compose: dev service unchanged (headless)
+    end
+    Compose->>Img: build: apt godot block, then mise install (godot .NET via github backend, dotnet, uv, private CPython, gdtoolkit)
+    Compose->>Post: postCreateCommand
+    Post->>Post: mise → Claude Code → Godot Engine Setup (versions, export-template hint, GUI or headless) → Codex → plugins
+    Note over Post: every Godot line is guarded and set -e safe, with no download and no exit
+```
+
+Turning the GUI off for one host means deleting the `dockerComposeFile`
+entry and rebuilding. The overlay file itself stays in the project.
 
 ## Claude plugin fallback (`setup_plugins`, #249, #255, #273, #325)
 

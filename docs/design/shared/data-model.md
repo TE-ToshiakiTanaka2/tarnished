@@ -23,7 +23,8 @@ This is the cumulative project-wide data model. Per-issue deltas may add or modi
 | `LifecycleDecision` (internal) | `scripts/lib/manifest.sh` (#265) | Pure enum used by `manifest_decide` to tag each file's upgrade outcome — `NOOP \| UPDATE \| SKIP_EDITED \| NEW \| SKIP_NEW_CONFLICT \| LEAVE_REMOVED \| PRUNE \| SKIP_USER_DELETED` |
 | `RefreshConfig` (logical) | downstream `<project>/.tarnished/refresh.json` (#279) | Always-latest sync whitelist + overlay declaration — `{ schema_version, upstream: { repo_url, branch }, clone_dir, managed_paths: [{ src, dst, overlay }] }` |
 | `ZedProjectSettings` (logical) | downstream `<project>/.zed/settings.json` (#323) | Zed project settings generated when Zed support is enabled — `terminal.shell`, `file_scan_exclusions`, `languages.<Lang>`, `lsp.<server>`. Developer-owned: not an AI asset, not manifest-eligible |
-| `MiseConfig` (logical) | downstream `<project>/mise.toml` (#325) | Runtime versions and tool environment — `[tools]`, `[env]`, optional `[settings]`. Developer-owned: no refresh mapping, not manifest-eligible, tracked by git |
+| `MiseConfig` (logical) | downstream `<project>/mise.toml` (#325) | Runtime versions and tool environment — `[tools]`, `[env]`, `[tool_alias]` (#331), optional `[settings]`. Developer-owned: no refresh mapping, not manifest-eligible, tracked by git |
+| `GodotGuiOverlay` (logical) | downstream `<project>/docker-compose.godot-gui.yml` (#331) | Compose overlay for the dev service (WSLg mounts, `/dev/dxg`, env). Inert unless listed in `devcontainer.json :: dockerComposeFile`. Developer-owned: not manifest-eligible, no refresh mapping |
 | `ClaudePluginSettings` (logical) | `.claude/settings.json :: extraKnownMarketplaces`, `enabledPlugins` (#325) | Declarative Claude Code plugin set read by Claude Code and by the `setup_plugins.sh` fallback. Part of the refresh-managed settings file |
 
 ## Type Definitions
@@ -110,7 +111,7 @@ JSON file at the root of a monorepo target produced by `setup.sh --monorepo`. Re
 | `modules` | array | yes | May be empty after init if user accepted no modules; FR-2 enforces ≥1 in interactive flow. |
 | `modules[].name` | string | yes | `^[a-z][a-z0-9_-]*$`, max 50 chars, unique within file. |
 | `modules[].path` | string | yes | Relative path from repo root. Currently equals `name`; field is reserved for future flexibility (nested layouts). |
-| `modules[].language` | string | yes | One of the `AVAILABLE_LANGUAGES` ids: `rust`, `python`, `node`, `deno`, `latex`, `go` (#274). |
+| `modules[].language` | string | yes | One of the `AVAILABLE_LANGUAGES` ids: `rust`, `python`, `node`, `deno`, `latex`, `go` (#274), `godot` (#331). |
 | `modules[].services` | array of string | yes (may be empty) | Informational record of services declared at registration. The actual compose runs project-wide using `{{PROJECT_NAME}}-<svc>` names, shared across modules. |
 
 **Forward compatibility (NFR-2)**: Readers ignore unknown top-level keys and unknown per-module keys. Adding fields like `commands`, `version_file`, `package` (à la elsur) is non-breaking. The `version` field is the breaking-change escape hatch — bumping to `version: 2` allows incompatible changes that older `setup.sh` versions correctly reject with a clear error.
@@ -203,6 +204,12 @@ erDiagram
     }
     MiseConfig ||--o{ MiseToolEntry : "[tools]"
     MiseConfig ||--o{ MiseEnvEntry : "[env]"
+    MiseConfig ||--o{ MiseToolAlias : "[tool_alias]"
+    MiseToolAlias |o--|| MiseToolEntry : "backs (same name)"
+    MiseToolAlias {
+        string name
+        string backend_spec
+    }
     MiseToolEntry {
         string tool
         string version_or_table
@@ -275,6 +282,7 @@ This project is a single-binary CLI with no persistent database. The "schemas" a
 | `.devcontainer/scripts/post.sh` (core template + workspace) | `setup_sudo_path` and the trailing "Claude Code Setup" probe removed; new marker blocks `# mise Runtime Setup` and `# Claude Code Setup`; required order mise → Claude Code → Codex → plugins. Existing downstream `post.sh` files are not migrated automatically. | #325 |
 | `.devcontainer/scripts/{setup_mise,setup_claude,npm_global_cli}.sh` | New manifest-eligible helpers shipped by core (delivered as `NEW` by `--upgrade`); `setup_codex.sh` rewritten on the shared npm helper; `setup_plugins.sh` reads `enabledPlugins` instead of a hard-coded context7/serena/playwright list. | #325 |
 | `.claude/settings.json` (claude template + workspace) | Gains `extraKnownMarketplaces` + `enabledPlugins` (`context7` only). Arrives downstream through the next refresh. | #325 |
+| `templates/languages/godot/` (downstream Godot scaffold) | New tooling-only flavor. It writes `mise.toml` entries (`godot` .NET editor through an aliased `github:` backend, `dotnet` 10 LTS, `uv`, gdtoolkit through an aliased `pypi:` backend with a private CPython, two `DOTNET_*` env entries), a `godot` OS-package block, a `# Godot Engine Setup` `post.sh` block, the root gitignore block `# Godot (engine caches and export output)`, per-module `gdlintrc` / `.editorconfig`, `godot-quality-check.yml`, and the opt-in `docker-compose.godot-gui.yml`. `modules.json` languages widen to include `godot` (additive, schema `version` unchanged). `mise_toml_ensure` accepts the `tool_alias` section, `mise_toml_has_key` is new, and `replace_placeholders` lists the overlay. Output of the other flavors is byte-identical. | #331 |
 | `templates/languages/latex/.claude/rules/latex.md` (downstream LaTeX scaffold) | New rules file — LaTeX gains `rules/latex.md` for parity with the other five languages; `latex/plugin.sh::plugin_post_copy_shared` copies the rules dir like the rust/node plugins. Also: `setup.sh::load_selected_plugins` warns when `node` and `deno` are both selected (their `*.ts`/`*.tsx` format hooks compete), and all `templates/**/plugin.sh` file modes normalized to 644 (they are sourced, never executed). | #301 |
 
 No SQL, no database migrations — config files (including `mise.toml`, #325), the JSON modules registry, and the seeded `.gitignore` are the only schemas.
@@ -300,8 +308,8 @@ perspective; Tarnished writes only the ones below.
 | --- | --- | --- | --- |
 | `terminal.shell.program` | string (`"bash"`) | `templates/core` | Integrated terminal shell inside the container |
 | `file_scan_exclusions` | array of glob strings, with the sentinel `"..."` preserving Zed's defaults | `core` + every language | Keep build/cache directories out of the file tree, finder and search |
-| `languages.<Lang>.formatter` | `"language_server"` or `{"language_server": {"name": "<lsp>"}}` | python (`ruff`), node (`biome`), deno/go (`language_server`) | Format-on-save tool per language |
-| `languages.<Lang>.format_on_save` | `"on"` / `"off"` | python, node, deno, go | Enables the format pipeline |
+| `languages.<Lang>.formatter` | `"language_server"`, `{"language_server": {"name": "<lsp>"}}` or `{"external": {"command": …, "arguments": […]}}` | python (`ruff`), node (`biome`), deno/go (`language_server`), godot (`GDScript` → external `gdformat -`, #331) | Format-on-save tool per language |
+| `languages.<Lang>.format_on_save` | `"on"` / `"off"` | python, node, deno, go, godot | Enables the format pipeline |
 | `languages.<Lang>.code_actions_on_format` | object of action → bool | python (`source.organizeImports.ruff`), node (`source.fixAll.biome`, `source.organizeImports.biome`) | Phase 1 of Zed's two-phase format pipeline |
 | `languages.<Lang>.language_servers` | array of names, `!name` to disable | deno | Replaces the built-in TS servers with `deno` |
 | `lsp.<server>.initialization_options` | object passed to the LSP | rust (`rust-analyzer.check.command = "clippy"`), go (`gopls.staticcheck = true`) | Per-language diagnostics behavior |
@@ -344,13 +352,27 @@ plugin entries; every key is developer-owned after scaffold.
 | `[env]` | `UV_PYTHON` | `{ value = "{{ tools.python.path }}", tools = true }` | python |
 | `[env]` | `PYTHONDONTWRITEBYTECODE`, `PYTHONUNBUFFERED`, `UV_COMPILE_BYTECODE` | `"1"` | python |
 | `[env]` | `UV_LINK_MODE` | `"copy"` | python |
+| `[tool_alias]` | `godot` | `"github:godotengine/godot"` (only when `tools.godot` was absent) | godot |
+| `[tools]` | `godot` | `{ version = "<4.x.y>-stable", asset_pattern = 'Godot_v{{ version }}_mono_linux_{{ arch(x64="x86_64", arm64="arm64") }}.zip', rename_exe = { "Godot_v*_mono_linux.*" = "godot" } }`, exact current 4.x stable at implementation (4.7.2 at design) | godot |
+| `[tools]` | `dotnet` | exact current .NET 10 (LTS) SDK at implementation (`10.0.403` at design) | godot |
+| `[tools]` | `uv` | same literal as python's | godot (no-op when python wrote it) |
+| `[tool_alias]` | `gdtoolkit` | `"pypi:gdtoolkit"` (only when `tools.gdtoolkit` was absent) | godot |
+| `[tools]` | `gdtoolkit` | `{ version = "<current>", python = "3.12" }` (`4.5.0` at design) | godot |
+| `[env]` | `DOTNET_CLI_TELEMETRY_OPTOUT`, `DOTNET_NOLOGO` | `"1"` | godot |
 
 **Write rule** (`common.sh::mise_toml_ensure`): an entry is inserted only when
 its key is absent from the section in every spelling (bare or quoted key,
 `[section.key]` table, top-level `section.key`). Existing entries are never
 rewritten, so a developer-changed version survives every scaffold re-run,
 monorepo init and `--add-module`. A monorepo root holds the union of its
-modules' entries.
+modules' entries. Accepted sections: `tools`, `env`, `settings`, `tool_alias`
+(#331). Keys are bare (`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`): a tool whose backend
+id contains `:` or `/` gets a bare name through `[tool_alias]`. **Alias
+rule** (#331): a plugin writes `[tool_alias] <k>` only if
+`mise_toml_has_key <file> tools <k>` reported the tool absent, and writes it
+before the tool entry. A developer's existing `[tools] <k>`, which might use
+another backend, is therefore never retargeted. A developer's existing alias
+without a tool entry is kept, and only the tool entry is added.
 
 **Consumers**: `docker/Dockerfile.dev` copies the file and runs `mise install`
 as `vscode`; `post.sh` re-runs `mise install` (`setup_mise`) so later edits
@@ -363,6 +385,28 @@ Tarnished placeholder: `mise.toml` must never be added to
 **Ownership**: no `.tarnished/refresh.json` mapping, outside
 `_manifest_path_eligible` (so no `MANIFEST_EXCLUDE_GLOBS` entry), tracked by
 git.
+
+### `docker-compose.godot-gui.yml` (WSLg GUI overlay, #331)
+
+A project-root Compose file written by the godot flavor's `plugin_copy`.
+Its only service key is the dev service `{{PROJECT_NAME}}`, rendered by
+`replace_placeholders`.
+
+| Key (under the dev service) | Value |
+| --- | --- |
+| `volumes` | `${WSLG_X11_DIR:-/tmp/.X11-unix}:/tmp/.X11-unix`, `${WSLG_DIR:-/mnt/wslg}:/mnt/wslg`, `${WSL_LIB_DIR:-/usr/lib/wsl}:/usr/lib/wsl:ro` |
+| `devices` | `/dev/dxg:/dev/dxg` |
+| `environment` | `DISPLAY=${DISPLAY:-:0}`, `WAYLAND_DISPLAY=wayland-0`, `XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir`, `PULSE_SERVER=unix:/mnt/wslg/PulseServer`, `LD_LIBRARY_PATH=/usr/lib/wsl/lib` |
+
+**Activation**: the file is active exactly while
+`.devcontainer/devcontainer.json :: dockerComposeFile` lists
+`"../docker-compose.godot-gui.yml"` after `"../docker-compose.yml"`. The
+godot plugin appends the entry only on opt-in, and never sorts the list. It
+is never merged into `docker-compose.yml`.
+
+**Ownership**: developer-owned. It is outside `_manifest_path_eligible`, so
+there is no `MANIFEST_EXCLUDE_GLOBS` entry, no refresh mapping, and it is
+tracked by git.
 
 ### `.claude/settings.json` plugin keys (#325)
 
@@ -439,7 +483,19 @@ The shipped defaults use pinned model IDs. The Claude designer's `[1m]` suffix b
 
 The `.gitignore` produced by `update_gitignore()` and Codex's `plugin_post_copy` is structured as a sequence of **marker-guarded blocks**. The marker (a comment line) is the keyed-on identity of the block; rewriting it without coordination would re-trigger the block-append on existing projects (a benign but visible side effect). The exact marker strings and block contents are defined in [api-spec.md](./api-spec.md) :: "Setup / Plugin Surface".
 
-The same marker-guarded-block pattern (#263) governs the language blocks appended to `post.sh`, latex's TeX Live block and (since #325) the service OS-package blocks in `Dockerfile.dev`, and the core/codex/claude `post.sh` setup blocks placed by `post_sh_add_block` — see api-spec.md :: "Language plugin contract" and "Generated install contract". `mise.toml` uses key-level rather than block-level idempotency (`mise_toml_ensure`).
+The same marker-guarded-block pattern (#263) governs:
+
+- the language blocks appended to `post.sh`
+- latex's TeX Live block
+- since #325, the service OS-package blocks in `Dockerfile.dev`, and the
+  core/codex/claude `post.sh` setup blocks placed by `post_sh_add_block`
+- since #331, godot's `# >>> godot os-packages >>>` Dockerfile block, its
+  `# Godot Engine Setup` `post.sh` block (also placed by `post_sh_add_block`)
+  and its root gitignore block `# Godot (engine caches and export output)`
+
+See api-spec.md :: "Language plugin contract" and "Generated install
+contract". `mise.toml` uses key-level rather than block-level idempotency
+(`mise_toml_ensure`, `mise_toml_has_key`).
 
 ### Host maintenance boundary (#316)
 
