@@ -102,6 +102,10 @@ Examples:
 # Optional Zed editor support (#323) — openable in VS Code or Zed
 ./setup.sh --lang rust --zed -y
 
+# Godot 4 .NET (GDScript + C#) (#331); headless by default
+./setup.sh --lang godot -y
+GODOT_GUI=true ./setup.sh --lang godot -y                               # WSL2: also run the editor GUI (WSLg)
+
 # Monorepo init (#263)
 ./setup.sh                                                              # interactive
 ./setup.sh --monorepo --module jing:python --module kir:node -y         # CLI
@@ -226,7 +230,7 @@ Schema (full table in [data-model.md](./data-model.md) :: "modules.json schema")
 | `version` | integer | Currently `1`. Readers MUST reject unknown majors. |
 | `modules[].name` | string | `^[a-z][a-z0-9_-]*$`, max 50 chars, unique. |
 | `modules[].path` | string | Relative to repo root; equals `name` for now. |
-| `modules[].language` | string | One of `rust`, `python`, `node`, `deno`, `latex`, `go` (#274). |
+| `modules[].language` | string | One of `rust`, `python`, `node`, `deno`, `latex`, `go` (#274), `godot` (#331). |
 | `modules[].services` | array of string | Informational; actual compose runs project-wide. |
 
 ## Internal API (cross-module function contracts)
@@ -268,7 +272,7 @@ The first four are also exposed as `workflow_call`-callable reusable workflows f
 | `rust-quality-check.yml` | `pull_request: [develop]`, `push: [develop]` | No | Tarnished-internal: `cargo check`, `clippy`, `fmt`, unit tests, integration tests |
 | `asset-parity.yml` | `pull_request: [develop]` (AI asset / template paths), `push: [develop]` | No | Runs `scripts/verify-mirrors.sh` (#304) |
 | `claude-code-review.yml` | `pull_request: [develop]` types `[opened, ready_for_review]` | No | First-pass Claude review of a PR (#308) |
-| `scaffold-build.yml` | `pull_request: [develop]` (templates, `setup.sh`, `scripts/lib`, `scripts/ci`, root `docker/`, `mise.toml`), `push: [develop]`, `workflow_dispatch` | No | (#325) amd64 matrix — core, python, node, rust, go, deno, postgresql, mysql, redis, celery, plus the workspace image: scaffold with `setup.sh -y`, assert no `features`, `docker build` the generated `Dockerfile.dev` with gha cache and a `github_token` BuildKit secret, run `scripts/ci/smoke-runtimes.sh` under `bash -c` and `bash -ic`; the core entry also runs `post.sh` and asserts `claude --version`. latex excluded |
+| `scaffold-build.yml` | `pull_request: [develop]` (templates, `setup.sh`, `scripts/lib`, `scripts/ci`, root `docker/`, `mise.toml`), `push: [develop]`, `workflow_dispatch` | No | (#325) amd64 matrix — core, python, node, rust, go, deno, godot (#331; smoke `godot dotnet gdformat gdlint`), postgresql, mysql, redis, celery, plus the workspace image: scaffold with `setup.sh -y`, assert no `features`, `docker build` the generated `Dockerfile.dev` with gha cache and a `github_token` BuildKit secret, run `scripts/ci/smoke-runtimes.sh` under `bash -c` and `bash -ic`; the core entry also runs `post.sh` and asserts `claude --version`. latex excluded |
 
 ### JavaScript action runtime pin policy (#267)
 
@@ -292,6 +296,25 @@ See "CLI Surface :: `setup.sh`" above for flags and modes (#263). The completion
 
 Per #325 no flag changes: `--help` states that runtimes come from `mise.toml` and lists latex; `show_interactive_mode_error` lists only real flags (the phantom `--playwright`, `--docker`, `--neo4j` are gone); `check_dependencies` requires `jq` and `awk` (mise and Docker are container-side, not host prerequisites); `execute_plugin_dockerfiles` keeps its position between the copy and post-copy passes and warns once when the target `Dockerfile.dev` lacks `# >>> mise runtimes >>>`. Add-module ends with a hint to run `mise install` (or rebuild) for newly declared runtimes.
 
+Per #331 no flag changes. `AVAILABLE_LANGUAGES` gains `godot`, appended so the
+existing menu numbers stay stable, and `LANGUAGE_DISPLAY_NAMES[godot]` is
+`Godot (GDScript + C#)`. `--help` lists godot, documents
+`GODOT_GUI=true|false`, and adds godot examples.
+`common.sh::show_interactive_mode_error` lists godot. In single mode,
+`infer_scaffold_options` reports `godot` when `gdlintrc` or
+`.github/workflows/godot-quality-check.yml` exists, so `--upgrade` staging
+reproduces the flavor. `GODOT_GUI` is the only new input. It is read by the
+godot plugin, not by `setup.sh`: `true` / `1` / `yes` enables the WSLg
+overlay, and any other value disables it. When it is unset, the plugin
+prompts on a TTY, except with `-y`, in `--upgrade` / `--create-manifest`, or
+when the overlay is already enabled. `execute_plugin_post_copies` calls
+`plugin_interactive_setup` only when `check_tty_available` succeeds, and does
+not check `-y`. The plugin therefore resolves the variable in a non-prompting
+helper, `_godot_resolve_gui_choice`. It calls that helper both from
+`plugin_interactive_setup`, which adds only the prompt, and from
+`plugin_post_copy_shared` whenever the choice is still undecided. This makes
+`GODOT_GUI=true` effective in non-TTY runs (CI, `curl | bash`).
+
 Per #323, `scaffold_options` gains the optional boolean `zed_enabled`, produced by `infer_scaffold_options` from the presence of `<scope>/.zed/settings.json` and restored into `ZED_ENABLED` by `populate_setup_state_from_manifest` so an `--upgrade` staging run reproduces the same tree it would have scaffolded. Because `.zed/settings.json` is outside `_manifest_path_eligible` (only `.devcontainer/scripts/*.sh` other than `post.sh` is maintenance-eligible), that fidelity affects staging only: `--create-manifest` never hashes the file, `--upgrade` never decides on it, and `--upgrade --prune` cannot delete it. No `MANIFEST_EXCLUDE_GLOBS` entry is needed.
 
 ### `setup.sh::derive_agent_names()` (#308)
@@ -306,7 +329,7 @@ Signature unchanged: `stage_plugin_run <upstream_dir> <staging_dir>` (and the pe
 
 Without this, `--upgrade` staged **unrendered** template copies while the manifest held hashes of **rendered** files, so `manifest_decide` saw `current == old && new != old` and emitted `UPDATE` — writing `{{PROJECT_NAME}}` / `{{AI_PROFILE}}` / `{{AI_PRIMARY_AGENT}}` / `{{AI_REVIEW_AGENT}}` back over correctly rendered downstream files. Most placeholder-bearing files escaped this because they sit in `MANIFEST_EXCLUDE_GLOBS` (`CLAUDE.md`, `AGENTS.md`, `README.md`, `docker-compose.yml`, `.devcontainer/devcontainer.json`); the exposed set was exactly `.tarnished/agent-profile.json` and `.tarnished/workflows/{README,issue,design,implement,review,pr}.md`, which historically were manifest-tracked and placeholder-bearing; the profile is now project-owned and workflow contracts use refresh. The regression only fired when one of those files changed upstream — which #308 is the first change to do.
 
-`replace_placeholders` carries a hard-coded file list (`scripts/lib/common.sh`), so any new placeholder-bearing scaffolded file must be added there. New contract files introduced by #308 (`.tarnished/workflows/flow.md`) are authored placeholder-free instead.
+`replace_placeholders` carries a hard-coded file list (`scripts/lib/common.sh`), so any new placeholder-bearing scaffolded file must be added there. New contract files introduced by #308 (`.tarnished/workflows/flow.md`) are authored placeholder-free instead. #331 adds `docker-compose.godot-gui.yml`, which needs `{{PROJECT_NAME}}` as its service key. Unlike the service overlays it is never merged away, so it must be rendered in place.
 
 ### `scripts/lib/common.sh::sha256_file()` (#265)
 
@@ -406,8 +429,9 @@ required because `copy_with_confirm` does not create parent directories.
 Call sites, one line each and never conditional:
 `templates/core/plugin.sh::plugin_post_copy`;
 `templates/languages/<lang>/plugin.sh::plugin_post_copy_shared` (immediately
-after the existing devcontainer merge, because all six language hooks can
-`return` early from their `post.sh` marker branch; and never from
+after the existing devcontainer merge, because the six older language hooks can
+`return` early from their `post.sh` marker branch (godot has no early return
+but keeps the same position); and never from
 `plugin_post_copy_module`, since `.zed/` is a root asset);
 `templates/services/{postgresql,mysql,redis}/plugin.sh::plugin_post_copy`.
 
@@ -425,7 +449,9 @@ Shipped extension IDs — all verified to exist in `zed-industries/extensions`
 (`extensions.toml` + `api.zed.dev/extensions`): `core` → `dockerfile`;
 `languages/rust` and `languages/python` → `toml`; `languages/node` → `biome`;
 `languages/deno` → `deno`; `languages/latex` → `latex`;
-`services/postgresql` and `services/mysql` → `sql`. `languages/go` ships a
+`languages/godot` → `gdscript`, `csharp` (#331; `gdscript` needs `nc`, which
+the godot OS block installs); `services/postgresql` and `services/mysql` →
+`sql`. `languages/go` ships a
 settings fragment only, and `services/redis` ships no `.zed/` at all. Rust,
 Python, Go, TypeScript/JavaScript, JSON, YAML, Markdown and Git are built into
 Zed and get no extension. Rationale and rejected candidates:
@@ -491,6 +517,17 @@ Same idempotency contract as above. Appends Codex-specific blocks:
 | --- | --- | --- |
 | Codex whitelist | `# Codex CLI (track shared config only)` | `.codex/*` + `!.codex/config.toml` |
 | Codex repo skills | `# Codex Agent Skills (track shared workflow skills)` | `.agents/*` + allowlist: `skills/` |
+
+### `templates/languages/godot/plugin.sh::plugin_post_copy_shared` — gitignore step (#331)
+
+Same contract (touch if missing, add a trailing newline when the file lacks
+one, exact-line `grep -q "^<marker>$"`, append-only), at root scope:
+
+| Block | Marker (line-anchored) | Contents |
+| --- | --- | --- |
+| Godot | `# Godot (engine caches and export output)` | `.godot/`, `.mono/`, `data_*/`, `mono_crash.*.json`, `*.translation`, `export_credentials.cfg`, `build/`, `export/` |
+
+The patterns are unanchored, so they also match inside monorepo modules.
 
 The Codex plugin touches `${target_dir}/.gitignore` if it is missing, then only appends marker-guarded blocks. This keeps fresh Codex projects and existing projects on the same idempotent path even though `setup.sh` runs plugin post-copy hooks before `update_gitignore`.
 
@@ -624,7 +661,7 @@ is `vscode`.
 | --- | --- | --- | --- |
 | 1 | `# mise Runtime Setup` | core | `setup_mise.sh` / `setup_mise` |
 | 2 | `# Claude Code Setup` | core | `setup_claude.sh` / `setup_claude` |
-| — | language / service blocks | languages, services | unchanged mechanisms |
+| — | language / service blocks | languages, services | unchanged mechanisms; godot's `# Godot Engine Setup` (#331) is placed by `post_sh_add_block` and is informational only (versions, export-template hint, GUI/headless mode) |
 | 3 | `# Codex CLI Setup` | codex | `setup_codex.sh` / `setup_codex` |
 | 4 | `# Claude Code Plugin Setup` | claude | `setup_plugins.sh` / `setup_plugins` |
 
@@ -653,7 +690,7 @@ replaces a feature-installed CLI that already runs.
 ### `scripts/lib/common.sh::mise_toml_ensure()` (#325)
 
 Signature: `mise_toml_ensure <mise_toml> <section> <key> <toml_value>`.
-`section` ∈ {`tools`, `env`, `settings`}; `key` matches
+`section` ∈ {`tools`, `env`, `settings`, `tool_alias` (#331)}; `key` matches
 `^[A-Za-z0-9_][A-Za-z0-9_.-]*$`; `toml_value` is a single-line TOML literal
 written verbatim. Creates the file (with a header comment) or the section when
 missing; inserts after the section's last non-blank line; **skips** when the
@@ -662,6 +699,18 @@ key is already present as a bare or quoted key in the section, as a
 Returns 1 only for invalid arguments or write failure; plugin callers
 downgrade that to `print_warning`. Called only from
 `plugin_post_copy_shared` (root scope), never from `plugin_post_copy_module`.
+
+### `scripts/lib/common.sh::mise_toml_has_key()` (#331)
+
+Signature: `mise_toml_has_key <mise_toml> <section> <key>`. Read-only
+companion to `mise_toml_ensure`, sharing its presence predicate (bare or
+quoted key under `[section]`, a `[section.key]` header, or a top-level
+`section.key =`; commented lines and other sections do not count). Exit `0`
+when present, `1` when absent or the file is missing (the file is never
+created), `2` plus `print_error` for an invalid section or key. Silent on
+0 and 1. Purpose: write a `[tool_alias] <k>` entry only when `[tools] <k>`
+is absent, so an alias never retargets a developer's existing tool entry.
+Caller: `templates/languages/godot/plugin.sh` (`godot`, `gdtoolkit`).
 
 ### `scripts/lib/common.sh::dockerfile_add_os_packages()` (#325)
 
@@ -673,8 +722,12 @@ Exact-line marker guard in every mode. Missing Dockerfile or missing anchor →
 `print_warning` (listing the packages), file unchanged, return 0. Callers:
 `templates/services/postgresql/plugin.sh::plugin_dockerfile`
 (`postgresql-client`), `templates/services/mysql/plugin.sh::plugin_dockerfile`
-(`default-mysql-client`). latex keeps its own #263 awk insertion at the same
-anchor.
+(`default-mysql-client`), `templates/languages/godot/plugin.sh::plugin_dockerfile`
+(block id `godot`, #331: 28 trixie packages for X11/Wayland, Mesa incl. the
+WSLg `d3d12` GL driver, Vulkan loader + lavapipe, ALSA/PulseAudio,
+fontconfig, udev, dbus, `libicu76` + `libssl3t64` for the .NET SDK,
+`netcat-openbsd`, `unzip`; installed unconditionally, whatever the GUI
+choice). latex keeps its own #263 awk insertion at the same anchor.
 
 ### `scripts/lib/common.sh::post_sh_add_block()` (#325)
 
@@ -687,8 +740,10 @@ appends. Atomic temp + `mv`. Callers and before-lists: core
 (`# mise Runtime Setup` before Claude/Codex/plugin markers;
 `# Claude Code Setup` before Codex/plugin markers), codex
 (`# Codex CLI Setup` before `# Claude Code Plugin Setup`), claude
-(`# Claude Code Plugin Setup`, append). The order is therefore independent of
-plugin load order.
+(`# Claude Code Plugin Setup`, append), godot (`# Godot Engine Setup` before
+`# Codex CLI Setup` / `# Claude Code Plugin Setup`, #331; the first language
+block to use the helper, in every mode). The order is therefore independent
+of plugin load order.
 
 ### `/workspace/.claude/settings.json` (workspace, #261, #299)
 
@@ -786,15 +841,19 @@ default.
 
 ### Language plugin contract (`templates/languages/<lang>/plugin.sh`, #263)
 
-Language plugins (currently `python`, `rust`, `node`, `deno`, `latex`, `go` — #274 added `go`) expose a split `plugin_post_copy`:
+Language plugins (currently `python`, `rust`, `node`, `deno`, `latex`, `go`, `godot` — #274 added `go`, #331 added `godot`) expose a split `plugin_post_copy`:
 
 ```bash
 # REQUIRED today, kept verbatim:
 plugin_name()                       # echo "<id>"
 plugin_description()                # echo "<desc>"
-plugin_copy(target_dir)             # root-scoped (e.g. .github/workflows/<lang>-quality-check.yml)
-plugin_dockerfile(target_dir)       # OPTIONAL, OS packages only (#325): latex (TeX Live) is the
-                                    #   only language that still implements it
+plugin_copy(target_dir)             # root-scoped (e.g. .github/workflows/<lang>-quality-check.yml;
+                                    #   godot also copies docker-compose.godot-gui.yml)
+plugin_dockerfile(target_dir)       # OPTIONAL, OS packages only (#325): latex (TeX Live) and
+                                    #   godot (GUI/.NET libraries, #331)
+plugin_interactive_setup()          # OPTIONAL, called only on a TTY: godot prompts for the GUI
+                                    #   opt-in; non-prompting resolution also runs from
+                                    #   plugin_post_copy_shared (#331)
 
 # REQUIRED today, becomes a SHIM that delegates to the new pair:
 plugin_post_copy(target_dir) {
@@ -810,12 +869,14 @@ plugin_post_copy_module(target_dir, module_name)
 
 | Hook | Arguments | What it MAY touch | What it MUST NOT touch |
 | --- | --- | --- | --- |
-| `plugin_post_copy_shared` | `target_dir` (= project root) | `target_dir/.devcontainer/` (feature-free `customizations` overlay), `target_dir/.claude/`, `target_dir/.zed/` via `apply_zed_assets` (#323), `target_dir/mise.toml` via `mise_toml_ensure` (#325), marker-guarded blocks in `target_dir/.devcontainer/scripts/post.sh` | Module sub-directories |
+| `plugin_post_copy_shared` | `target_dir` (= project root) | `target_dir/.devcontainer/` (feature-free `customizations` overlay; godot also appends to `dockerComposeFile` on GUI opt-in, #331), `target_dir/.claude/`, `target_dir/.zed/` via `apply_zed_assets` (#323), `target_dir/mise.toml` via `mise_toml_ensure` / `mise_toml_has_key` (#325, #331), marker-guarded blocks in `target_dir/.devcontainer/scripts/post.sh` and in the root `.gitignore` (godot, latex) | Module sub-directories |
 | `plugin_post_copy_module` | `target_dir` (= `<root>/<module>` in monorepo mode, `<root>` in single mode), `module_name` | Files inside `target_dir`: `pyproject.toml`/`Cargo.toml`/`package.json`, lint config (`ruff.toml`, `biome.json`, etc.), `src/<module_name>/`, `tests/`, language-specific `.gitignore`, `CLAUDE.md` for the module | `target_dir/.devcontainer/`, `target_dir/.claude/`, `target_dir/.zed/`, `target_dir/docker/`, `target_dir/mise.toml`, root `docker-compose.yml` |
 
 Both functions MUST be **idempotent** — re-running `setup.sh --add-module` for an already-registered language is a no-op for shared assets and obeys `--overwrite` for module assets. Marker-guarded blocks in `post.sh` (and latex's `Dockerfile.dev` block) provide block-level idempotency analogous to the gitignore policy (#259); `mise_toml_ensure` provides key-level idempotency for `mise.toml` (#325).
 
-Runtime entries per language (#325): python → `python = "3.12"`, `uv`, and the `[env]` block (`UV_PYTHON` from `{{ tools.python.path }}`, `PYTHONDONTWRITEBYTECODE`, `PYTHONUNBUFFERED`, `UV_COMPILE_BYTECODE`, `UV_LINK_MODE`); node → `node = "22"`, `pnpm` (Corepack no longer used); rust → `rust = { version = "stable", components = ["rustfmt", "clippy"] }`; go → `go`; deno → `deno`; latex → none. Exact uv/pnpm/go/deno pins are the current releases at implementation time. The rust and go `post.sh` blocks run `mise reshim` after `cargo install` / `go install`.
+Runtime entries per language (#325): python → `python = "3.12"`, `uv`, and the `[env]` block (`UV_PYTHON` from `{{ tools.python.path }}`, `PYTHONDONTWRITEBYTECODE`, `PYTHONUNBUFFERED`, `UV_COMPILE_BYTECODE`, `UV_LINK_MODE`); node → `node = "22"`, `pnpm` (Corepack no longer used); rust → `rust = { version = "stable", components = ["rustfmt", "clippy"] }`; go → `go`; deno → `deno`; latex → none; godot (#331) → `[tool_alias] godot = "github:godotengine/godot"` + `tools.godot` (.NET `_mono_` asset via `asset_pattern`, `rename_exe` to `godot`), `dotnet` (.NET 10 LTS SDK), `uv` (python's pin), `[tool_alias] gdtoolkit = "pypi:gdtoolkit"` + `tools.gdtoolkit = { version, python = "3.12" }`, `[env] DOTNET_CLI_TELEMETRY_OPTOUT` / `DOTNET_NOLOGO` = `"1"`; each alias is written only when its tool key was absent (`mise_toml_has_key`). Exact uv/pnpm/go/deno/godot/dotnet/gdtoolkit pins are the current releases at implementation time. The rust and go `post.sh` blocks run `mise reshim` after `cargo install` / `go install`.
+
+godot-specific module files (#331): `gdlintrc` and `.editorconfig` are copied by `plugin_post_copy_module`. The CI workflow `godot-quality-check.yml` has three jobs, each of which prints `::notice::` and succeeds when its input is absent: `lint` (gdlint + `gdformat --check`), `test` (`dotnet build` per `.csproj`, then headless GUT when `addons/gut` exists) and `export` (headless `--export-release` per preset with an `export_path` when `export_presets.cfg` exists; export templates cached and SHA-512-checked). It discovers every `project.godot` and installs tools from `mise.toml` with `jdx/mise-action@v4`. The plugin generates no `project.godot`, `export_presets.cfg` or `addons/`.
 
 ### Non-language plugin contract (`templates/{core,claude,codex,services/<svc>,github-actions/<wf>}/plugin.sh`)
 
@@ -867,6 +928,9 @@ Single mode: takes the `else` branch for all plugins → identical to today's be
 | Devcontainer JSON comment normalization failure | shell error, non-zero helper return | `merge_devcontainer_json` receives malformed comments or JSON invalid after comment stripping |
 | Zed devcontainer overlay merge failure | shell warning, `apply_zed_assets` returns 0 (#323) | A flavor's `.zed/devcontainer.json` is unparseable; temp removed, the live `.devcontainer/devcontainer.json` is left unchanged |
 | Zed project settings merge failure | shell warning, `apply_zed_assets` returns 0 (#323) | The developer's `.zed/settings.json` is invalid even after comment stripping, or jq failed; temp removed, the live file is left unchanged |
+| Godot GUI activation impossible (missing or unparseable `devcontainer.json`, overlay file missing, write failure) | shell warning + manual one-line edit hint, return 0 (#331) | File left untouched; container stays headless |
+| `mise_toml_has_key` invalid section or key | `print_error`, exit 2 → caller `print_warning` (#331) | The alias/tool pair is skipped |
+| Godot GUI overlay enabled on a host without `/dev/dxg` | Docker refuses to start the container (#331) | Documented recovery: remove `"../docker-compose.godot-gui.yml"` from `dockerComposeFile` and rebuild; the default answer off-WSLg is `n` |
 | `--zed` in `--add-module` mode | shell warning, flag reset to `false` (#323) | Mirrors `--codex`: root assets were installed by the original init |
 | `--zed` against an existing Tarnished project | shell error, exit 1 (#323) | `scaffold_flags_supplied` counts `--zed` as a scaffold selection, so the existing "use --refresh / --add-module" guidance fires instead of a silent refresh |
 | `scaffold_options.zed_enabled` present but not boolean | shell error, exit 1 (#323) | `manifest_options_valid` rejects it → `manifest_read` "Invalid manifest scaffold options" |

@@ -66,7 +66,7 @@ manifest_options_valid() {
         ((has("languages") | not) or
             (.languages | type == "array" and all(.[];
                 . == "rust" or . == "python" or . == "node" or
-                . == "deno" or . == "latex" or . == "go"))) and
+                . == "deno" or . == "latex" or . == "go" or . == "godot"))) and
         ((has("services") | not) or
             (.services | type == "array" and all(.[];
                 . == "celery" or . == "mysql" or . == "postgresql" or . == "redis"))) and

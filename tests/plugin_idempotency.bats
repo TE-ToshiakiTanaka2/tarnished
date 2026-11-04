@@ -344,3 +344,148 @@ run_node_post_block_without_pnpm() {
     assert_output --partial "AFTER_NODE_BLOCK"
     grep -qF 'node (pnpm) post-create' "$SCRATCH/.devcontainer/scripts/post.sh"
 }
+
+# --- #331: languages/godot ---------------------------------------------------
+# The godot plugin may prompt for the workflow overwrite and the GUI choice
+# whenever a terminal exists; force the non-TTY path so a developer running
+# bats from a terminal gets the same result as CI.
+
+godot_no_tty() {
+    check_tty_available() { return 1; }
+    unset GODOT_GUI
+}
+
+@test "post_copy idempotent: languages/godot" {
+    godot_no_tty
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/godot/plugin.sh"
+}
+
+@test "post_copy idempotent with ZED_ENABLED: languages/godot" {
+    godot_no_tty
+    export ZED_ENABLED=true
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/godot/plugin.sh"
+}
+
+@test "post_copy idempotent with the GUI overlay enabled: languages/godot" {
+    godot_no_tty
+    export GODOT_GUI=true
+    # Core always ships dockerComposeFile; seed it as the real scaffold has it.
+    echo '{"dockerComposeFile": ["../docker-compose.yml"]}' > "$SCRATCH/.devcontainer/devcontainer.json"
+    assert_plugin_post_copy_idempotent "${SCRIPT_DIR}/templates/languages/godot/plugin.sh"
+    run jq -c '.dockerComposeFile' "$SCRATCH/.devcontainer/devcontainer.json"
+    assert_output '["../docker-compose.yml","../docker-compose.godot-gui.yml"]'
+}
+
+@test "mise.toml idempotent: languages/godot (every entry once)" {
+    godot_no_tty
+    assert_mise_toml_idempotent "${SCRIPT_DIR}/templates/languages/godot/plugin.sh"
+    local key
+    for key in godot dotnet uv gdtoolkit; do
+        run grep -c "^${key} = " "$SCRATCH/mise.toml"
+        assert_output "$([[ "$key" == godot || "$key" == gdtoolkit ]] && echo 2 || echo 1)"
+    done
+    run grep -c '^\[tool_alias\]$' "$SCRATCH/mise.toml"
+    assert_output "1"
+    run grep -c '^DOTNET_NOLOGO = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+    run grep -c '^DOTNET_CLI_TELEMETRY_OPTOUT = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+}
+
+@test "mise.toml: godot never overwrites a developer-changed entry" {
+    godot_no_tty
+    printf '[tools]\nnode = "22"\ngodot = "4.6.3-stable"\ndotnet = "8.0.427"\n' > "$SCRATCH/mise.toml"
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/templates/languages/godot/plugin.sh"
+    plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1
+    run grep -x 'godot = "4.6.3-stable"' "$SCRATCH/mise.toml"
+    assert_success
+    run grep -x 'dotnet = "8.0.427"' "$SCRATCH/mise.toml"
+    assert_success
+    run grep -c '^godot = ' "$SCRATCH/mise.toml"
+    assert_output "1"
+    # No alias for godot: it would retarget the developer's own entry.
+    run grep -x 'godot = "github:godotengine/godot"' "$SCRATCH/mise.toml"
+    assert_failure
+    run grep -x 'gdtoolkit = "pypi:gdtoolkit"' "$SCRATCH/mise.toml"
+    assert_success
+}
+
+@test "mise.toml: godot keeps a developer tool_alias and still adds the tool" {
+    godot_no_tty
+    printf '[tool_alias]\ngodot = "aqua:godotengine/godot"\n' > "$SCRATCH/mise.toml"
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/templates/languages/godot/plugin.sh"
+    plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1
+    run grep -x 'godot = "aqua:godotengine/godot"' "$SCRATCH/mise.toml"
+    assert_success
+    run grep -c '^godot = ' "$SCRATCH/mise.toml"
+    assert_output "2"
+    run grep -c '^godot = { version = "4.7.2-stable"' "$SCRATCH/mise.toml"
+    assert_output "1"
+}
+
+@test "mise.toml: godot and python share one uv line in either order" {
+    godot_no_tty
+    local order
+    for order in "godot python" "python godot"; do
+        printf '[tools]\nnode = "22"\n' > "$SCRATCH/mise.toml"
+        local lang
+        for lang in $order; do
+            (
+                # shellcheck disable=SC1090
+                source "${SCRIPT_DIR}/templates/languages/${lang}/plugin.sh"
+                plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1
+            )
+        done
+        run grep -c '^uv = ' "$SCRATCH/mise.toml"
+        assert_output "1"
+        run grep -x 'python = "3.12"' "$SCRATCH/mise.toml"
+        assert_success
+    done
+}
+
+@test "plugin_dockerfile idempotent: languages/godot" {
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/templates/languages/godot/plugin.sh"
+    plugin_dockerfile "$SCRATCH" >/dev/null 2>&1
+    cp "$SCRATCH/docker/Dockerfile.dev" "$SCRATCH/first.dockerfile"
+    plugin_dockerfile "$SCRATCH" >/dev/null 2>&1
+    run cmp "$SCRATCH/docker/Dockerfile.dev" "$SCRATCH/first.dockerfile"
+    assert_success
+    run grep -c '^# >>> godot os-packages >>>$' "$SCRATCH/docker/Dockerfile.dev"
+    assert_output "1"
+    local pkg
+    for pkg in libx11-6 libdecor-0-0 libgl1-mesa-dri mesa-vulkan-drivers libasound2t64 libpulse0 \
+        libfontconfig1 libicu76 libssl3t64 netcat-openbsd unzip; do
+        run grep -c "^    ${pkg}" "$SCRATCH/docker/Dockerfile.dev"
+        assert_output "1"
+    done
+    # The block sits above the single SHELL line.
+    local block_line shell_line
+    block_line="$(grep -n '^# >>> godot os-packages >>>$' "$SCRATCH/docker/Dockerfile.dev" | cut -d: -f1)"
+    shell_line="$(grep -n '^SHELL ' "$SCRATCH/docker/Dockerfile.dev" | cut -d: -f1)"
+    [[ "$block_line" -lt "$shell_line" ]]
+}
+
+@test "post_copy idempotent in monorepo mode: godot module files stay out of the root" {
+    godot_no_tty
+    export MONOREPO_MODE=true
+    mkdir -p "$SCRATCH/game"
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/templates/languages/godot/plugin.sh"
+    plugin_copy "$SCRATCH" >/dev/null 2>&1
+    plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1
+    plugin_post_copy_module "$SCRATCH/game" game >/dev/null 2>&1
+    local first
+    first=$(snapshot_tree "$SCRATCH")
+    plugin_post_copy_shared "$SCRATCH" >/dev/null 2>&1
+    plugin_post_copy_module "$SCRATCH/game" game >/dev/null 2>&1
+    [[ "$(snapshot_tree "$SCRATCH")" == "$first" ]]
+    [[ -f "$SCRATCH/game/gdlintrc" ]]
+    [[ -f "$SCRATCH/game/.editorconfig" ]]
+    [[ ! -e "$SCRATCH/gdlintrc" ]]
+    [[ ! -e "$SCRATCH/.editorconfig" ]]
+    run grep -c '^# Godot Engine Setup$' "$SCRATCH/.devcontainer/scripts/post.sh"
+    assert_output "1"
+}

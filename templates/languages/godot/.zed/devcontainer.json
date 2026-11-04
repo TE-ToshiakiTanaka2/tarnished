@@ -1,0 +1,10 @@
+{
+  "customizations": {
+    "zed": {
+      "extensions": [
+        "gdscript",
+        "csharp"
+      ]
+    }
+  }
+}

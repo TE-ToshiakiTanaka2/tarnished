@@ -59,12 +59,12 @@ VS Code or Zed. No devcontainer `features` are used.
 
 | Layer | Declared in | Installed by | When |
 | --- | --- | --- | --- |
-| OS packages (git, gh, mise, build tools, `postgresql-client`, `default-mysql-client`, TeX Live) | `docker/Dockerfile.dev` | `apt-get` as root | image build |
-| Language runtimes (node, python, uv, pnpm, rust, go, deno) | `mise.toml` | `mise install` as `vscode` | image build, and again on post-create |
+| OS packages (git, gh, mise, build tools, `postgresql-client`, `default-mysql-client`, TeX Live, Godot GUI/audio/.NET libraries) | `docker/Dockerfile.dev` | `apt-get` as root | image build |
+| Language runtimes (node, python, uv, pnpm, rust, go, deno, godot, dotnet, gdtoolkit) | `mise.toml` | `mise install` as `vscode` | image build, and again on post-create |
 | Claude Code, Codex CLI, Claude Code plugins | `.devcontainer/scripts/setup_*.sh`, `.claude/settings.json` | `npm install -g` / `claude plugin install` as `vscode` | post-create (`post.sh`) |
 
 `mise.toml` is developer-owned: core ships it with `node = "22"`, each language
-plugin adds its own entries (`python` + `uv`, `pnpm`, `rust`, `go`, `deno`), and
+plugin adds its own entries (`python` + `uv`, `pnpm`, `rust`, `go`, `deno`, `godot` + `dotnet` + `gdtoolkit`), and
 neither `setup.sh --upgrade` nor `--add-module` ever changes an entry you edited.
 
 To change a version:
@@ -104,7 +104,7 @@ Notes:
   `docker/Dockerfile.dev` above the `SHELL` line; generated plugin blocks use the
   same spot.
 - A CI workflow (`.github/workflows/scaffold-build.yml`) scaffolds and builds
-  every language and service flavor except `latex` on amd64.
+  every language and service flavor except `latex` on amd64 (godot included).
 
 ## Monorepo support
 
@@ -162,6 +162,95 @@ union of every module's language runtimes. Subsequent `setup.sh --add-module`
 invocations are idempotent against the shared root files (marker-guarded
 blocks, and `mise.toml` entries are only added, never changed); run
 `mise install` in the container afterwards to install a newly added runtime.
+
+## Godot (GDScript + C#)
+
+`--lang godot` (or `--module <name>:godot` in a monorepo) scaffolds the tooling
+for a Godot 4 .NET project. It is tooling only: it never creates
+`project.godot`, `export_presets.cfg` or `addons/`. Create the project in the
+Godot editor (or by hand) and add [GUT](https://github.com/bitwes/Gut) under
+`addons/gut` if you want unit tests.
+
+```bash
+./setup.sh --lang godot
+GODOT_GUI=true ./setup.sh --lang godot -y   # WSL2: also run the editor GUI
+```
+
+What is generated:
+
+- `mise.toml` entries: `godot` (the .NET editor build), `dotnet` (10.0 SDK),
+  `uv` and `gdtoolkit` (`gdlint` / `gdformat`, installed with its own private
+  Python, so the python flavor is not needed), plus `DOTNET_CLI_TELEMETRY_OPTOUT`
+  and `DOTNET_NOLOGO`.
+- A `godot` OS-package block in `docker/Dockerfile.dev`: X11, Wayland, Mesa,
+  Vulkan, audio, fontconfig and .NET prerequisite libraries, `netcat-openbsd`
+  (Zed's GDScript language server) and `unzip`.
+- Per module: `gdlintrc` and `.editorconfig` (GDScript tabs, C# spaces). Shared:
+  Claude hooks (`gdformat` for `*.gd`, `dotnet format whitespace` for `*.cs`),
+  `.claude/rules/godot.md`, VS Code and Zed settings, a `.gitignore` block
+  (`.godot/`, `.mono/`, `build/`, `export/`, ...), and a `# Godot Engine Setup`
+  block in `post.sh` that reports the Godot and .NET versions and the GUI mode.
+- `.github/workflows/godot-quality-check.yml` and `docker-compose.godot-gui.yml`.
+
+Why `godot` is aliased: the mise registry shorthand `godot` only installs the
+standard (non-.NET) build. The scaffold writes `[tool_alias] godot =
+"github:godotengine/godot"` next to a `tools.godot` entry with an
+`asset_pattern` for the `_mono_` Linux asset. The alias is written only
+together with a new `tools.godot`, so a `godot` entry you already have is never
+retargeted. `dotnet format <project>.csproj` runs the full C# style pass that the
+hook (whitespace only) skips.
+
+### Bumping Godot and export templates
+
+Edit `tools.godot.version` in `mise.toml` and run `mise install`. Export
+templates are version specific and live in the container home
+(`~/.local/share/godot/export_templates/<version>/`), so **re-download them after
+a bump** and after a container rebuild (add a volume to keep them). With
+`tag=$(mise current godot)` and `ver=$(godot --headless --version | tail -n 1 | sed -E 's/\.(official|custom_build)(\..*)?$//')`:
+
+```bash
+tpz="Godot_v${tag}_mono_export_templates.tpz"
+base="https://github.com/godotengine/godot/releases/download/${tag}"
+curl -fLO "${base}/${tpz}" && curl -fLO "${base}/SHA512-SUMS.txt"
+awk -v f="$tpz" '{ n = $2; sub(/^\*/, "", n) } n == f { print $1 "  " n }' SHA512-SUMS.txt \
+    | sha512sum -c -
+unzip -q "$tpz" -d /tmp/godot-templates
+mkdir -p ~/.local/share/godot/export_templates/"$ver"
+mv /tmp/godot-templates/templates/* ~/.local/share/godot/export_templates/"$ver"/
+```
+
+### WSLg GUI (opt-in)
+
+The container is headless by default. On Windows 11 + WSL2 with Docker Engine
+inside the distro you can run `godot -e` in the container through WSLg:
+
+- Setup asks "Enable the Godot GUI editor through WSLg?" (default `y` only when
+  the setup host has `/mnt/wslg` and `/dev/dxg`). `-y`, runs without a terminal
+  and `--upgrade` never ask. Set `GODOT_GUI=true` (or `false`) to decide without
+  a prompt.
+- Enabling adds `"../docker-compose.godot-gui.yml"` to `dockerComposeFile` in
+  `.devcontainer/devcontainer.json`. The overlay file is always copied to the
+  project root and does nothing until it is listed, so a teammate can opt in
+  with that one-line edit. It is a separate Compose file (not merged into
+  `docker-compose.yml`) because it mounts `/dev/dxg`, which Docker refuses to
+  start without.
+- **To turn it off** (a teammate on macOS or Linux, or a host without WSLg),
+  remove the entry from `dockerComposeFile` and rebuild the container.
+- Rendering: WSLg exposes the GPU to OpenGL through Mesa's `d3d12` driver, so run
+  `godot -e --rendering-driver opengl3` (Compatibility renderer). Vulkan runs on
+  the CPU (lavapipe) on Debian trixie, which makes Forward+ slow.
+- Docker Desktop uses different WSLg paths (untested): override
+  `WSLG_X11_DIR`, `WSLG_DIR` and `WSL_LIB_DIR` in the environment.
+
+### CI behavior
+
+`godot-quality-check.yml` installs the pinned tools from `mise.toml` with
+`jdx/mise-action` and runs three jobs: gdlint and `gdformat --check`; `dotnet
+build` (when a `.csproj` exists) followed by headless GUT; and a headless export
+of every preset that sets `export_path` into `build/ci-export/`. Each job prints a
+`::notice::` and succeeds when its input is missing: no `*.gd` files, no
+`project.godot`, no `addons/gut`, no `test/` or `tests/` directory (and no
+`.gutconfig.json`), no `export_presets.cfg`, or a preset without `export_path`.
 
 ## Zed editor support
 

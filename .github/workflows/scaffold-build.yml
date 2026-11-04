@@ -5,6 +5,8 @@ name: Scaffold Build
 # devcontainer tooling, so devcontainer features cannot hide a missing
 # install) and smoke-checks the runtime versions inside the image (#325).
 # latex is excluded: TeX Live makes the image too large for this matrix.
+# godot is included (#331): it proves `godot --headless --version` and the
+# .NET SDK run in the image on a non-WSLg host, with the GUI overlay inactive.
 # amd64 only; arm64 is verified by hand (QEMU or an arm64 host).
 
 on:
@@ -56,6 +58,9 @@ jobs:
           - flavor: deno
             args: "--lang deno"
             tools: "mise git gh node npm deno"
+          - flavor: godot
+            args: "--lang godot"
+            tools: "mise git gh node npm godot dotnet gdformat gdlint"
           - flavor: postgresql
             args: "--postgresql"
             tools: "mise git gh node npm psql"

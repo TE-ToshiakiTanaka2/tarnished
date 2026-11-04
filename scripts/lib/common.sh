@@ -830,6 +830,56 @@ readonly MISE_TOML_HEADER='# Runtime versions for this project, managed by mise 
 # Edit a version, then run `mise install` (or rebuild the container).
 # Setup never overwrites an entry you have changed.'
 
+# awk program shared by mise_toml_ensure and mise_toml_has_key, so both apply
+# one presence rule. Expects -v section=... -v key=...; scans line by line and
+# leaves `present` (the key exists), `found` (the [section] header exists),
+# `last`, `dotted` and `lines[]` for the caller's END block.
+# shellcheck disable=SC2016  # awk program: $0 must stay literal
+readonly MISE_TOML_AWK_SCAN='
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    {
+        line = $0
+        lines[NR] = line
+        plain = line
+        sub(/\r$/, "", plain)
+        if (plain ~ /^[ \t]*\[\[/) {
+            cur = "[[array]]"
+            next
+        }
+        if (plain ~ /^[ \t]*\[[^][]+\][ \t]*(#.*)?$/) {
+            name = plain
+            sub(/^[ \t]*\[/, "", name)
+            sub(/\][ \t]*(#.*)?$/, "", name)
+            name = trim(name)
+            gsub(/["\047]/, "", name)
+            cur = name
+            if (cur == section && !found) {
+                found = 1
+            }
+            if (cur == section "." key) {
+                present = 1
+            }
+        } else if (plain ~ /^[ \t]*[^#=[ \t][^=]*=/) {
+            lhs = plain
+            sub(/=.*/, "", lhs)
+            lhs = trim(lhs)
+            gsub(/["\047]/, "", lhs)
+            if (cur == section && lhs == key) {
+                present = 1
+            }
+            if (cur == "" && lhs == section "." key) {
+                present = 1
+            }
+            if (cur == "" && index(lhs, section ".") == 1) {
+                dotted = NR
+            }
+        }
+        if (cur == section && plain !~ /^[ \t]*$/) {
+            last = NR
+        }
+    }
+'
+
 # Ensure `key = value` exists in a section of mise.toml without a TOML parser.
 # An existing key is never modified (whatever its value or spelling): bare or
 # quoted ("..." or '...') key inside [section], a [section.key] table, or a
@@ -853,9 +903,9 @@ mise_toml_ensure() {
         return 1
     fi
     case "$section" in
-        tools|env|settings) ;;
+        tools|env|settings|tool_alias) ;;
         *)
-            print_error "mise_toml_ensure: unsupported section '${section}' (tools, env or settings)"
+            print_error "mise_toml_ensure: unsupported section '${section}' (tools, env, settings or tool_alias)"
             return 1
             ;;
     esac
@@ -882,49 +932,7 @@ mise_toml_ensure() {
     fi
 
     local rc=0
-    awk -v section="$section" -v key="$key" -v value="$value" '
-        function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-        {
-            line = $0
-            lines[NR] = line
-            plain = line
-            sub(/\r$/, "", plain)
-            if (plain ~ /^[ \t]*\[\[/) {
-                cur = "[[array]]"
-                next
-            }
-            if (plain ~ /^[ \t]*\[[^][]+\][ \t]*(#.*)?$/) {
-                name = plain
-                sub(/^[ \t]*\[/, "", name)
-                sub(/\][ \t]*(#.*)?$/, "", name)
-                name = trim(name)
-                gsub(/["\047]/, "", name)
-                cur = name
-                if (cur == section && !found) {
-                    found = 1
-                }
-                if (cur == section "." key) {
-                    present = 1
-                }
-            } else if (plain ~ /^[ \t]*[^#=[ \t][^=]*=/) {
-                lhs = plain
-                sub(/=.*/, "", lhs)
-                lhs = trim(lhs)
-                gsub(/["\047]/, "", lhs)
-                if (cur == section && lhs == key) {
-                    present = 1
-                }
-                if (cur == "" && lhs == section "." key) {
-                    present = 1
-                }
-                if (cur == "" && index(lhs, section ".") == 1) {
-                    dotted = NR
-                }
-            }
-            if (cur == section && plain !~ /^[ \t]*$/) {
-                last = NR
-            }
-        }
+    awk -v section="$section" -v key="$key" -v value="$value" "${MISE_TOML_AWK_SCAN}"'
         END {
             if (present) {
                 exit 3
@@ -980,6 +988,43 @@ mise_toml_ensure() {
     # anything was actually written during this run.
     MISE_TOML_CHANGED=true
     print_success "Added ${section}.${key} to $(basename "$mise_toml")"
+}
+
+# Report whether a key already exists in a section of mise.toml, using the same
+# presence rule as mise_toml_ensure (bare or quoted key under [section], a
+# [section.key] table, or a top-level `section.key =` line). Read-only: never
+# creates or modifies the file.
+# Usage: mise_toml_has_key <mise_toml> <section> <key>
+# Returns: 0 when the key is present; 1 when it is absent or the file is
+# missing; 2 on invalid arguments (with print_error).
+mise_toml_has_key() {
+    local mise_toml="${1:-}"
+    local section="${2:-}"
+    local key="${3:-}"
+
+    if [[ -z "$mise_toml" ]]; then
+        print_error "mise_toml_has_key: missing mise.toml path"
+        return 2
+    fi
+    case "$section" in
+        tools|env|settings|tool_alias) ;;
+        *)
+            print_error "mise_toml_has_key: unsupported section '${section}' (tools, env, settings or tool_alias)"
+            return 2
+            ;;
+    esac
+    if [[ ! "$key" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]; then
+        print_error "mise_toml_has_key: invalid key '${key}'"
+        return 2
+    fi
+
+    [[ -f "$mise_toml" ]] || return 1
+
+    local rc=0
+    awk -v section="$section" -v key="$key" "${MISE_TOML_AWK_SCAN}"'
+        END { exit(present ? 0 : 1) }
+    ' "$mise_toml" || rc=$?
+    return "$rc"
 }
 
 # Insert a marker-guarded apt-get block immediately above the first `SHELL`
@@ -1474,6 +1519,7 @@ replace_placeholders() {
         "${target_dir}/docker-compose.mysql.yml"
         "${target_dir}/docker-compose.redis.yml"
         "${target_dir}/docker-compose.celery.yml"
+        "${target_dir}/docker-compose.godot-gui.yml"
         "${target_dir}/.tarnished/agent-profile.json"
         "${target_dir}/.tarnished/workflows/README.md"
         "${target_dir}/.tarnished/workflows/issue.md"
@@ -1602,7 +1648,7 @@ show_interactive_mode_error() {
     echo "  curl -fsSL <url>/setup.sh | bash -s -- --lang python --postgresql my-app -y"
     echo ""
     echo "Available options:"
-    echo "  --lang <language>     Select language(s): rust, python, node, deno, go, latex"
+    echo "  --lang <language>     Select language(s): rust, python, node, deno, go, latex, godot"
     echo "  --postgresql          Include PostgreSQL database service"
     echo "  --mysql               Include MySQL database service"
     echo "  --redis               Include Redis cache/broker service"

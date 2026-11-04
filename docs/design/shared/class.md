@@ -182,25 +182,29 @@ classDiagram
     RefreshConfig --> InstalledAsset : constrains active mappings
 ```
 
-## Generated install contract (#325)
+## Generated install contract (#325, #331)
 
 Shell-side structure of the three install layers. "Classes" are files; methods
 are their entry functions. Arrows read "uses" unless labelled. File mapping:
 `CommonSh` = `scripts/lib/common.sh`; `CorePlugin`/`ClaudePlugin`/`CodexPlugin`
 = `templates/{core,claude,codex}/plugin.sh`; `LanguagePlugin` =
 `templates/languages/{python,node,rust,go,deno}/plugin.sh`; `LatexPlugin` =
-`templates/languages/latex/plugin.sh`; `ServicePlugin` =
-`templates/services/{postgresql,mysql}/plugin.sh`; `DockerfileDev`,
-`MiseConfig`, `PostSh`, `ClaudeSettings` = the generated
-`docker/Dockerfile.dev`, `mise.toml`, `.devcontainer/scripts/post.sh`,
-`.claude/settings.json`; `Setup*` / `NpmGlobalCli` = the
-`.devcontainer/scripts/*.sh` helpers of the same names.
+`templates/languages/latex/plugin.sh`; `GodotPlugin` =
+`templates/languages/godot/plugin.sh` (#331; also a `LanguagePlugin`);
+`ServicePlugin` = `templates/services/{postgresql,mysql}/plugin.sh`;
+`DockerfileDev`, `MiseConfig`, `PostSh`, `ClaudeSettings`, `DevcontainerJson`,
+`GodotGuiOverlay` = the generated `docker/Dockerfile.dev`, `mise.toml`,
+`.devcontainer/scripts/post.sh`, `.claude/settings.json`,
+`.devcontainer/devcontainer.json`, `docker-compose.godot-gui.yml`;
+`Setup*` / `NpmGlobalCli` = the `.devcontainer/scripts/*.sh` helpers of the
+same names.
 
 ```mermaid
 classDiagram
     class CommonSh {
         <<library>>
         +mise_toml_ensure(file, section, key, value) int
+        +mise_toml_has_key(file, section, key) int
         +dockerfile_add_os_packages(dockerfile, block_id, packages) int
         +post_sh_add_block(post_sh, marker, before_markers) int
         +merge_devcontainer_json(base, overlay, out) int
@@ -219,6 +223,26 @@ classDiagram
     class LatexPlugin {
         <<plugin>>
         +plugin_dockerfile(target)
+    }
+    class GodotPlugin {
+        <<plugin>>
+        +GODOT_GUI_ENABLED: bool
+        +plugin_interactive_setup()
+        +plugin_copy(target)
+        +plugin_dockerfile(target)
+        +plugin_post_copy_shared(root)
+        +plugin_post_copy_module(dir, name)
+    }
+    class DevcontainerJson {
+        <<generated file>>
+        +dockerComposeFile
+        +customizations
+    }
+    class GodotGuiOverlay {
+        <<generated file>>
+        +WSLg volumes
+        +dxg device
+        +WSLg environment
     }
     class ServicePlugin {
         <<plugin>>
@@ -288,6 +312,14 @@ classDiagram
     LanguagePlugin --> MiseConfig : mise_toml_ensure
     LatexPlugin --> DockerfileDev : TeX Live block
     ServicePlugin --> DockerfileDev : os-packages block
+    LanguagePlugin <|-- GodotPlugin
+    GodotPlugin --> CommonSh
+    GodotPlugin --> DockerfileDev : godot os-packages block
+    GodotPlugin --> MiseConfig : tool_alias + tools + env
+    GodotPlugin --> PostSh : Godot block before Codex
+    GodotPlugin --> GodotGuiOverlay : copies (inert)
+    GodotPlugin --> DevcontainerJson : appends overlay on opt-in
+    DevcontainerJson --> GodotGuiOverlay : dockerComposeFile entry activates
     CorePlugin --> PostSh : mise + Claude blocks
     CodexPlugin --> PostSh : Codex block before plugins
     ClaudePlugin --> PostSh : plugin block
@@ -311,4 +343,5 @@ classDiagram
 - `IssueCommands::link_issue_to_project` accepts a `ProjectConfig` so it can be reused for both default and label-routed links (#230 refactor).
 - `MiseConfig` (`<project>/mise.toml`, #325) has the same ownership shape as `ZedProjectSettings`: seeded at scaffold time (core template + `mise_toml_ensure` entries) and then developer-owned, with no edge to `ManifestV2`, `RefreshConfig` or `RefreshState`. The helper scripts that consume it (`setup_mise.sh` etc.) *are* manifest-eligible; the file they read is not.
 - In the install-contract diagram, `npm_global_cli.sh` is a library sourced by two entry helpers, not a `post.sh` entry itself; `post.sh` order (mise → Claude Code → Codex → plugins) is enforced by `post_sh_add_block`, not by plugin load order.
+- `GodotPlugin` (#331) is the only language plugin with `plugin_interactive_setup` and one of two (with `LatexPlugin`) with `plugin_dockerfile`. `GodotGuiOverlay` is developer-owned and has no edge to `ManifestV2` or the refresh types. Its only consumer is Docker Compose, through the `dockerComposeFile` entry in `DevcontainerJson`. The plugin never merges it into `docker-compose.yml`.
 - `ZedProjectSettings` (`<project>/.zed/settings.json`, #323) is drawn as a direct child of `DownstreamProject` with no edge to `ManifestV2`, `RefreshConfig` or `RefreshState`: it is written once at scaffold time by `apply_zed_assets` and then wholly developer-owned — not an AI asset (no `refresh.json` mapping) and outside `_manifest_path_eligible`, so no maintenance path reads, rewrites or prunes it. The absence of those edges is the ownership statement.

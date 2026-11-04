@@ -319,3 +319,56 @@ _assert_redis_tools_block() {
     refute_output --partial "--neo4j"
     assert_output --partial "--mysql"
 }
+
+@test "godot scaffold: tools, aliases and env in mise.toml, godot OS block above SHELL, no features" {
+    _scaffold --lang godot
+    _assert_install_contract
+    local key
+    for key in godot dotnet uv gdtoolkit; do
+        run grep -c "^${key} = " mise.toml
+        assert_success
+    done
+    run grep -x 'dotnet = "10.0.403"' mise.toml
+    assert_success
+    run grep -x 'gdtoolkit = { version = "4.5.0", python = "3.12" }' mise.toml
+    assert_success
+    run grep -x 'godot = "github:godotengine/godot"' mise.toml
+    assert_success
+    run grep -x 'gdtoolkit = "pypi:gdtoolkit"' mise.toml
+    assert_success
+    _assert_mise_entry DOTNET_CLI_TELEMETRY_OPTOUT
+    _assert_mise_entry DOTNET_NOLOGO
+    run grep -c '^# >>> godot os-packages >>>$' docker/Dockerfile.dev
+    assert_output "1"
+    local block_line shell_line
+    block_line="$(grep -n '^# >>> godot os-packages >>>$' docker/Dockerfile.dev | cut -d: -f1)"
+    shell_line="$(grep -n '^SHELL ' docker/Dockerfile.dev | cut -d: -f1)"
+    [[ "$block_line" -lt "$shell_line" ]]
+    run jq -c '.dockerComposeFile' .devcontainer/devcontainer.json
+    assert_output '["../docker-compose.yml"]'
+    [[ ! -e project.godot && ! -e export_presets.cfg && ! -e addons ]]
+}
+
+@test "godot scaffold with --codex orders the Godot block before Codex and plugin blocks" {
+    _scaffold --lang godot --codex
+    local g c p
+    g="$(grep -nx '# Godot Engine Setup' .devcontainer/scripts/post.sh | cut -d: -f1)"
+    c="$(grep -nx '# Codex CLI Setup' .devcontainer/scripts/post.sh | cut -d: -f1)"
+    p="$(grep -nx '# Claude Code Plugin Setup' .devcontainer/scripts/post.sh | cut -d: -f1)"
+    [[ -n "$g" && "$g" -lt "$c" && "$c" -lt "$p" ]]
+}
+
+@test "godot scaffold: GODOT_GUI=true without a terminal lists the GUI overlay" {
+    GODOT_GUI=true run bash "$SETUP_SH" --lang godot -y scaffold-proj < /dev/null
+    assert_success
+    run jq -c '.dockerComposeFile' .devcontainer/devcontainer.json
+    assert_output '["../docker-compose.yml","../docker-compose.godot-gui.yml"]'
+}
+
+@test "godot scaffold: without GODOT_GUI the overlay is copied but not listed" {
+    run bash "$SETUP_SH" --lang godot -y scaffold-proj < /dev/null
+    assert_success
+    [[ -f docker-compose.godot-gui.yml ]]
+    run jq -c '.dockerComposeFile' .devcontainer/devcontainer.json
+    assert_output '["../docker-compose.yml"]'
+}

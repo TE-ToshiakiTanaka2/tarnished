@@ -1,13 +1,16 @@
 # Research: mise (runtime manager)
 
-Cross-cutting research introduced by #325. mise replaces devcontainer
-`features` as the source of every language runtime in generated projects, so
-every language plugin and the core Dockerfile depend on the facts below.
+Cross-cutting research introduced by #325 and extended by #331. mise replaces
+devcontainer `features` as the source of every language runtime in generated
+projects, so every language plugin and the core Dockerfile depend on the facts
+below.
 
-Sources were read on 2026-11-01 from the mise documentation sources
+Findings 1–9 were read on 2026-11-01. Findings 10–12 were read, and verified
+by installing with mise 2026.10.25 in an isolated `MISE_DATA_DIR`, on
+2026-11-03 (#331). Sources are the mise documentation
 (`https://github.com/jdx/mise/tree/main/docs`, rendered at
-`https://mise.jdx.dev`). Version numbers quoted here are observations at that
-date, not pins; the pins live in `templates/core/docker/Dockerfile.dev` and the
+`https://mise.jdx.dev`). Version numbers quoted here are observations at those
+dates, not pins; the pins live in `templates/core/docker/Dockerfile.dev` and the
 generated `mise.toml`.
 
 ## Executive Summary
@@ -20,6 +23,10 @@ checksum + OpenPGP verification, Python from precompiled
 python-build-standalone builds with artifact attestation, Rust through rustup,
 and Go/Deno/uv/pnpm as standalone binaries. mise itself ships as a single static
 binary per platform, with a minisign-signed `SHASUMS256.txt` per release.
+Tools without a suitable registry entry can be declared through the `github`
+and `pypi` backends. A `[tool_alias]` entry gives such a tool a bare name, and
+backend options (asset selection, executable renaming, a private Python) ride
+on the ordinary `[tools]` entry.
 
 ## Findings
 
@@ -165,6 +172,68 @@ binary per platform, with a minisign-signed `SHASUMS256.txt` per release.
 - **Source**: `docs/dev-tools/github-tokens.md`.
 - **Relevance**: CI builds (FR-12) pass the workflow token as a BuildKit secret
   so `mise install` is not throttled; local builds work without it.
+  `jdx/mise-action` passes `github.token` to mise by default (#331 CI).
+
+### 10. `github` backend: asset selection and executable naming (#331)
+
+- **Details**: `github:<owner>/<repo>` installs a release asset.
+  - **Asset selection**: `asset_pattern` (a glob over the whole name, and a
+    Tera template with `{{ version }}`, `{{ os() }}` and
+    `{{ arch(x64=…, arm64=…) }}`) replaces autodetection. When it matches
+    several assets the shortest name wins, so a too-broad pattern can select
+    the wrong architecture.
+  - **Extraction**: an archive with a single top-level directory is stripped
+    one level automatically. The install directory goes on `PATH` when it
+    directly holds an executable.
+  - **Renaming**: `rename_exe = { "<glob>" = "<name>" }` renames an
+    executable after extraction and restores the executable bit that zip
+    files drop. The string form picks "the first executable" when no name
+    matches the repo, which is unsafe when the archive carries executable
+    data files.
+  - **Versions and verification**: the version is the tag minus a leading
+    `v`. Downloads are checked against the digest GitHub reports, or a
+    checksum file in the release.
+  - **Trust**: non-string options need a trusted config.
+  - **ubi**: the `ubi:` backend is deprecated (warning since 2026.4.0,
+    removal in 2027.1.0) in favour of `github`.
+
+  Verified: the Godot .NET editor
+  (`Godot_v4.7.2-stable_mono_linux_x86_64.zip`) installed with
+  `asset_pattern` + table-form `rename_exe` as `godot` beside its
+  `GodotSharp/` directory, and ran through the shim.
+- **Source**: `docs/dev-tools/backends/github.md`, `docs/dev-tools/backends/ubi.md`.
+- **Relevance**: The way to install a runtime that the registry shorthand
+  cannot express, without moving the pin into `Dockerfile.dev`.
+
+### 11. `pypi` (alias `pipx`) backend and private Python (#331)
+
+- **Details**: `pypi:<pkg>` installs a PyPI application into its own venv
+  with `uv tool install`, or with pipx when uv is absent. It needs `uv` (or
+  `pipx`) in the config, and mise installs those first.
+  - **Interpreter**: without a mise-managed Python, uv downloads its own
+    newest CPython (observed: 3.15.2 into `~/.local/share/uv/python`, with
+    an sdist build for a dependency that had no wheel yet).
+  - **Per-tool `python` option**: `python = "3.12"` makes mise install that
+    CPython "as a private dependency of the tool", without adding `python`
+    to the active tools. A `python` shim is still created, and it errors as
+    "not active" in a project without a `python` tool.
+  - **Executables**: the package's console scripts become shims.
+- **Source**: `docs/dev-tools/backends/pypi.md` (Requirements, Choosing Python).
+- **Relevance**: PyPI-distributed CLIs (gdtoolkit) can be installed without
+  the python flavor and with a pinned interpreter.
+
+### 12. `[tool_alias]` (#331)
+
+- **Details**: `[tool_alias] <name> = "<backend>:<id>"` points a tool name at
+  a backend. The `[tools] <name>` entry then carries the version and backend
+  options, and two aliases may target the same repository with different
+  asset filters. `[alias]` is the deprecated old spelling. An alias also
+  overrides a registry shorthand of the same name.
+- **Source**: `docs/dev-tools/aliases.md`.
+- **Relevance**: It keeps `mise.toml` keys bare, which is what
+  `mise_toml_ensure` accepts. It also means an alias changes the meaning of
+  an existing `[tools]` entry, so a plugin must add an alias only together
+  with the tool entry it introduces (`mise_toml_has_key`).
 
 ## Comparison: how to install mise in the image
 
@@ -188,6 +257,10 @@ binary per platform, with a minisign-signed `SHASUMS256.txt` per release.
 3. Keep `npm install -g` on mise's per-version prefix and re-run the CLI
    installers after `mise install` in `post.sh`.
 4. Probe installed commands by running them, not with `command -v`.
+5. For a tool the registry shorthand cannot express, use
+   `[tool_alias] <name> = "github:…"` or `"pypi:…"` and put the backend
+   options on `[tools] <name>`. Write the alias only when the tool entry is
+   new. Give `pypi` tools an explicit `python = "<minor>"`.
 
 ## Sources
 
@@ -202,4 +275,9 @@ binary per platform, with a minisign-signed `SHASUMS256.txt` per release.
 - https://mise.jdx.dev/lang/go.html
 - https://mise.jdx.dev/lang/deno.html
 - https://mise.jdx.dev/dev-tools/github-tokens.html
+- https://mise.jdx.dev/dev-tools/backends/github.html
+- https://mise.jdx.dev/dev-tools/backends/pypi.html
+- https://mise.jdx.dev/dev-tools/backends/ubi.html
+- https://mise.jdx.dev/dev-tools/aliases.html
+- https://mise.jdx.dev/lang/dotnet.html
 - https://packages.debian.org/trixie/minisign

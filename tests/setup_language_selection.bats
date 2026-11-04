@@ -140,3 +140,36 @@ parse_language_input() {
     assert_equal "${SELECTED_LANGUAGES[0]}" "rust"
     assert_equal "${SELECTED_LANGUAGES[1]}" "node"
 }
+
+# --- godot flavor (#331): checks against setup.sh itself, not the fixture above
+
+@test "setup.sh registers godot as an available language with a display name" {
+    run bash -c 'source "$1/setup.sh"; echo "${AVAILABLE_LANGUAGES[*]}"; echo "${LANGUAGE_DISPLAY_NAMES[godot]}"; validate_language godot' _ "$SCRIPT_DIR"
+    assert_success
+    assert_line --index 0 --partial "godot"
+    assert_line --index 1 "Godot (GDScript + C#)"
+}
+
+@test "setup.sh keeps the existing language menu numbers stable" {
+    run bash -c 'source "$1/setup.sh"; echo "${AVAILABLE_LANGUAGES[*]}"' _ "$SCRIPT_DIR"
+    assert_output "rust python node deno latex go godot"
+}
+
+@test "godot plugin.sh satisfies the plugin contract in isolation" {
+    [[ -f "${SCRIPT_DIR}/templates/languages/godot/plugin.sh" ]]
+    run bash -c '
+        source "$1/scripts/lib/common.sh"
+        source "$1/templates/languages/godot/plugin.sh"
+        [[ "$(plugin_name)" == "godot" ]] || exit 1
+        [[ -n "$(plugin_description)" ]] || exit 1
+        for fn in plugin_copy plugin_dockerfile plugin_post_copy_shared plugin_post_copy_module plugin_post_copy; do
+            declare -f "$fn" > /dev/null || { echo "missing $fn"; exit 1; }
+        done
+    ' _ "$SCRIPT_DIR"
+    assert_success
+}
+
+@test "manifest options accept the godot language id" {
+    run bash -c 'source "$1/scripts/lib/common.sh"; source "$1/scripts/lib/manifest.sh"; manifest_options_valid "{\"languages\":[\"godot\"]}"' _ "$SCRIPT_DIR"
+    assert_success
+}
