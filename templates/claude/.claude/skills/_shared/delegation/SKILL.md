@@ -42,18 +42,18 @@ The executor returns the drafted PR body. The orchestrator checks it and runs th
 
 ## Model binding
 
-Each role's model comes from its dispatch channel. The table below describes Claude-primary dispatch. For Codex-native designer/executor dispatch, use a supported `roles.<role>.model` override when present; otherwise inherit the active Codex session model and reasoning effort. Claude agent frontmatter pins are not Codex model IDs. The Codex session default lives in `.codex/config.toml`; the external reviewer always uses its own CLI config. Report unsupported explicit overrides rather than silently substituting another model.
+Each role's model and reasoning effort come from its dispatch channel. The table below describes Claude-primary dispatch. For Codex-native designer/executor dispatch, use a supported `roles.<role>.model` override when present; otherwise inherit the active Codex session model and reasoning effort. Claude agent frontmatter pins — model and effort alike — apply to Claude dispatch only and are not Codex settings. The Codex session default lives in `.codex/config.toml`; the external reviewer always uses its own CLI config. Report unsupported explicit overrides rather than silently substituting another model.
 
 A non-null `roles.<role>.model` is specific to the vendor of the actual dispatcher; it is not a portable model alias. In `dual` mode, resolve the active dispatcher before applying it: never send a Claude ID to Codex or a Codex ID to Claude. Keep it `null` when the same profile must work under either dispatcher; use each vendor's existing session/frontmatter configuration for defaults. An incompatible explicit override is a configuration error, not permission to translate or ignore it.
 
-| Role | Channel | Value |
-| --- | --- | --- |
-| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5-1` |
-| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5-5[1m]` |
-| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5-5` |
-| `external-reviewer` | `.codex/config.toml` | reviewer-owned |
+| Role | Model channel | Model | Effort channel | Effort |
+| --- | --- | --- | --- | --- |
+| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5-2` | `.claude/settings.json :: effortLevel` | `high` |
+| `designer` | `.claude/agents/designer.md` frontmatter `model:` | `claude-opus-5-5[1m]` | `.claude/agents/designer.md` frontmatter `effort:` | `high` |
+| `executor` | `.claude/agents/executor.md` frontmatter `model:` | `claude-opus-5-5` | `.claude/agents/executor.md` frontmatter `effort:` | `medium` |
+| `external-reviewer` | `.codex/config.toml :: model` | reviewer-owned | `.codex/config.toml :: model_reasoning_effort` | reviewer-owned |
 
-The orchestrator is the session rather than a subagent, so no frontmatter channel reaches it; `.claude/settings.json :: model` is its only channel and is read once at session start.
+The orchestrator is the session rather than a subagent, so no frontmatter channel reaches it; `.claude/settings.json` is its only channel — `model`, read once at session start, and the top-level `effortLevel` (`low`, `medium`, `high` or `xhigh`; `max` is not accepted there). A per-model `modelSettings.<model-id>.effortLevel` entry, which `/effort` writes, takes precedence over the top-level key, so a developer's own `/effort` choice wins over the shipped default.
 
 For Claude-dispatched designer and executor roles the precedence is:
 
@@ -62,6 +62,8 @@ For Claude-dispatched designer and executor roles the precedence is:
 | 1 | `roles.<role>.model` in `.tarnished/agent-profile.json` | Downstream override. Not refresh-managed, so it survives every container start |
 | 2 | `model:` in the agent definition frontmatter | The shipped default. `.claude/agents/` is refresh-managed, so it reaches every project on the next start |
 | 3 | `inherit` — the session's model | What applies when neither above names a model. This was the state of every role before the models were pinned |
+
+Reasoning effort has no profile level — `.tarnished/agent-profile.json` carries no effort field. Frontmatter `effort:` (`low`, `medium`, `high`, `xhigh` or `max`) overrides the session effort, and `CLAUDE_CODE_EFFORT_LEVEL`, when set, overrides frontmatter. An agent without `effort:` — `code-reviewer`, for one — inherits the session effort.
 
 `roles.<role>.model` ships as `null` for every role: the profile answers *which agent*, and the model comes from the channel above. Values are pinned model IDs rather than aliases, because an alias silently re-points at a new generation; bumping a pin is a tracked edit to one file.
 

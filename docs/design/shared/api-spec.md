@@ -609,16 +609,16 @@ A pull request is outward-facing and a merge is irreversible, which is why neith
 
 Triggers include a requirement-level ambiguity producing different public interfaces, a design/convention conflict whose resolution would violate required behavior, or a required prerequisite that cannot be recovered within scope. Routine choices and recoverable inputs do not trigger escalation. The orchestrator resolves the question, or escalates when the answer is the user's to give.
 
-### Role → model binding (#312)
+### Role → model and effort binding (#312, #333)
 
-| Role | Channel | Value |
-| --- | --- | --- |
-| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5-1` |
-| `designer` | `.claude/agents/designer.md` frontmatter | `claude-opus-5-5[1m]` |
-| `executor` | `.claude/agents/executor.md` frontmatter | `claude-sonnet-5-5` |
-| `external-reviewer` | Reviewer's own CLI configuration | Codex default: `gpt-6-astra` / `high` |
+| Role | Model channel | Model | Effort channel | Effort |
+| --- | --- | --- | --- | --- |
+| `orchestrator` | `.claude/settings.json :: model` | `claude-fable-5-2` | `.claude/settings.json :: effortLevel` (`low`\|`medium`\|`high`\|`xhigh`) | `high` |
+| `designer` | `.claude/agents/designer.md` frontmatter `model:` | `claude-opus-5-5[1m]` | `.claude/agents/designer.md` frontmatter `effort:` (`low`\|`medium`\|`high`\|`xhigh`\|`max`) | `high` |
+| `executor` | `.claude/agents/executor.md` frontmatter `model:` | `claude-opus-5-5` | `.claude/agents/executor.md` frontmatter `effort:` (same set) | `medium` |
+| `external-reviewer` | Reviewer's own CLI configuration (`.codex/config.toml :: model`) | Codex default: `gpt-6-astra` | Reviewer's own CLI configuration (`.codex/config.toml :: model_reasoning_effort`) | Codex default: `high` |
 
-The table describes Claude dispatch. Codex-native `designer` and `executor` inherit the active Codex session model and reasoning effort unless a supported explicit override is set; Claude frontmatter IDs do not apply to Codex. `roles.<role>.model` defaults to `null` for the three primary roles; `external-reviewer` has no model key. A non-null override is vendor-specific to the actual dispatcher, including in `dual` mode. Keep it `null` for a profile shared across vendors, and report incompatible overrides rather than translating them. Claude dispatch precedence is profile override → agent frontmatter → session inheritance; Codex precedence is supported profile override → active Codex session.
+The table describes Claude dispatch. Codex-native `designer` and `executor` inherit the active Codex session model and reasoning effort unless a supported explicit override is set; Claude frontmatter `model:` and `effort:` do not apply to Codex. `roles.<role>.model` defaults to `null` for the three primary roles; `external-reviewer` has no model key, and no role has an effort key. A non-null override is vendor-specific to the actual dispatcher, including in `dual` mode. Keep it `null` for a profile shared across vendors, and report incompatible overrides rather than translating them. Claude dispatch model precedence is profile override → agent frontmatter → session inheritance; Claude dispatch effort precedence is `CLAUDE_CODE_EFFORT_LEVEL` → agent frontmatter → session effort. The session's own effort is the per-model `modelSettings.<model-id>.effortLevel` (written by `/effort`) when present, otherwise the top-level `effortLevel`. Codex precedence is supported profile override → active Codex session. `code-reviewer` carries no pin and inherits the session model and effort. `merge_claude_settings` carries both `model` and `effortLevel` through every scaffold merge (regression-tested in `tests/common_json.bats`).
 
 `/review` carries two ground truths rather than one (#312): the design document and the issue's Requirements section, with a criterion for each. Criterion 8 asks whether the implementation matches the design; criterion 9 asks whether the branch carries every requirement in the issue. Only the second can catch a requirement dropped upstream of the design — without it, a requirement lost at the `/issue` stage flows through design, implementation, and review with every check returning green.
 

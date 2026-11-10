@@ -260,6 +260,60 @@ JSON
     assert_output "1"
 }
 
+# effortLevel is the orchestrator's reasoning-effort pin (#333). It reaches a
+# generated project through the claude template's settings overlay and must
+# survive every later merge: the `setup.sh --upgrade` re-merge of the same
+# overlay, and an add-module merge whose language fragment carries no
+# effortLevel. The fixture value is not a shipped pin on purpose.
+@test "merge_claude_settings preserves effortLevel across repeated merges" {
+    local base_file="$SCRATCH/settings.json"
+    local overlay_file="$SCRATCH/claude.json"
+    local module_overlay="$SCRATCH/module.json"
+    local first_output="$SCRATCH/first.json"
+    local second_output="$SCRATCH/second.json"
+    local third_output="$SCRATCH/third.json"
+
+    cat > "$base_file" <<'JSON'
+{
+  "permissions": { "allow": [], "deny": [] },
+  "hooks": { "PreToolUse": [] }
+}
+JSON
+
+    cat > "$overlay_file" <<'JSON'
+{
+  "effortLevel": "xhigh",
+  "permissions": { "allow": [], "deny": ["Bash(rm -rf /*)"] },
+  "hooks": { "PreToolUse": [] }
+}
+JSON
+
+    cat > "$module_overlay" <<'JSON'
+{
+  "permissions": { "allow": ["Bash(cargo:*)"], "deny": [] },
+  "hooks": { "PostToolUse": [] }
+}
+JSON
+
+    # Scaffold: the overlay supplies the key.
+    run merge_claude_settings "$base_file" "$overlay_file" "$first_output"
+    assert_success
+    run jq -r '.effortLevel' "$first_output"
+    assert_output "xhigh"
+
+    # `setup.sh --upgrade`: the same overlay merged again.
+    run merge_claude_settings "$first_output" "$overlay_file" "$second_output"
+    assert_success
+    run jq -r '.effortLevel' "$second_output"
+    assert_output "xhigh"
+
+    # Add-module: the overlay has no effortLevel; the base's value survives.
+    run merge_claude_settings "$second_output" "$module_overlay" "$third_output"
+    assert_success
+    run jq -r '.effortLevel' "$third_output"
+    assert_output "xhigh"
+}
+
 # A second merge of the same overlay (e.g. `setup.sh --upgrade`'s FR-5 re-run)
 # must not duplicate hooks.PreToolUse entries. Regression guard for the
 # deny-check Bash hook being appended twice.
